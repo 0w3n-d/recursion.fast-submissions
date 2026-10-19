@@ -1,0 +1,29 @@
+# The native prover of the `spartan-chain` entry (BLUEPRINT-R1 §11). Flat layout: the crate root
+# is this directory, `main.rs` and its modules sit beside the Lean files. No dependencies, so the
+# build is offline and reproducible from this directory alone. Build outside the root:
+#   CARGO_TARGET_DIR=<somewhere else> cargo build --release
+[package]
+name = "spartan-chain-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+autobins = false
+autotests = false
+autobenches = false
+autoexamples = false
+
+[[bin]]
+name = "spartan-chain-prover"
+path = "main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+codegen-units = 4
+debug = false
+panic = "abort"
+
+[profile.test]
+opt-level = 3

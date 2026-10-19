@@ -21,6 +21,8 @@ decisions) and in `notes/` (F1, E1–E4, ADV1).
   - The entry is reached through the symbolic link `SpartanChainRoot`.
   - Build one module and its dependencies with `cd /home/devops/Verified-zkEVM/rf-core-sc &&
     timeout 3600 lake build +SpartanChainMLE` (substitute your module name).
+  - After you **add a new module file**, run `./refresh-roots.sh` in that clone. It lists every
+    `SpartanChain*.lean` as a lake root; without it lake reports "unknown module".
   - Other agents build other modules in the same clone at the same time. If you see a lake lock
     or "file busy" error, wait and retry rather than deleting anything.
   - For quick checks, run `timeout 900 lake env lean SpartanChainRoot/<File>.lean`.

@@ -93,3 +93,15 @@ review, kernel-checked probes under `logs/adv-probes/`), `notes/E1`–`E4` (expl
   | #9 | Minor rules and hygiene | ADV-m1–m7 |
   | #10 | Library: canaries and quadratic decoding | S2a findings |
   | #4, comment | Backdoor variants that evade the proposed defences | ADV-M5 |
+- **[D-8] The contract amendment is final on a local branch only.**
+  - Where: branch `v3/ks-potential` of the scratch core clone `/home/devops/Verified-zkEVM/rf-core-ks`.
+  - Head: `c3f6380`, possibly followed by one commit that adds `docs/reviews/V3-S2-KS-review.md`.
+  - The contract changes: `logCap = 2^96`, a literal `2^256` in the step law, and the paper
+    theorem as `Library/PaperTheorem.lean`, kernel-checked.
+  - Review: `docs/reviews/V3-S2-KS-review.md`. Fix pass: the RESULT in the clone.
+
+  Pushing it to `scaraven/recursion.fast` and opening the draft pull request was **denied by the
+  permission system**, which is consistent with `CLAUDE.md`'s "no pushing". That step is left to
+  the user: push the branch, open a pull request that references #5, and after the merge move
+  this repository's pin in its own commit. Until then the honest entry builds against the shared
+  development clone `/home/devops/Verified-zkEVM/rf-core-sc`, which tracks that branch.
