@@ -1,0 +1,7 @@
+{
+ "image": {"code": "extractor.bin", "data": "extractor.data"},
+ "error": "0",
+ "qV": 0,
+ "fuel_base": 8,
+ "fuel_per_word": 0
+}
