@@ -155,6 +155,28 @@ What is missing, precisely: a `Leaf.WitFor` (`κ → n → s → Spartan.Witness
 The proof side additionally needs `HonestOps chainEvals wf`. A watcher runs until these appear;
 the KAT is then `leaf-run` with a `prove` command against `scratch/leaf/data/l{1,2,16}.bin`.
 
+## Review S2b-m2: the runner calls the certified objects
+
+`SpartanChainRun` now uses the submission's own definitions, so the compiled path is the certified
+one.
+
+- **`Run.runLV := Leaf.leafVerifier chainEvals`.** This is also the name `check.sh` expects.
+- **`Run.verifyProof`** is `Submission.Vb` written out: the size guard, then `V runLV` under
+  `blake2sOracle`. `verifyProof_eq` proves it equals `(submission runLV (proveLeafR wf)).Vb`, by
+  `rfl`.
+- **`Run.proveLeafBytes wf s n`** is `P (proveLeafR wf)` of `SpartanChainSubmission` on
+  `.leaf s n`. `proveLeafBytes_eq` proves it equals `(submission …).P c (.leaf s n)`, by `rfl`,
+  for every statement `c`.
+- **`Leaf.proveLeaf`** with its `leafHeader` is no longer used by the runner.
+- **The timings were re-run through `Run.verifyProof`** (`verify-certified.log`). They are the same
+  within the noise: the load had risen to about 9 and the root took 2.3–2.8 s.
+
+**I overwrote another agent's file.** An earlier stub `SpartanChainRun.lean` (another agent's,
+with `runLV` and a `main` for `entry-run`) was replaced when I created this module. `check.sh` and
+`smoke.py` (S2b-m3) still build an `entry-run` exe whose root is `SpartanChainRun`. Following the
+orchestrator's "`main`-free" instruction, the `main` belongs to a scratch root, as in
+`rf-core-sc/scratch/leaf/LeafMain.lean`. `check.sh` needs that change.
+
 ## Open
 
 - **Merging further.** Ligero's `chunk_getD` and my `flatMap_getD` overlap. This is harmless.

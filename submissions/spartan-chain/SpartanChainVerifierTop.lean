@@ -16,8 +16,8 @@ verifier `prog s n h π_S`, a query program (§1.3 step 3). `Verifier.lean` inst
     `n ≤ chainCap`, `π.size = leafSize n` and `c = leafStmt h n`. Then it accepts iff `h = s`
     when `n = 0`, and otherwise runs the SNARK verifier.
   * The node branch decides `Rel` locally, with no query (`checkNode`). The proof must be the
-    canonical encoding of the node it decodes to (`decodeF`, `encodeF` of `SpartanChainDecode`,
-    linear in the proof). The statement must be `nodeStmt c₁ c₂`. Each child must be at most
+    canonical encoding of the node it decodes to (`nodeParse` of `SpartanChainDecode`, by byte
+    offsets, proved equal to the library's `decode`/`encode` test by `nodeParse_eq`). The statement must be `nodeStmt c₁ c₂`. Each child must be at most
     `proofCap` bytes and be accepted by `check`, recursively on the size.
 * **`vb`** is the instantiated verifier `π.size ≤ proofCap && check c π`. A submission whose `V`
   is `V LV` has `Submission.Vb = vb LV` (`Vb_eq_vb`), because `V` and `check` take the same
@@ -96,31 +96,27 @@ def check (c : Digest) (π : Proof) : Bool :=
   if π.size < 8 then false
   else if tagWord π = 0 then (leafProg LV c π).run blake2sOracle
   else if tagWord π = 1 then
-    match decodeF π with
-    | some (.node c₁ c₂ π₁ π₂) =>
-      if _h : encodeF (.node c₁ c₂ π₁ π₂) = π then
-        decide (c = nodeStmt c₁ c₂) && (decide (π₁.size ≤ proofCap) && check c₁ π₁) &&
-          (decide (π₂.size ≤ proofCap) && check c₂ π₂)
-      else false
-    | _ => false
+    match _h : nodeParse π with
+    | some (c₁, c₂, π₁, π₂) =>
+      decide (c = nodeStmt c₁ c₂) && (decide (π₁.size ≤ proofCap) && check c₁ π₁) &&
+        (decide (π₂.size ≤ proofCap) && check c₂ π₂)
+    | none => false
   else false
 termination_by π.size
 decreasing_by
   all_goals
-    rw [← _h, encodeF_eq, size_encode]
+    rw [← (nodeParse_sound _h).1, size_encode]
     simp only [witWords, bytesWords, List.length_cons, List.length_append, packBytes_length,
       ← size_eq_length]
     omega
 
 /-- The node branch of `check`: no oracle query. -/
 def checkNode (c : Digest) (π : Proof) : Bool :=
-  match decodeF π with
-  | some (.node c₁ c₂ π₁ π₂) =>
-    if encodeF (.node c₁ c₂ π₁ π₂) = π then
-      decide (c = nodeStmt c₁ c₂) && (decide (π₁.size ≤ proofCap) && check LV c₁ π₁) &&
-        (decide (π₂.size ≤ proofCap) && check LV c₂ π₂)
-    else false
-  | _ => false
+  match nodeParse π with
+  | some (c₁, c₂, π₁, π₂) =>
+    decide (c = nodeStmt c₁ c₂) && (decide (π₁.size ≤ proofCap) && check LV c₁ π₁) &&
+      (decide (π₂.size ≤ proofCap) && check LV c₂ π₂)
+  | none => false
 
 /-- **The verifier** (§1.2): the leaf branch is a query program, every other branch returns at
 once. -/
@@ -141,7 +137,9 @@ theorem check_eq (c : Digest) (π : Proof) : check LV c π =
     else if tagWord π = 1 then checkNode LV c π
     else false := by
   rw [check]
-  simp only [checkNode, dite_eq_ite]
+  split_ifs <;> try rfl
+  unfold checkNode
+  split <;> rename_i h <;> rw [h]
 
 /-- `checkNode`, with the library's `decode` and `encode`. -/
 theorem checkNode_eq (c : Digest) (π : Proof) : checkNode LV c π =
@@ -152,8 +150,15 @@ theorem checkNode_eq (c : Digest) (π : Proof) : checkNode LV c π =
           (decide (π₂.size ≤ proofCap) && check LV c₂ π₂)
       else false
     | _ => false := by
-  rw [checkNode, decodeF_eq]
-  simp only [encodeF_eq]
+  unfold checkNode
+  rw [nodeParse_eq]
+  unfold nodeSpec
+  cases hd : decode π with
+  | none => simp
+  | some w =>
+    cases w with
+    | leaf s n => simp
+    | node c₁ c₂ π₁ π₂ => by_cases he : encode (.node c₁ c₂ π₁ π₂) = π <;> simp [he]
 
 /-- `V` and `check` take the same branches. -/
 theorem V_run (c : Digest) (π : Proof) : (V LV c π).run blake2sOracle = check LV c π := by

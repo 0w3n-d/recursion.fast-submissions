@@ -165,3 +165,58 @@ All runs are `CHECK OK` in PREVIEW mode.
   `leafSize 0 = 80` (§7).
 - **The runner's leaf verifier is a stub** until `Verifier.lean` exists.
 - **Harness and negative claims are PENDING** until `SpartanChainFinal.lean` exists.
+
+## Mid-review fixes (`docs/reviews/V3-S2b-midreview.md`)
+
+- **S2b-M1, fixed.**
+  - `Facts.queries` now reads
+    `∀ H s n h sn, n ≤ chainCap → ((LV.prog s n h sn).queries H).length ≤ qVR1`.
+  - `V_queries` takes `n ≤ chainCap` from `leafHeaderOK`, through `leafHeaderOK_iff`.
+  - For the real verifier the field is now `Leaf.queries_le`. This was kernel-checked in the
+    scratch file `logs/spartan-chain/infra/core/scratchm2/M1.lean`:
+    `fun H s n h sn hn => Leaf.queries_le (H := H) ev s hn h sn`. The final module can use it as
+    is.
+- **S2b-M2, fixed.** A node codec over byte offsets is now in `SpartanChainDecode.lean`:
+  - `encodeNodeB` builds the node encoding by `ByteArray` appends; `encodeNodeB_eq` proves it
+    equal to `encode`, through `wordsBytes_packBytes`.
+  - `nodeParse` reads the two length words, the two digests and the two children with `extract`,
+    and tests canonicity against `encodeNodeB`.
+  - `nodeParse_eq : nodeParse π = nodeSpec π` proves it equal to the library's canonical node
+    decoding. It rests on `nodeParse_sound`, `nodeParse_encode` and `decode_node_fits`.
+  - `check` and `checkNode` (`SpartanChainVerifierTop`) now run `nodeParse`. Every public
+    statement is unchanged: `check_eq`, `checkNode_eq`, `checkNode_sound`, `check_encode_node`,
+    `final_*`.
+  - `P` builds nodes with `encodeNodeB`.
+
+  Measurements: the compiled `vb (Leaf.leafVerifier chainEvals)`, on the same `r = 2`, `n = 16`
+  Rust tree, `Vb` call time on the development VM.
+
+  | Proof | Before | After |
+  |---|---|---|
+  | Root (575 112 B) | 2.33 / 2.40 / 2.51 s | 0.99–1.21 s over 8 runs (one outlier 1.71 s at load 6) |
+  | Level-1 node | 0.83 s | 0.47 s |
+  | Leaf | 0.24 s | 0.24 s |
+
+  Logs: `logs/spartan-chain/fix-m2/before-root.log` and `after-root.log`. The root now costs
+  about its four leaves (≈ 0.95 s) plus under 0.1 s of codec. A 1 MiB random proof is rejected in
+  4 ms. The smoke run of `check.sh` measured the root check at 1.19 s of process wall
+  (`logs/spartan-chain/infra/check-m2b/smoke.log`). Each level still copies its children
+  (`extract`), so caterpillar proofs remain `O(|π|·depth)` (m4), now at memcpy cost.
+- **S2b-m3, fixed.**
+  - `check.sh` no longer uses `Run`. It builds the local runner `entry-verify` outside the root
+    (`vb (Leaf.leafVerifier chainEvals)`, in the scratch core clone's `entrymain/`).
+  - The PREVIEW stand-in uses the real leaf verifier.
+  - `smoke.py` defaults to `entry-verify` and checks the real `n = 16` tree with the Lean
+    verifier.
+  - The source rule and hygiene are reported, and become fatal once `SpartanChainFinal.lean`
+    exists. They currently flag `partial` in a comment of `SpartanChainSoundnessPCS.lean:511`,
+    which is not one of these modules.
+  - Run `logs/spartan-chain/infra/check-m2b.log`: `CHECK OK` (PREVIEW), axiom audit 111
+    declarations, `SMOKE: OK` (109 checks, with the Lean root check and its 28 canaries).
+- **S2b-m5, fixed.**
+  - `LICENSE-leanerVM` is leanerVM's `LICENSE` (Apache-2.0) at `532ebb4`.
+  - `README.md` (new) has a "Licences and provenance" section that names the copied files.
+- **Not done here.**
+  - m2, the equality of `Submission.P` with `Leaf.proveLeaf`: it needs the prover module's
+    `leafHeader`, and is for the final instantiation.
+  - m6 to m12 concern other modules.

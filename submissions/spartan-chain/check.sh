@@ -64,13 +64,75 @@ PY
 [[ $FINAL == 0 ]] || grep -q "^hygiene OK" "$L/hygiene.log" || { echo "hygiene FAILED (final mode)"; exit 1; }
 
 echo "== 3. source rule (the core's scripts/source-rule.py on the root)"
-python3 -I "$CORE/scripts/source-rule.py" "$B" 2>&1 | tee "$L/source-rule.log"
+python3 -I "$CORE/scripts/source-rule.py" "$B" > "$L/source-rule.log" 2>&1 && sr=0 || sr=1
+cat "$L/source-rule.log"
+if [[ $sr == 1 ]]; then
+  [[ $FINAL == 0 ]] || { echo "source rule FAILED"; exit 1; }
+  echo "source rule: findings (reported only until SpartanChainFinal.lean exists)"
+fi
 
 echo "== 4. build (scratch core clone; the infrastructure modules, the runner$( [[ $FINAL == 1 ]] && echo ', the final module'))"
-targets="RecursionFastContract SpartanChainSubmission entry-run"; [[ $FINAL == 1 ]] && targets="$targets SpartanChainFinal"
-ENTRY_TARGETS=$targets "${TIME[@]}" "$CORE/scripts/setup-scratch.sh" entry "$B" SpartanChainRun 2>&1 | tee "$L/build.log"
+targets="RecursionFastContract SpartanChainSubmission SpartanChainVerifier SpartanChainChainEval"
+[[ $FINAL == 1 ]] && targets="$targets SpartanChainFinal"
+ENTRY_TARGETS=$targets "${TIME[@]}" "$CORE/scripts/setup-scratch.sh" entry "$B" 2>&1 | tee "$L/build.log"
 grep -q "setup-scratch: entry" "$L/build.log" || { echo "build FAILED"; exit 1; }
-! grep -qE "warning: .*SpartanChain(VerifierTop|Submission|Decode|Run)" "$L/build.log" || { echo "warnings in the infrastructure modules"; exit 1; }
+! grep -qE "warning: .*SpartanChain(VerifierTop|Submission|Decode)\.lean" "$L/build.log" || { echo "warnings in the infrastructure modules"; exit 1; }
+# The local runner `entry-verify` (outside the root: a `main` is not entry code): the compiled
+# instantiated verifier `vb (Leaf.leafVerifier chainEvals)`, for smoke.py.
+mkdir -p "$CORE/entrymain"
+cat > "$CORE/entrymain/EntryVerify.lean" <<'EOF'
+import SpartanChainVerifier
+import SpartanChainChainEval
+
+/-! Local runner (outside the entry root): the compiled instantiated verifier
+`vb (Leaf.leafVerifier chainEvals)` on a statement and a proof. -/
+
+open SpartanChain RecursionFast
+
+def hexDigit (c : Char) : Option UInt8 :=
+  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat).toUInt8
+  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10).toUInt8
+  else if 'A' ≤ c ∧ c ≤ 'F' then some (c.toNat - 'A'.toNat + 10).toUInt8
+  else none
+
+def parseHex : List Char → Option (List UInt8)
+  | [] => some []
+  | a :: b :: r => do
+    let x ← hexDigit a
+    let y ← hexDigit b
+    let t ← parseHex r
+    pure ((x * 16 + y) :: t)
+  | [_] => none
+
+def readDigest (path : String) : IO Digest := do
+  let raw ← IO.FS.readBinFile path
+  if h : raw.data.size = 32 then return ⟨raw.data, h⟩
+  let some l := parseHex (String.fromUTF8! raw).trimAscii.toString.toList
+    | throw (IO.userError s!"{path}: not a statement")
+  if h : l.toArray.size = 32 then return ⟨l.toArray, h⟩
+  throw (IO.userError s!"{path}: not a statement")
+
+def verify (stmt proof : String) : IO UInt32 := do
+  let c ← readDigest stmt
+  let π ← IO.FS.readBinFile proof
+  let t₀ ← IO.monoNanosNow
+  let b ← IO.lazyPure fun _ => vb (Leaf.leafVerifier chainEvals) c π
+  let t₁ ← IO.monoNanosNow
+  let verdict := if b then "accept" else "reject"
+  IO.eprintln s!"Vb: {verdict} in {(t₁ - t₀) / 1000} us ({π.size} bytes)"
+  pure (if b then 0 else 1)
+
+def main (args : List String) : IO UInt32 := do
+  try
+    match args with
+    | ["verify", stmt, proof] => verify stmt proof
+    | _ => IO.eprintln "usage: entry-verify verify STMT.hex PROOF.bin"; pure 2
+  catch e => IO.eprintln s!"entry-verify: {e}"; pure 2
+EOF
+grep -q '^name = "entry-verify"' "$CORE/lakefile.toml" \
+  || printf '\n[[lean_exe]]\nname = "entry-verify"\nsrcDir = "entrymain"\nroot = "EntryVerify"\n' >> "$CORE/lakefile.toml"
+(cd "$CORE" && "${TIME[@]}" timeout "$TIMEOUT" lake build entry-verify) 2>&1 | grep -E "error|s wall|Build completed" | tee -a "$L/build.log"
+[[ -x "$CORE/.lake/build/bin/entry-verify" ]] || { echo "runner build FAILED"; exit 1; }
 
 echo "== 5. render the organiser's challenge stub with claim.json"
 python3 -I "$CORE/scripts/render-challenge.py" "$CORE/$STUB" "$B/claim.json" "$L/SpartanChainChallenge.lean"
@@ -90,11 +152,12 @@ else
   mkdir -p "$T/pv"
   cat > "$T/pv/SpartanChainFinal.lean" <<'EOF'
 import SpartanChainSubmission
-import SpartanChainRun
+import SpartanChainVerifier
+import SpartanChainChainEval
 namespace SpartanChain
 open RecursionFast
-/-- Stand-in: the runner's (stub) leaf verifier. -/
-def leafVerifier : LeafVerifier := Run.runLV
+/-- Stand-in: the real leaf verifier. -/
+def leafVerifier : LeafVerifier := Leaf.leafVerifier chainEvals
 /-- Stand-in prover: an empty SNARK. -/
 def proveLeafR1 (_ : Digest) (_ : ℕ) (_ : Digest) : OProg ByteArray := .ret ByteArray.empty
 /-- Stand-in facts (PREVIEW only). -/
@@ -112,8 +175,8 @@ fi
 
 echo "== 7. axiom audit of the infrastructure modules"
 {
-  printf 'import SpartanChainSubmission\nimport SpartanChainRun\n'
-  for f in SpartanChainDecode SpartanChainVerifierTop SpartanChainSubmission SpartanChainRun; do
+  printf 'import SpartanChainSubmission\n'
+  for f in SpartanChainDecode SpartanChainVerifierTop SpartanChainSubmission; do
     ns=$(grep -m1 "^namespace" "$B/$f.lean" | awk '{print $2}')
     grep -E "^(noncomputable )?(theorem|def|abbrev) " "$B/$f.lean" | sed 's/^noncomputable //' | awk '{print $2}' \
       | grep -vx main | while read -r n; do echo "#print axioms $ns.$n"; done
@@ -152,7 +215,7 @@ else
 fi
 
 echo "== 9. smoke: the Rust prover, the native and the compiled Lean verifiers, the canaries"
-"${TIME[@]}" python3 -I "$B/smoke.py" --run "$CORE/.lake/build/bin/entry-run" 2>&1 | tee "$L/smoke.log"
+"${TIME[@]}" python3 -I "$B/smoke.py" --run "$CORE/.lake/build/bin/entry-verify" 2>&1 | tee "$L/smoke.log"
 grep -q "^SMOKE: OK" "$L/smoke.log" || exit 1
 
 echo "== 10. line counts (the core's scripts/loc.py)"

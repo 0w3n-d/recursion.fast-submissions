@@ -64,6 +64,9 @@ Run it on the root before you finish.
   build-time defect, and build time is a stated priority of this work. Never let the kernel or
   `decide` evaluate the `2^14`-row block or BLAKE2s on concrete data; reason about the generic
   definitions instead.
+- **Never kill processes you did not start.** No `pkill lean`, `killall lake` or other
+  name-based kills: about ten agents build concurrently, and a global kill destroys their work.
+  Kill only by the PID of your own process, or use `timeout`.
 - Give every Lean or cargo command a `timeout`. If a build runs much longer than expected,
   inspect it with `ps` (locks, a package being rebuilt from scratch) rather than waiting.
 

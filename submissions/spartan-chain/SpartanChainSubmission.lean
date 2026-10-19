@@ -11,7 +11,8 @@ instantiation is one line once they exist:
   * `leaf_complete`: for every oracle, the honest SNARK has the right size and is accepted
     (`Completeness.lean`);
   * `ks`: a knowledge state with error `2^-129` for `Rel (vb LV)` (`Soundness/KS.lean`);
-  * `queries`: the SNARK verifier asks at most `2^14` queries (L-Q1).
+  * `queries`: the SNARK verifier asks at most `2^14` queries on every chain of at most
+    `chainCap` steps (L-Q1; the leaf header rejects longer chains before any query).
 
 What this module proves, for every such instantiation:
 * `Vb_eq`: the instantiated verifier is `vb LV` (`SpartanChainVerifierTop`);
@@ -46,7 +47,7 @@ def P (proveLeaf : Digest → ℕ → Digest → OProg ByteArray) (_ : Digest) :
   | .leaf s n =>
     if n = 0 then .ret (leafBytes s 0 s ByteArray.empty)
     else proveLeaf s n (chainEnd s n) >>= fun πS => .ret (leafBytes s n (chainEnd s n) πS)
-  | .node c₁ c₂ π₁ π₂ => .ret (encodeF (.node c₁ c₂ π₁ π₂))
+  | .node c₁ c₂ π₁ π₂ => .ret (encodeNodeB c₁ c₂ π₁ π₂)
 
 /-! ## Parsing the honest leaf proof -/
 
@@ -127,8 +128,10 @@ structure Facts (LV : LeafVerifier) (proveLeaf : Digest → ℕ → Digest → O
       (LV.prog s n (chainEnd s n) ((proveLeaf s n (chainEnd s n)).run H)).run H = true
   /-- A knowledge state with error `2^-129` (`Soundness/KS.lean`). -/
   ks : Nonempty (KState (Rel (vb LV)) (V LV) WitnessSending.E εR1)
-  /-- L-Q1: the SNARK verifier asks at most `2^14` queries. -/
-  queries : ∀ (H : ByteArray → Digest) s n h sn, ((LV.prog s n h sn).queries H).length ≤ qVR1
+  /-- L-Q1: the SNARK verifier asks at most `2^14` queries on a chain of at most `chainCap` steps
+  (the only ones `leafProg` runs it on). -/
+  queries : ∀ (H : ByteArray → Digest) s n h sn, n ≤ chainCap →
+    ((LV.prog s n h sn).queries H).length ≤ qVR1
 
 variable (LV : LeafVerifier) (proveLeaf : Digest → ℕ → Digest → OProg ByteArray)
 
@@ -151,7 +154,7 @@ theorem complete (F : Facts LV proveLeaf) :
   cases w with
   | node c₁ c₂ π₁ π₂ =>
     have hπ : (P proveLeaf c (.node c₁ c₂ π₁ π₂)).run H = encode (.node c₁ c₂ π₁ π₂) := by
-      simp [P, OProg.run, encodeF_eq]
+      simp [P, OProg.run, encodeNodeB_eq]
     rw [hπ, V_eq_ret LV (by rw [tagWord_encode_node]; omega)]
     exact check_encode_node LV hR
   | leaf s n =>
@@ -187,7 +190,8 @@ theorem V_queries (F : Facts LV proveLeaf) (H : ByteArray → Digest) (c : Diges
   by_cases hl : 8 ≤ π.size ∧ tagWord π = 0
   · rw [V, ite_eq_right (by omega), ite_eq_left hl.2, leafProg_queries]
     split_ifs
-    · exact F.queries ..
+    · rename_i hh
+      exact F.queries _ _ _ _ _ ((leafHeaderOK_iff LV).mp hh.1).1
     · simp
   · rw [V_queries_of_not_leaf LV H hl]; simp
 

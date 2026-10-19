@@ -15,7 +15,8 @@
    (one byte appended, the last byte removed, one statement bit flipped, a swapped child digest /
    a sibling's statement for a leaf): all reject. `prover node` on the root's children reproduces
    root.bin. Proof sizes match §7 (a node is 8·(11 + ⌈|π₁|/8⌉ + ⌈|π₂|/8⌉) bytes).
-5. The compiled Lean verifier (`entry-run verify`, `vb runLV` of SpartanChainVerifierTop):
+5. The compiled Lean verifier (`entry-verify verify`, built by check.sh outside the root:
+   `vb (Leaf.leafVerifier chainEvals)` of SpartanChainVerifierTop and SpartanChainVerifier):
    * if its leaf verifier is the STUB (it says so on standard error), the n-step tree is only
      checked to be rejected at the leaves, and a second, zero-step tree (n = 0, which the stub
      decides exactly) is run through the Lean verifier: every proof accepted against the
@@ -114,7 +115,7 @@ def main():
     global REF
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default=os.path.join(os.environ.get("CORE") or os.path.join(REPO, "logs/spartan-chain/infra/core"),
-                                                  ".lake/build/bin/entry-run"))
+                                                  ".lake/build/bin/entry-verify"))
     ap.add_argument("--prover")
     ap.add_argument("--target", default=os.path.join(REPO, "logs/spartan-chain/infra/target"))
     ap.add_argument("--relation", default=os.path.join(REPO, ".contract/RecursionFast/Contract/Relation.lean"))
@@ -140,7 +141,7 @@ def main():
         print(f"cargo build --release: {time.monotonic() - t0:.1f} s wall")
     run = os.path.realpath(a.run)
     if not os.access(run, os.X_OK):
-        raise SystemExit(f"no executable {run}: run check.sh (or setup-scratch.sh with SpartanChainRun) first")
+        raise SystemExit(f"no executable {run}: run check.sh first (it builds entry-verify)")
     REF = Ref(tags(a.relation))
     native, lean = Verifier(prover, work, False), Verifier([run], work, True)
     print(f"r = {a.r}, n = {a.n}, work {work}, prover {prover[0]}, Lean verifier {run}")

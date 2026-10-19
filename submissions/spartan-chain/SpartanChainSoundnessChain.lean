@@ -1,14 +1,19 @@
-import SpartanChainSoundnessDefs
+import SpartanChainSoundnessFinal
 import SpartanChainVerifier
 
 /-!
 # L-K4 `runLog_chain`: an accepted SNARK run is a complete chain of the log (BLUEPRINT-R1 §9.1)
 
 For a log `L` without bad events, an accepting run of the leaf SNARK verifier `snarkProg ev s n h π`
-on `L` (with `1 ≤ n ≤ chainCap` and the §7 size of `π`, both checked by `leafProg` before the
-SNARK runs) gives `RunChain ev L s n h` (`SpartanChainSoundnessFinal`): a chain `j` of `L` whose
+on `L` gives `RunChain ev L s n h` (`SpartanChainSoundnessFinal`): a chain `j` of `L` whose
 path is complete, whose statement is `(s, n, h)`, none of whose checks (a)–(f) fails, and whose
-column phase accepts on `L` with the chain's root, `r`, `a`, `ū`, `v` and index answers.
+column phase accepts on `L` with the chain's root, `r`, `a`, `ū`, `v` and index answers
+(`runLog_chain`). Two hypotheses besides `¬ Bad`, `1 ≤ n` and acceptance are needed, both
+checked by `leafProg` before the SNARK runs: `n ≤ chainCap` (a chain's seed has it, `Matches`)
+and `off₃ κ ≤ |π_S|` (fields 1, 2 and 8 have their §7 lengths, so the absorbs match the shape;
+`snarkProg` itself reads past the end as zeros). `hchain_of_leafProg` derives them from an
+accepting `leafProg`, and `mu_final_leaf_closed` is `SoundnessFinal.mu_final_leaf` with its
+`hchain` discharged.
 
 The proof:
 
@@ -1050,5 +1055,302 @@ theorem steps_fs (hm : m.WellSized κ) (hπ : Leaf.off₃ κ ≤ π.size)
       (steps_sqBlock H _ _)
 
 end Shape
+
+/-! ## 8. The checks that pass: `¬ Rej` -/
+
+/-- **A passing `verifyRounds`**: every round has `d + 1` coefficients and `g(0) + g(1)` equal to
+the running claim `cl l`, and the result is the last claim. -/
+theorem verifyRounds_some {d : ℕ} :
+    ∀ (gs : List (Array EF)) (rs : List EF) (c₀ c : EF) (cl : ℕ → EF), gs.length = rs.length →
+      cl 0 = c₀ → (∀ l (hl : l < gs.length), cl (l + 1) = peval gs[l] (rs.getD l 0)) →
+      verifyRounds d c₀ (gs.zip rs) = some c →
+      (∀ l (hl : l < gs.length), gs[l].size = d + 1 ∧ peval gs[l] 0 + peval gs[l] 1 = cl l) ∧
+        c = cl gs.length := by
+  intro gs
+  induction gs with
+  | nil =>
+    intro rs c₀ c cl _ h0 _ hv
+    simp only [List.zip_nil_left, verifyRounds, Option.some.injEq] at hv
+    exact ⟨fun l hl => by simp at hl, by rw [← hv, ← h0]; rfl⟩
+  | cons g gs ih =>
+    intro rs c₀ c cl hlen h0 hs hv
+    obtain ⟨r, rs, rfl⟩ : ∃ r rs', rs = r :: rs' := by
+      cases rs with
+      | nil => simp at hlen
+      | cons r rs' => exact ⟨r, rs', rfl⟩
+    simp only [List.zip_cons_cons, verifyRounds] at hv
+    split_ifs at hv with hok
+    have h1 : cl 1 = peval g r := hs 0 (by simp)
+    obtain ⟨ih1, ih2⟩ := ih rs (peval g r) c (fun l => cl (l + 1)) (by simpa using hlen) h1
+      (fun l hl => hs (l + 1) (by simpa using hl)) hv
+    refine ⟨fun l hl => ?_, by rw [ih2]; rfl⟩
+    cases l with
+    | zero => rw [h0]; exact hok
+    | succ l => exact ih1 l (by simpa using hl)
+
+/-- What `Spartan.check` returning a claim means. -/
+theorem check_some {κ : ℕ} {ev : Spartan.Evals} {m : Spartan.Msgs} {τ rx : List EF} {ρ : EF}
+    {ry fs rr : List EF} {pc : Spartan.PcsClaim}
+    (h : Spartan.check κ ev m τ rx ρ ry fs rr = some pc) :
+    ∃ c₁ c₂ c₃, verifyRounds 3 0 (m.outer.zip rx) = some c₁ ∧
+      verifyRounds 2 (m.vA + ρ * m.vB + ρ ^ 2 * m.vC) (m.inner.zip ry) = some c₂ ∧
+      verifyRounds 2 (target Spartan.xE fs m.slices) (m.ring.zip rr) = some c₃ ∧
+      c₁ = eqPts τ rx * (m.vA * m.vB + m.vC) ∧
+      c₂ = ((ev.mats rx ry).1 + ρ * (ev.mats rx ry).2.1 + ρ ^ 2 * (ev.mats rx ry).2.2) *
+        Spartan.zV κ ev m.slices ry ∧
+      pc = ⟨rr, weightEval fs ((ry.take (Spartan.lu κ)).drop 6) rr, c₃⟩ := by
+  unfold Spartan.check at h
+  split_ifs at h with hsz
+  split at h
+  · rename_i c₁ c₂ c₃ h1 h2 h3
+    simp only at h
+    split_ifs at h with hc
+    exact ⟨c₁, c₂, c₃, h1, h2, h3, hc.1, hc.2, (Option.some.inj h).symm⟩
+  · cases h
+
+/-- **No check fails on the verifier's chain** (`¬ Rej`): `check` returned a claim and check (f)
+passed. -/
+theorem not_rej (ev : Leaf.EvalsFor) (H : ByteArray → Digest) (s : Digest) {n : ℕ} (h : Digest)
+    (π : ByteArray) (m : Spartan.Msgs) (vB : ByteArray) (hm : m.WellSized (Leaf.kap n))
+    (hn : n < 2 ^ 64) {pc : Spartan.PcsClaim}
+    (hc : Spartan.check (Leaf.kap n) (ev (Leaf.kap n) n s h) m
+        ((sqBlock H (stU H (Leaf.kap n) s n h π) (Spartan.ly (Leaf.kap n))).map Prod.snd |>.map chE)
+        ((rdAns H 0x03 (spS1 H (Leaf.kap n) (stU H (Leaf.kap n) s n h π)) m.outer).map chE)
+        (chE (spRho H (Leaf.kap n) m (stU H (Leaf.kap n) s n h π)))
+        ((rdAns H 0x05 (spRho H (Leaf.kap n) m (stU H (Leaf.kap n) s n h π)) m.inner).map chE)
+        (((sqBlock H (spA6 H (Leaf.kap n) m (stU H (Leaf.kap n) s n h π)) 6).map Prod.snd).map chE)
+        ((rdAns H 0x07 (spS6 H (Leaf.kap n) m (stU H (Leaf.kap n) s n h π)) m.ring).map chE)
+        = some pc)
+    (hf : Leaf.finalCheck (Leaf.kap n) pc (Ligero.readEFs vB 0 (msgLen (Leaf.kap n))) = true) :
+    ¬ Rej ev (fsEntries H (Leaf.kap n) s n h π m vB) := by
+  set κ := Leaf.kap n with hκ
+  set E := fsEntries H κ s n h π m vB with hE
+  have hst : stmtOf E = (s, n, h) := stmtOf_fs H κ s n h π m vB hn
+  have hk : kapOf E = κ := by unfold kapOf; rw [hst]; rfl
+  obtain ⟨c₁, c₂, c₃, h1, h2, h3, hc1, hc2, hpc⟩ := check_some hc
+  have hly := ly_eq κ
+  -- the three sumchecks
+  have ho := verifyRounds_some m.outer _ 0 c₁ (clOut κ E) (by simp [length_rdAns])
+    rfl (fun l hl => by
+      simp only [clOut]
+      rw [gOut_fs H κ s n h π m vB hm (by rw [← hm.1]; exact hl), rxOf_fs H κ s n h π m vB hm])
+    h1
+  have hi := verifyRounds_some m.inner _ _ c₂ (clIn κ E) (by simp [length_rdAns])
+    (by simp only [clIn]; rw [triOf_fs H κ s n h π m vB hm, rhoOf_fs H κ s n h π m vB hm])
+    (fun l hl => by
+      simp only [clIn]
+      rw [gIn_fs H κ s n h π m vB hm (by rw [← hm.2.2.1]; exact hl),
+        ryOf_fs H κ s n h π m vB hm])
+    h2
+  have hr := verifyRounds_some m.ring _ _ c₃ (clRs κ E) (by simp [length_rdAns])
+    (by simp only [clRs]; rw [fsOf_fs H κ s n h π m vB hm, slicesOf_fs H κ s n h π m vB hm])
+    (fun l hl => by
+      simp only [clRs]
+      rw [gRs_fs H κ s n h π m vB hm (by rw [← hm.2.2.2.2.2.1]; exact hl),
+        rrOf_fs H κ s n h π m vB hm])
+    h3
+  intro hrej
+  unfold Rej at hrej
+  simp only [hk, hst] at hrej
+  rcases hrej with ⟨l, hl, -, hno⟩ | ⟨-, hb⟩ | ⟨l, hl, -, hno⟩ | ⟨-, hd⟩ | ⟨l, hl, -, hno⟩ | ⟨-, hf'⟩
+  · have hl' : l < m.outer.length := by rw [hm.1]; omega
+    exact hno ⟨by rw [gOut_fs H κ s n h π m vB hm (by omega)]; exact (ho.1 l hl').1,
+      by rw [gOut_fs H κ s n h π m vB hm (by omega)]; exact (ho.1 l hl').2⟩
+  · apply hb
+    rw [show 15 + κ = m.outer.length by rw [hm.1]; omega, ← ho.2, hc1,
+      tauOf_fs H κ s n h π m vB hm, rxOf_fs H κ s n h π m vB hm, triOf_fs H κ s n h π m vB hm]
+  · have hl' : l < m.inner.length := by rw [hm.2.2.1]; omega
+    exact hno ⟨by rw [gIn_fs H κ s n h π m vB hm (by omega)]; exact (hi.1 l hl').1,
+      by rw [gIn_fs H κ s n h π m vB hm (by omega)]; exact (hi.1 l hl').2⟩
+  · apply hd
+    rw [show 15 + κ = m.inner.length by rw [hm.2.2.1]; omega, ← hi.2, hc2,
+      rxOf_fs H κ s n h π m vB hm, ryOf_fs H κ s n h π m vB hm, rhoOf_fs H κ s n h π m vB hm,
+      slicesOf_fs H κ s n h π m vB hm]
+  · have hl' : l < m.ring.length := by rw [hm.2.2.2.2.2.1]; unfold Spartan.lq; omega
+    exact hno ⟨by rw [gRs_fs H κ s n h π m vB hm (by unfold Spartan.lq; omega)]; exact (hr.1 l hl').1,
+      by rw [gRs_fs H κ s n h π m vB hm (by unfold Spartan.lq; omega)]; exact (hr.1 l hl').2⟩
+  · apply hf'
+    have hcl : clRs κ E (8 + κ) = c₃ := by
+      rw [show 8 + κ = m.ring.length by rw [hm.2.2.2.2.2.1]; rfl, ← hr.2]
+    rw [hcl, rhiOf, fsOf_fs H κ s n h π m vB hm, ryOf_fs H κ s n h π m vB hm,
+      rrOf_fs H κ s n h π m vB hm, vOf_fs H κ s n h π m vB hm]
+    unfold Leaf.finalCheck at hf
+    rw [hpc] at hf
+    simpa using hf
+
+/-! ## 9. L-K4 -/
+
+/-- Every entry of a list is the entry of its query under `H`. -/
+def IsEnt (H : ByteArray → Digest) (es : Log) : Prop := ∀ e ∈ es, e.2 = H e.1
+
+theorem isEnt_append {H : ByteArray → Digest} {A B : Log} (hA : IsEnt H A) (hB : IsEnt H B) :
+    IsEnt H (A ++ B) := by
+  intro e he
+  rcases List.mem_append.mp he with h | h
+  · exact hA e h
+  · exact hB e h
+
+theorem isEnt_ent (H : ByteArray → Digest) (qs : List ByteArray) : IsEnt H (qs.map (ent H)) := by
+  intro e he
+  obtain ⟨q, -, rfl⟩ := List.mem_map.mp he
+  rfl
+
+theorem isEnt_single (H : ByteArray → Digest) (q : ByteArray) : IsEnt H [ent H q] := by
+  intro e he; simp at he; subst he; rfl
+
+theorem isEnt_sqBlock (H : ByteArray → Digest) (st : Digest) (k : ℕ) :
+    IsEnt H (sqBlock H st k) := by
+  induction k generalizing st with
+  | zero => intro e he; simp [sqBlock] at he
+  | succ k ih =>
+    intro e he
+    simp only [sqBlock, List.mem_cons] at he
+    rcases he with rfl | he
+    · rfl
+    · exact ih _ e he
+
+theorem isEnt_rdBlock (H : ByteArray → Digest) (kind : UInt8) (st : Digest)
+    (gs : List (Array EF)) : IsEnt H (rdBlock H kind st gs) := by
+  induction gs generalizing st with
+  | nil => intro e he; simp [rdBlock] at he
+  | cons g gs ih =>
+    intro e he
+    simp only [rdBlock, List.mem_cons] at he
+    rcases he with rfl | rfl | he
+    · rfl
+    · rfl
+    · exact ih _ e he
+
+theorem isEnt_fs (H : ByteArray → Digest) (κ : ℕ) (s : Digest) (n : ℕ) (h : Digest)
+    (π : ByteArray) (m : Spartan.Msgs) (vB : ByteArray) :
+    IsEnt H (fsEntries H κ s n h π m vB) := by
+  rw [fs_eq]
+  refine isEnt_append (isEnt_append (isEnt_append (isEnt_single _ _) ?_) ?_) ?_
+  · exact isEnt_append (isEnt_append (isEnt_single _ _) (isEnt_sqBlock _ _ _)) (isEnt_single _ _)
+  · unfold eS spBlock
+    exact isEnt_append (isEnt_append (isEnt_append (isEnt_append (isEnt_append (isEnt_append
+      (isEnt_sqBlock _ _ _) (isEnt_rdBlock _ _ _ _)) (isEnt_append (isEnt_single _ _)
+      (isEnt_single _ _))) (isEnt_rdBlock _ _ _ _)) (isEnt_single _ _)) (isEnt_sqBlock _ _ _))
+      (isEnt_rdBlock _ _ _ _)
+  · exact isEnt_append (isEnt_single _ _) (isEnt_sqBlock _ _ _)
+
+/-- The column-phase part of `RunChain` (`SpartanChainSoundnessFinal.ColumnsAccepted`, verbatim). -/
+def ColumnsOK (L es : Log) : Prop :=
+  ∃ st opens,
+    (Ligero.verify2 (kapOf es) st (rootOf es) (rVec (kapOf es) es).toArray (aOf (kapOf es) es)
+        (ubarOf (kapOf es) es) (msgOf (entAt es (pV (kapOf es))).1) opens).runLog L = some true ∧
+      SoundnessPCS.idxTuple L (kapOf es) st (msgOf (entAt es (pV (kapOf es))).1) = bOf (kapOf es) es
+
+/-- **L-K4 `runLog_chain`** (component form of `SoundnessFinal.RunChain`): on a log without bad
+events, an accepting run of the leaf SNARK verifier with `1 ≤ n ≤ chainCap` and the §7 bytes
+through field 8 present is a complete chain of `L` with the proof's statement, no failed check
+and an accepting column phase. -/
+theorem runLog_chain' (ev : Leaf.EvalsFor) {L : Log} {s : Digest} {n : ℕ} {h : Digest}
+    {π : ByteArray} (hb : ¬ Bad L) (hn : 1 ≤ n) (hcap : n ≤ chainCap)
+    (hsz : Leaf.off₃ (Leaf.kap n) ≤ π.size)
+    (hacc : (Leaf.snarkProg ev s n h π).runLog L = some true) :
+    ∃ j, IsChain L j ∧ (pathOf L j).length = len (kapOf (entriesOf L (pathOf L j))) ∧
+      stmtOf (entriesOf L (pathOf L j)) = (s, n, h) ∧ ¬ Rej ev (entriesOf L (pathOf L j)) ∧
+      ColumnsOK L (entriesOf L (pathOf L j)) := by
+  set O := OProg.logOracle L with hO
+  obtain ⟨hq, hrun⟩ := (OProg.runLog_eq_some_iff _ _).mp hacc
+  obtain ⟨pc, hc, hf, hv2, hfsq, hv2q⟩ := snark_accept O ev s n h π hrun
+  set κ := Leaf.kap n with hκ
+  set m := Spartan.parseMsgs κ π (Leaf.off₁ κ) with hmdef
+  set vB := π.extract (Leaf.off₂ κ) (Leaf.off₃ κ) with hvB
+  set E := fsEntries O κ s n h π m vB with hE
+  have hm : m.WellSized κ := parseMsgs_wellSized κ π _
+  have hn64 : n < 2 ^ 64 := by unfold chainCap at hcap; omega
+  have hst : stmtOf E = (s, n, h) := stmtOf_fs O κ s n h π m vB hn64
+  have hk : kapOf E = κ := by unfold kapOf; rw [hst]; rfl
+  have hoff : Leaf.off₂ κ ≤ Leaf.off₃ κ := by unfold Leaf.off₃; omega
+  have hvsz : vB.size = 24 * msgLen κ := by
+    rw [hvB, ByteArray.size_extract]; unfold Leaf.off₃ at hsz ⊢; omega
+  -- the entries of `E` are entries of `L`
+  have hmemE : ∀ e ∈ E, e ∈ L := by
+    intro e he
+    have h1 : e.1 ∈ L.map Prod.fst := hq _ (hfsq _ (List.mem_map_of_mem he))
+    have h2 : e = (e.1, O e.1) := by
+      conv_lhs => rw [← Prod.mk.eta (p := e)]
+      rw [isEnt_fs O κ s n h π m vB e he]
+    rw [h2]; exact OProg.mem_logOracle h1
+  have hE0 : E = ent O (seedQ s n h) :: (eV1 O κ s n h π ++ eS O κ s n h π m ++
+      eV2 O κ s n h π m vB) := by
+    show fsEntries O κ s n h π m vB = _
+    rw [fs_eq]; simp
+  have hlinkE : ∀ i (hi : i + 1 < E.length), stateIn E[i + 1].1 = some E[i].2 := by
+    intro i hi
+    have := linked_cons_getElem (e := ent O (seedQ s n h)) (linked_fs O κ s n h π m vB) i
+      (by rw [← hE0]; exact hi)
+    simp only [← hE0] at this
+    exact this
+  have hne : E ≠ [] := by rw [hE0]; simp
+  have hseed : stateIn (E[0]'(List.length_pos_iff.mpr hne)).1 = none := by
+    simp only [hE0, List.getElem_cons_zero, ent]
+    exact stateIn_of_seedOf (seedOf_seedQ s hn64 h)
+  obtain ⟨j, hj, -, hpath⟩ := chain_of_linked hb E hne hmemE hseed hlinkE
+  have hsteps := steps_fs O κ s n h π m vB hm hsz hvsz
+  have hlen : E.length = len κ := by rw [len]; exact hsteps.length_eq.symm
+  have hpl : (pathOf L j).length = E.length := by
+    rw [← hpath]; simp [entriesOf]
+  refine ⟨j, ⟨hj, ?_⟩, ?_, ?_, ?_, ?_⟩ <;> rw [hpath]
+  · -- `Matches E`
+    refine ⟨s, n, h, ?_, hn, hcap, hlen.le, fun i hi => ⟨hlinkE i hi, ?_⟩⟩
+    · rw [hE0]; simp [ent, seedOf_seedQ s hn64 h]
+    · have := hsteps.get (i := i + 1) (by rw [hsteps.length_eq]; exact hi) hi
+      simp only [List.get_eq_getElem] at this
+      exact this
+  · rw [hpl, hk, hlen]
+  · exact hst
+  · exact not_rej ev O s h π m vB hm hn64 hc hf
+  · -- the column phase
+    obtain ⟨c₁, c₂, c₃, -, -, -, -, -, hpc⟩ := check_some hc
+    refine ⟨stV O κ s n h π m, π.extract (Leaf.off₃ κ) π.size, ?_, ?_⟩
+    · rw [hk, rootOf_fs O κ s n h π m vB (by unfold Leaf.off₃ Leaf.off₂ Leaf.off₁ Ligero.size1 at hsz; omega),
+        rVec_fs, ubarOf_fs, msgV_fs O κ s n h π m vB hm]
+      have ha : aOf κ E = eqTable (pc.point.drop (lk κ)) := by
+        unfold aOf; rw [rrOf_fs O κ s n h π m vB hm, hpc]
+      rw [ha]
+      exact (OProg.runLog_eq_some_iff _ _).mpr ⟨fun q hq' => hq q (hv2q q hq'), hv2⟩
+    · rw [hk, msgV_fs O κ s n h π m vB hm]
+      funext i
+      rw [bOf_fs O κ s n h π m vB hm]
+      simp only [SoundnessPCS.idxTuple, SoundnessPCS.idxAnswers, absorb, OProg.run_ask,
+        run_squeezeN']
+      rw [List.getD_eq_getElem _ _ (by simp [length_sqBlock])]
+
+/-- **L-K4 `runLog_chain`** in the form `SoundnessFinal.RunChain` takes. -/
+theorem runLog_chain (ev : Leaf.EvalsFor) {L : Log} {s : Digest} {n : ℕ} {h : Digest}
+    {π : ByteArray} (hb : ¬ Bad L) (hn : 1 ≤ n) (hcap : n ≤ chainCap)
+    (hsz : Leaf.off₃ (Leaf.kap n) ≤ π.size)
+    (hacc : (Leaf.snarkProg ev s n h π).runLog L = some true) :
+    SoundnessFinal.RunChain ev L s n h :=
+  runLog_chain' ev hb hn hcap hsz hacc
+
+/-- **The hypothesis `hchain` of `SoundnessFinal.mu_final_leaf`**, for the entry's leaf verifier,
+from an accepting leaf run (whose header check gives `n ≤ chainCap` and the exact size). -/
+theorem hchain_of_leafProg (ev : Leaf.EvalsFor) {L : Log} {c : Digest} {π : Proof}
+    (hacc : (leafProg (Leaf.leafVerifier ev) c π).runLog L = some true) :
+    ¬ Bad L → leafN π ≠ 0 →
+      ((Leaf.leafVerifier ev).prog (leafS π) (leafN π) (leafH π) (leafSnark π)).runLog L =
+        some true →
+      SoundnessFinal.RunChain ev L (leafS π) (leafN π) (leafH π) := by
+  intro hb hn hrun
+  obtain ⟨hcap, hsize, -, -, -⟩ := SoundnessFinal.leafProg_accept (Leaf.leafVerifier ev) hacc
+  have hsz : Leaf.off₃ (Leaf.kap (leafN π)) ≤ (leafSnark π).size := by
+    have : π.size = 80 + Leaf.snarkSize (Leaf.kap (leafN π)) := by
+      rw [hsize]; simp [Leaf.leafVerifier, Leaf.leafSize, hn]
+    rw [leafSnark, ByteArray.size_extract, min_self, this]
+    unfold Leaf.snarkSize Leaf.off₃ Leaf.off₂ Leaf.off₁ Ligero.size2
+    omega
+  exact runLog_chain ev hb (Nat.one_le_iff_ne_zero.mpr hn) hcap hsz hrun
+
+/-- **`final` for the leaf branch, closed** (§9.3): if `μ L < 1` and the entry's `leafProg`
+accepts on `L`, the parsed statement is true. -/
+theorem mu_final_leaf_closed (ev : Leaf.EvalsFor) {L : Log} {c : Digest} {π : Proof}
+    (hμ : μ ev L < 1) (hacc : (leafProg (Leaf.leafVerifier ev) c π).runLog L = some true) :
+    leafN π ≤ chainCap ∧ c = leafStmt (leafH π) (leafN π) ∧
+      chainEnd (leafS π) (leafN π) = leafH π :=
+  SoundnessFinal.mu_final_leaf (Leaf.leafVerifier ev) ev hμ hacc (hchain_of_leafProg ev hacc)
 
 end SpartanChain.SoundnessChain

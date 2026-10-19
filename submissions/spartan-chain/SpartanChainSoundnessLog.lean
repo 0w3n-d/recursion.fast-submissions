@@ -29,6 +29,13 @@ The parts of §9.1 and §9.3 that do not depend on the verifier's `leafProg`:
   answers of a round, the number of completions of `pre` is the sum over the next answer `a` of
   the number of completions of `pre ++ [a]`. This is the martingale step of every multi-answer
   round.
+* **Chains** (§9.1, second revision): `Step`, `Step.matches` (tag, length and kind), `shape κ`
+  (§6.2 step by step), `len`, `entriesOf`, `Matches` (a seed of `1 ≤ n ≤ chainCap`, then the
+  steps of its shape, state-linked; decidable through `matchesB`), `IsChain`, `chains`, `cut`,
+  `L₀`; `L₀_append`, `split_at_cut` (the split of L-M3/L-M4 at the chain's `absorb(root)`
+  entry), **L-K8 `chains_append`** (old chains are kept, at most the new entry is added) with
+  `isChain_new` (a new chain is a seed or extends its predecessor's chain) and its converses
+  `isChain_new_of_seed`, `isChain_new_of_extend`.
 -/
 
 namespace SpartanChain

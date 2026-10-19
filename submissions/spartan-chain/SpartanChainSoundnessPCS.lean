@@ -498,6 +498,109 @@ noncomputable def zDec (κ : ℕ) (U : Fin (rows κ) → Fin (cols κ) → F) (s
     Ix κ → EF :=
   zOf (fun u => EF.ofF (wDec κ U u)) s h
 
+
+/-! ### Bit-plane packing (§4.1; review S2b-M4) -/
+
+theorem F_add_val (x y : F) : (x + y).val = x.val ^^^ y.val := rfl
+theorem F_zero_val : (0 : F).val = 0 := rfl
+
+/-- The word `2^i` (`i < 64`) is `x^i` (bit `i` of the word is the coefficient of `x^i`). -/
+theorem x_pow_word : ∀ i : Fin 64, F.x ^ (i : ℕ) = ⟨(1 : UInt64) <<< (i.val.toUInt64)⟩ := by
+  decide +kernel
+
+/-- The term of bit `i` of `a`: the word `2^i` if the bit is set, else `0`. -/
+def bitTerm (a : F) (i : ℕ) : F := if a.val.toNat.testBit i then ⟨(1 : UInt64) <<< i.toUInt64⟩ else 0
+
+theorem bitTerm_toNat (a : F) {i : ℕ} (hi : i < 64) :
+    (bitTerm a i).val.toNat = if a.val.toNat.testBit i then 2 ^ i else 0 := by
+  unfold bitTerm
+  split_ifs
+  · simp [UInt64.toNat_shiftLeft, Nat.shiftLeft_eq, Nat.mod_eq_of_lt hi]
+    exact lt_of_lt_of_le (Nat.pow_lt_pow_right (by norm_num) hi) (by norm_num)
+  · rfl
+
+theorem sum_bitTerm (a : F) : ∀ k ≤ 64,
+    (∑ i ∈ range k, bitTerm a i).val.toNat = a.val.toNat % 2 ^ k := by
+  intro k
+  induction k with
+  | zero => intro _; simp [F_zero_val, Nat.mod_one]
+  | succ k ih =>
+    intro hk
+    rw [sum_range_succ, F_add_val, UInt64.toNat_xor, ih (by omega), bitTerm_toNat a (by omega)]
+    apply Nat.eq_of_testBit_eq
+    intro j
+    rw [Nat.testBit_xor, Nat.testBit_mod_two_pow, Nat.testBit_mod_two_pow]
+    split_ifs with hb
+    · rw [Nat.testBit_two_pow]
+      rcases lt_trichotomy j k with h | rfl | h
+      · simp [h, show j < k + 1 by omega, show k ≠ j by omega]
+      · simp [hb]
+      · simp [show ¬ j < k by omega, show ¬ j < k + 1 by omega, show k ≠ j by omega]
+    · simp only [Nat.zero_testBit, Bool.xor_false]
+      by_cases h : j = k
+      · subst h; simp [hb]
+      · by_cases h' : j < k
+        · simp [h', show j < k + 1 by omega]
+        · simp [h', show ¬ j < k + 1 by omega]
+
+/-- **Bit-plane packing over `F`**: a word is the sum of its bits times `x^i`. -/
+theorem word_bits (a : F) :
+    a = ∑ i ∈ range 64, (if a.val.toNat.testBit i then 1 else 0) * F.x ^ i := by
+  have h := sum_bitTerm a 64 le_rfl
+  rw [Nat.mod_eq_of_lt a.val.toNat_lt] at h
+  have hs : ∑ i ∈ range 64, bitTerm a i =
+      ∑ i ∈ range 64, (if a.val.toNat.testBit i then 1 else 0) * F.x ^ i := by
+    refine sum_congr rfl fun i hi => ?_
+    rw [mem_range] at hi
+    have := x_pow_word ⟨i, hi⟩
+    simp only at this
+    unfold bitTerm
+    split_ifs <;> simp [this]
+  rw [← hs]
+  cases a with
+  | mk v =>
+    congr 1
+    exact (UInt64.toNat_inj.1 h).symm
+
+
+theorem wDec_eq_bit (κ : ℕ) (U : Fin (rows κ) → Fin (cols κ) → F) (u : Fin (2 ^ (8 + κ)))
+    (h1 : u.val / 2 ^ lk κ < rows κ) {i : ℕ} (hi : i < 64) (v : Fin (2 ^ (14 + κ)))
+    (hv : v.val = 64 * u.val + i) :
+    wDec κ U v = if (qDec κ U ⟨u.val / 2 ^ lk κ, h1⟩
+      ⟨u.val % 2 ^ lk κ, Nat.mod_lt _ (by positivity)⟩).val.toNat.testBit i then 1 else 0 := by
+  have e1 : v.val / 64 = u.val := by omega
+  have e2 : v.val % 64 = i := by omega
+  unfold wDec
+  have hq : qDec κ U ⟨v.val / 64 / 2 ^ lk κ, wDec_row_lt κ v⟩
+      ⟨v.val / 64 % 2 ^ lk κ, Nat.mod_lt _ (by positivity)⟩ =
+      qDec κ U ⟨u.val / 2 ^ lk κ, h1⟩ ⟨u.val % 2 ^ lk κ, Nat.mod_lt _ (by positivity)⟩ := by
+    congr 1 <;> exact Fin.ext (by simp only [e1])
+  rw [hq, e2]
+
+/-- **Bit-plane packing lemma** (S2b-M4), over `F`: the decoded packed element
+`q_dec(u) = Q_dec[u / k][u mod k]` is `Σ_{i<64} Q_i(u) · x^i`, where `Q_i(u) = w_dec(i + 64 u)` is
+bit-plane `i` (`planes i` is any index of value `64 u + i`, e.g. `Fin.cast _ (join i u)`). -/
+theorem qDec_bitplanes (κ : ℕ) (U : Fin (rows κ) → Fin (cols κ) → F) (u : Fin (2 ^ (8 + κ)))
+    (h1 : u.val / 2 ^ lk κ < rows κ) (planes : Fin (2 ^ 6) → Fin (2 ^ (14 + κ)))
+    (hp : ∀ i, (planes i).val = 64 * u.val + i.val) :
+    qDec κ U ⟨u.val / 2 ^ lk κ, h1⟩ ⟨u.val % 2 ^ lk κ, Nat.mod_lt _ (by positivity)⟩ =
+      ∑ i : Fin (2 ^ 6), wDec κ U (planes i) * F.x ^ (i : ℕ) := by
+  conv_lhs => rw [word_bits (qDec κ U _ _)]
+  rw [show (64 : ℕ) = 2 ^ 6 by norm_num, ← Fin.sum_univ_eq_sum_range]
+  exact Finset.sum_congr rfl fun i _ => by
+    rw [wDec_eq_bit κ U u h1 (by simp) (planes i) (hp i)]
+
+/-- **Bit-plane packing lemma** over `EF` (the form of ring switching: `wX i = ι(x^i)`,
+`qPlane κ U i u = EF.ofF (w_dec(…))`): `EF.ofF (q_dec(u)) = Σ_i ι(x^i) · EF.ofF (Q_i(u))`. -/
+theorem qDec_bitplanes_EF (κ : ℕ) (U : Fin (rows κ) → Fin (cols κ) → F) (u : Fin (2 ^ (8 + κ)))
+    (h1 : u.val / 2 ^ lk κ < rows κ) (planes : Fin (2 ^ 6) → Fin (2 ^ (14 + κ)))
+    (hp : ∀ i, (planes i).val = 64 * u.val + i.val) :
+    EF.ofF (qDec κ U ⟨u.val / 2 ^ lk κ, h1⟩ ⟨u.val % 2 ^ lk κ, Nat.mod_lt _ (by positivity)⟩) =
+      ∑ i : Fin (2 ^ 6), algebraMap F EF (F.x ^ (i : ℕ)) * EF.ofF (wDec κ U (planes i)) := by
+  rw [qDec_bitplanes κ U u h1 planes hp, ← EF.algebraMap_eq_ofF, map_sum]
+  refine Finset.sum_congr rfl fun i _ => ?_
+  rw [map_mul, EF.algebraMap_eq_ofF, mul_comm]
+
 /-! ### The multi-answer escape counts (§9.2) -/
 
 open NNReal in

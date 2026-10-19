@@ -26,6 +26,7 @@ import SpartanChainSoundnessLogControls
 import SpartanChainSoundnessPCSControls
 import SpartanChainSubmission
 import SpartanChainSoundnessDefs
+import SpartanChainSoundnessKSBase
 import SpartanChainSoundnessKS
 import SpartanChainVerifier
 import SpartanChainProver
@@ -37,3 +38,11 @@ import SpartanChainChain
 import SpartanChainChainSound
 import SpartanChainChainMle
 import SpartanChainChainEval
+import SpartanChainSoundnessChain
+import SpartanChainChainCols
+import SpartanChainChainTables
+import SpartanChainChainInner
+import SpartanChainChainHonest
+import SpartanChainSoundnessPack
+import SpartanChainSoundnessKSFinal
+import SpartanChainSoundnessKState

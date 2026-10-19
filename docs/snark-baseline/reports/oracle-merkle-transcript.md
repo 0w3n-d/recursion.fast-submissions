@@ -217,3 +217,96 @@ Whole process: 0.21 s wall, 84 MB.
 
 **Code lines** (`loc.py`): SoundnessLog 276; Controls now 83; all five files 1 352 lines,
 132 theorems.
+
+## Round 3: §9.1 chains and L-K4 `runLog_chain`
+
+### §9.1 chains (`SpartanChainSoundnessLog.lean`)
+
+These are the second-review items, named exactly as §9.1 has them.
+
+- **Definitions.**
+  - `Step` with `Step.matches`, which checks the tag, the length (seed 73, absorb `34 + len`,
+    squeeze 33) and the absorb's kind byte, through `Step.check`.
+  - `shape`, `len` and `entriesOf`.
+  - `Matches`, decidable through `matchesB` (`matches_iff`).
+  - `IsChain`, `chains`, `cut` and `L₀`.
+- **Lemmas.**
+  - `L₀_append`.
+  - `split_at_cut`: `L = L₀ ++ L[cut] :: drop`, with `parseAbsorbRoot L[cut].1 = some root`.
+  - **L-K8 `chains_append`**: `chains (L ++ [e]) = chains L ++ [L.length]?`.
+  - `isChain_new`: a new chain is a seed with no predecessor, or extends its predecessor's chain.
+  - `isChain_new_of_seed` and `isChain_new_of_extend`: the converse directions.
+  - Helpers: `matches_of_append`, `matches_append`, `pathOf_getLast?`, `mem_pathOf_le` and
+    `cut_le`.
+
+### L-K4 (`SpartanChainSoundnessChain.lean`, new module)
+
+**The main theorem.** `runLog_chain ev (hb : ¬Bad L) (hn : 1 ≤ n) (hcap : n ≤ chainCap)
+(hsz : off₃ (kap n) ≤ π.size) (hacc : (snarkProg ev s n h π).runLog L = some true) :
+SoundnessFinal.RunChain ev L s n h`.
+
+**Two extra hypotheses.** These are needed; without them the statement is false:
+
+- `hcap`: `Matches` requires `n ≤ chainCap`, and `snarkProg` does not check it.
+- `hsz`: `snarkProg` reads bytes past the end of a short proof as zeros. The `absorb(root)`,
+  `absorb(ū)` and `absorb(v)` messages are extracts of `π`, so on a short proof they have the
+  wrong lengths and the run is no chain.
+
+`leafProg` checks both before the SNARK runs. **`hchain_of_leafProg`** derives them, giving
+`mu_final_leaf`'s `hchain` exactly, and **`mu_final_leaf_closed`** is `mu_final_leaf` with
+`hchain` discharged.
+
+**How it is proved.**
+
+1. `chain_of_linked`: under `¬Bad`, linked entries of `L` are the path of their last entry.
+2. The verifier's Fiat–Shamir entries are built as explicit blocks: `sqBlock`, `rdBlock`,
+   `v1Block`, `spBlock`, `v2Block` and `fsEntries`. Lemmas give each sub-program's run and query
+   list in terms of the blocks (`run_spartan`, `run_verify1`, `queries_*`).
+3. `snark_accept` analyses an accepting run.
+4. Block-position lemmas identify every §9.1 field with the verifier's value: `rootOf_fs`,
+   `rVec_fs`, `ubarOf_fs`, `tauOf_fs`, `gOut_fs`, `rxOf_fs`, `triOf_fs`, `rhoOf_fs`, `gIn_fs`,
+   `ryOf_fs`, `slicesOf_fs`, `fsOf_fs`, `gRs_fs`, `rrOf_fs`, `vOf_fs` and `bOf_fs`.
+5. `verifyRounds_some` and `check_some` give `¬Rej` (`not_rej`).
+6. `linked_fs` and `steps_fs` (the §6.2 shape) give `Matches`.
+
+**Controls** (`SpartanChainSoundnessLogControls.lean`, proved symbolically):
+
+- `honest1_chain`: the full 117-entry transcript of a 1-leaf is a chain.
+- `broken_not_chain`: with one state byte changed it is not.
+- `short_not_chain`: a seed with `n = 0` starts no chain.
+- `honest1_frontier` and `honest1_not_frontier`.
+
+The first version decided these with `decide +kernel`. That took 7 m 45 s, a single `predIdx`
+needed 5.3 GB, and parallel runs were killed for memory (`controls-decide-profile.log`). The
+symbolic version checks in 7.5 s.
+
+**Status.**
+
+- No `sorry`, standard axioms (`axioms-chain.txt`), and the source rule finds nothing.
+- Code lines: SoundnessLog 598, SoundnessChain about 1 100, controls 39 → about 120.
+
+## Round 4: the `final` law (`SpartanChainSoundnessKSFinal.lean`)
+
+**`mu_final`** has the contract's `KState.final` shape and is proved. It takes:
+
+- the verifier `V LV`, with `LV := Leaf.leafVerifier chainEvals`;
+- the library's extractor `WitnessSending.E`;
+- the relation `Rel (vb LV)`;
+- the potential `KS.μ chainEvals`.
+
+`final_law` is the same law with its binders in `KState.final`'s order.
+
+How the two branches are proved:
+
+- **Off the leaf branch** (nodes and every other tag) it uses `final_of_not_leaf` and
+  `checkNode_rel`. These proofs make no queries.
+- **On the leaf branch**, `final_of_leaf` gives the decoding `.leaf s n`. `mu_final_leaf_closed`
+  gives `n ≤ chainCap`, `c = leafStmt h n` and `chainEnd s n = h`, through L-K4, L-K3 and
+  `doom_of_not_esc`.
+
+**Status.**
+
+- Axioms are standard (`axioms-ksfinal.txt`), and the source rule finds nothing.
+- 22 code lines.
+- The R0 and R7 `hround` instances were not redone. They are the KS agent's `round_r0_le`,
+  `round_r7_le` and `round_le` in `SpartanChainSoundnessKSBase.lean`.

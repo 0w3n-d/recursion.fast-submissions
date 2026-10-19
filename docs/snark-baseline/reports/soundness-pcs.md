@@ -96,3 +96,35 @@ one `<module>.log` per module.
 - **Checks.** All of this uses only the axioms `propext`, `Classical.choice` and `Quot.sound`
   (`logs/spartan-chain/rs-proximity/axioms-soundness-pcs-2.log`). The source rule reports `44
   files, 0 finding(s)`. Code lines: `SoundnessPCS` 434, `SoundnessPCSControls` 49.
+
+## Bit-plane packing lemma (review S2b-M4)
+
+**In `SpartanChainSoundnessPCS`:**
+
+- `x_pow_word : ∀ i : Fin 64, F.x ^ i = ⟨1 <<< i⟩`, by `decide +kernel` (about 10 s). Together
+  with `sum_bitTerm` and `word_bits` it proves the FIELD.md convention that bit `i` of an `F` word
+  is the coefficient of `x^i`, rather than assuming it:
+  `word_bits (a : F) : a = Σ_{i<64} [bit i of a] · F.x ^ i`.
+- `wDec_eq_bit`: `wDec κ U v` is bit `i` of `q_dec(u)` whenever `v.val = 64 u + i` (`i < 64`).
+- `qDec_bitplanes` (over `F`) and `qDec_bitplanes_EF` (over `EF`) state that the decoded packed
+  element is `Σ_{i<64} w_dec(64u + i) · x^i`. The bit-plane index is any family `planes i` of
+  value `64 u + i`.
+
+**In the new module `SpartanChainSoundnessPack`** (imports `SoundnessDefs`, namespace
+`SpartanChain.KS`), in the exact form `absorb_gR0` uses:
+
+```lean
+theorem qPack_eq_sum (κ U u) : qPack κ U u =
+  ∑ i : Fin 64, wDec κ U (Fin.cast (pack_eq κ) (join (i : Fin (2 ^ 6)) u)) * F.x ^ (i : ℕ)
+theorem qPack_ofF_eq_sum (κ U u) : EF.ofF (qPack κ U u) =
+  ∑ i : Fin 64, algebraMap F EF (F.x ^ (i : ℕ)) *
+    EF.ofF (wDec κ U (Fin.cast (pack_eq κ) (join (i : Fin (2 ^ 6)) u)))
+```
+
+`EF.ofF (wDec κ U (Fin.cast (pack_eq κ) (join i u)))` is `qPlane κ U i u`, and `algebraMap F EF
+(F.x ^ i)` is `wX i`, both by definition. So `qPack_ofF_eq_sum` reads
+`EF.ofF (qPack κ U u) = Σ_i wX i · qPlane κ U i u`.
+
+- **Checks.** The axioms are `propext`, `Classical.choice` and `Quot.sound`. `lake build
+  +SpartanChainSoundnessPack` is green, and the source rule reports `58 files, 0 finding(s)`.
+- **Source-rule fix.** A docstring word that the rule refuses was rephrased.
