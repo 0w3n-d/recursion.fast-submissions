@@ -86,3 +86,9 @@ clearly listed `sorry` and say so. Then write a short report,
 - what remains open;
 - the code line counts from `python3 /home/devops/Verified-zkEVM/recursion.fast-submissions/.contract/scripts/loc.py`;
 - every deviation from the blueprint, with its reason.
+
+## CODE FREEZE (2026-10-19, 22:00)
+
+The certificate is complete. Don't edit `submissions/spartan-chain/*.lean` unless the
+orchestrator assigns you a fix from the final review. The golf pass is the only other change
+allowed, and it edits in place without changing any statement.

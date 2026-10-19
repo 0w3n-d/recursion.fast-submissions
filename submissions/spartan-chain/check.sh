@@ -72,20 +72,19 @@ if [[ $sr == 1 ]]; then
 fi
 
 echo "== 4. build (scratch core clone; the infrastructure modules, the runner$( [[ $FINAL == 1 ]] && echo ', the final module'))"
-targets="RecursionFastContract SpartanChainSubmission SpartanChainVerifier SpartanChainChainEval"
+targets="RecursionFastContract SpartanChainSubmission SpartanChainRun"
 [[ $FINAL == 1 ]] && targets="$targets SpartanChainFinal"
 ENTRY_TARGETS=$targets "${TIME[@]}" "$CORE/scripts/setup-scratch.sh" entry "$B" 2>&1 | tee "$L/build.log"
 grep -q "setup-scratch: entry" "$L/build.log" || { echo "build FAILED"; exit 1; }
 ! grep -qE "warning: .*SpartanChain(VerifierTop|Submission|Decode)\.lean" "$L/build.log" || { echo "warnings in the infrastructure modules"; exit 1; }
 # The local runner `entry-verify` (outside the root: a `main` is not entry code): the compiled
-# instantiated verifier `vb (Leaf.leafVerifier chainEvals)`, for smoke.py.
+# `Run.verifyProof`, the submission's `Vb` (`Run.verifyProof_eq`), for smoke.py.
 mkdir -p "$CORE/entrymain"
 cat > "$CORE/entrymain/EntryVerify.lean" <<'EOF'
-import SpartanChainVerifier
-import SpartanChainChainEval
+import SpartanChainRun
 
-/-! Local runner (outside the entry root): the compiled instantiated verifier
-`vb (Leaf.leafVerifier chainEvals)` on a statement and a proof. -/
+/-! Local runner (outside the entry root): the compiled instantiated verifier `Run.verifyProof`
+(the submission's `Vb`, `Run.verifyProof_eq`) on a statement and a proof. -/
 
 open SpartanChain RecursionFast
 
@@ -116,7 +115,7 @@ def verify (stmt proof : String) : IO UInt32 := do
   let c ← readDigest stmt
   let π ← IO.FS.readBinFile proof
   let t₀ ← IO.monoNanosNow
-  let b ← IO.lazyPure fun _ => vb (Leaf.leafVerifier chainEvals) c π
+  let b ← IO.lazyPure fun _ => Run.verifyProof c π
   let t₁ ← IO.monoNanosNow
   let verdict := if b then "accept" else "reject"
   IO.eprintln s!"Vb: {verdict} in {(t₁ - t₀) / 1000} us ({π.size} bytes)"

@@ -52,14 +52,15 @@ theorem chainDigests_getD (s : Digest) {b t : ℕ} (ht : t < b) :
     (chainDigests s b).getD t default = chainEnd s t := by
   rw [Array.getD_eq_getD_getElem?, chainDigests_get s ht, Option.getD_some]
 
-/-- The honest block of the step from `d`, as a bitset. -/
+/-- The honest block of the step from `d`, as a bitset (built bit by bit, little-endian). -/
 def blockForm (d : Digest) : Form Blake2sCircuit.m :=
-  BitVec.ofFnLE fun k : Fin 16384 ↦ (fastTrace d).getD k.val false
+  let t := fastTrace d
+  BitVec.ofNatLT (Nat.ofBits fun k : Fin (2 ^ Blake2sCircuit.m) ↦ t.getD k.val false)
+    (Nat.ofBits_lt_two_pow _)
 
 theorem blockForm_getLsbD (d : Digest) (k : Pos Blake2sCircuit.m) :
     (blockForm d).getLsbD k.val = chainTrace d k := by
-  have hk : k.val < 16384 := k.isLt
-  rw [blockForm, BitVec.getLsbD_ofFnLE, dite_eq_left (show k.val < 2 ^ Blake2sCircuit.m from k.isLt)]
+  rw [blockForm, BitVec.getLsbD, BitVec.toNat_ofNatLT, Nat.testBit_ofBits_lt _ _ k.isLt]
   have := fastTrace_eq d k
   rw [Array.getD_eq_getD_getElem?, this, Option.getD_some]
 

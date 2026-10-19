@@ -11,8 +11,8 @@ requirements.
 - Axioms are `propext`, `Classical.choice` and `Quot.sound` only (`axioms-4.log`).
 - The source rule reports `47 files, 0 finding(s)`.
 - Code lines: Verifier 100, Prover 200, Run 18.
-- The Lean verifier has been run on Rust proofs. The prover's byte-identity test is still pending;
-  see "Compiled run".
+- The Lean verifier accepts the Rust proofs. The Lean prover is byte-identical to Rust for
+  `n ∈ {1, 2, 16}`. See "Compiled run".
 
 ## Byte helpers merged with Ligero's
 
@@ -141,19 +141,39 @@ The fields are read at the §7 offsets `off₁`, `off₂` and `off₃`.
 - **Query count.** Rust reports 3 533 queries at `n = 16` and 2 977 at `n = 1`. This matches
   §6.3 and is below `qBound`.
 
-**Prover byte-identity (Lean `proveLeaf` against the Rust bytes for `n ∈ {1, 2, 16}`): not run
-yet.** The Chain modules still do not expose the prover's tables.
+**Prover byte-identity KAT** (`prove-kat.log`): **byte-identical for `n = 1, 2, 16`.**
 
-What is missing, precisely: a `Leaf.WitFor` (`κ → n → s → Spartan.Witness`) with these fields:
+- Command: `leaf-run prove`. It calls `Run.proveLeafBytes`, which is the submission's `P`, and
+  compares the whole proof with `scratch/leaf/data/l{n}.bin`.
+- The tables are a verbatim copy of `SpartanChainChainHonest.chainWit`, because that module did not
+  build yet (one proof error at line 150). The copy lives in `scratch/leaf/LeafMain.lean`, with
+  `chainEvals`.
 
-- `az`, `bz`, `cz : Array EF`, of size `2^(15+κ)`: the bit tables of Rust `chain::witness`;
-- `z : Array F`, Boolean, `(w ‖ pub)`;
-- `q : Array F`, of size `2^(8+κ)`: the packed `w`, word `u'` holding bits `64u' … 64u'+63`;
-- `innerTab : List EF → EF → Array EF`, the table `M̃_ρ(r_x, ·)`. It needs a Lean port of Rust
-  `Circuit::transpose` and the wiring and tail columns.
+| `n` | bytes | identical | Lean `P` (process wall) |
+|---|---|---|---|
+| 1 | 95 719 | yes | 344 s |
+| 2 | 100 119 | yes | 443 s |
+| 16 | 143 711 | yes | 1 783 s |
 
-The proof side additionally needs `HonestOps chainEvals wf`. A watcher runs until these appear;
-the KAT is then `leaf-run` with a `prove` command against `scratch/leaf/data/l{1,2,16}.bin`.
+**Where the Lean prover's time goes** (`profile-n1.log`, `κ = 0`). Almost all of it is the Chain
+agent's table builders:
+
+| phase | time |
+|---|---|
+| `chainForms` (`blockForm` per block) | 98 s |
+| `Az`/`Bz`/`Cz` (`Form.evalB` per row) | 101 s |
+| `innerTab` (`transposeArr` with `setBits`, bignum shifts) | 253 s per call |
+| `rowArray` | 0.8 s |
+| `Ligero.commit` | 52 ms |
+| the Spartan and ring-switching rounds | negligible |
+
+Fix suggestions for the Chain agent:
+
+- word-array forms instead of 16 384-bit `Nat` shifts;
+- one `fastTrace` per block written into a `ByteArray`.
+
+The Lean `P` is not on the ranked path, since the Rust prover is, but completeness runs depend on
+it.
 
 ## Review S2b-m2: the runner calls the certified objects
 

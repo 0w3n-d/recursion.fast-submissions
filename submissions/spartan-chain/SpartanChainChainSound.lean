@@ -376,7 +376,8 @@ end Complete
 
 /-- The witness bits of one block: the honest block of the step from `d`, `2 ^ 14` bits. -/
 @[irreducible] def blockBits (d : Digest) : Array Bool :=
-  Array.ofFn fun k : Fin 16384 ↦ (fastTrace d).getD k.val false
+  let t := fastTrace d
+  Array.ofFn fun k : Fin 16384 ↦ t.getD k.val false
 
 theorem blockBits_size (d : Digest) : (blockBits d).size = 16384 := by
   unfold blockBits; exact Array.size_ofFn

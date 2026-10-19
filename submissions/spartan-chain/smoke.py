@@ -16,7 +16,7 @@
    a sibling's statement for a leaf): all reject. `prover node` on the root's children reproduces
    root.bin. Proof sizes match §7 (a node is 8·(11 + ⌈|π₁|/8⌉ + ⌈|π₂|/8⌉) bytes).
 5. The compiled Lean verifier (`entry-verify verify`, built by check.sh outside the root:
-   `vb (Leaf.leafVerifier chainEvals)` of SpartanChainVerifierTop and SpartanChainVerifier):
+   `Run.verifyProof`, the submission's `Vb` by `Run.verifyProof_eq`):
    * if its leaf verifier is the STUB (it says so on standard error), the n-step tree is only
      checked to be rejected at the leaves, and a second, zero-step tree (n = 0, which the stub
      decides exactly) is run through the Lean verifier: every proof accepted against the

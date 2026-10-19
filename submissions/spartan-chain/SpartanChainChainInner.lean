@@ -19,40 +19,105 @@ open Finset ProductCircuit Blake2sCircuit RecursionFast Spartan
 
 /-! ## Set bits -/
 
-/-- The set positions of a form, by 64-bit words, increasing. -/
-def setBits (L : Form Blake2sCircuit.m) : List ℕ :=
-  (List.range 256).flatMap fun i ↦
-    (List.range 64).filterMap fun b ↦
-      if ((L.toNat >>> (64 * i)) % 2 ^ 64).testBit b then some (64 * i + b) else none
+/-- The set positions `base + b` of a 32-bit chunk `w`. -/
+def chunkBits (w base : ℕ) : List ℕ :=
+  if w = 0 then [] else (List.range 32).filterMap fun b ↦ if w.testBit b then some (base + b) else none
 
-theorem mem_setBits (L : Form Blake2sCircuit.m) (j : ℕ) :
-    j ∈ setBits L ↔ j < 16384 ∧ L.getLsbD j = true := by
-  simp only [setBits, List.mem_flatMap, List.mem_range, List.mem_filterMap, Option.ite_none_right_eq_some,
-    Option.some.injEq, Nat.testBit_mod_two_pow, Nat.testBit_shiftRight, Bool.and_eq_true,
-    decide_eq_true_eq, BitVec.getLsbD]
-  constructor
-  · rintro ⟨i, hi, b, hb, ⟨-, hbit⟩, rfl⟩
-    exact ⟨by omega, hbit⟩
-  · rintro ⟨hj, hbit⟩
-    refine ⟨j / 64, by omega, j % 64, Nat.mod_lt _ (by omega), ⟨Nat.mod_lt _ (by omega), ?_⟩, ?_⟩
-    · rwa [show 64 * (j / 64) + j % 64 = j by omega]
-    · omega
+/-- The set positions `base + j` of `n < 2^(32·2^l)`, by halving (`2^l` chunks of 32 bits;
+empty halves are skipped). -/
+def setBitsRec : ℕ → ℕ → ℕ → List ℕ
+  | 0, base, n => chunkBits n base
+  | l + 1, base, n =>
+    if n = 0 then []
+    else setBitsRec l base (n % 2 ^ (32 * 2 ^ l)) ++
+      setBitsRec l (base + 32 * 2 ^ l) (n >>> (32 * 2 ^ l))
 
-theorem nodup_setBits (L : Form Blake2sCircuit.m) : (setBits L).Nodup := by
-  unfold setBits
-  rw [List.nodup_flatMap]
-  refine ⟨fun i _ ↦ ?_, ?_⟩
+/-- The set positions of a form, increasing. -/
+def setBits (L : Form Blake2sCircuit.m) : List ℕ := setBitsRec 9 0 L.toNat
+
+theorem mem_chunkBits (w base j : ℕ) :
+    j ∈ chunkBits w base ↔ base ≤ j ∧ j < base + 32 ∧ w.testBit (j - base) = true := by
+  unfold chunkBits
+  split_ifs with hw
+  · subst hw; simp
+  · simp only [List.mem_filterMap, List.mem_range, Option.ite_none_right_eq_some,
+      Option.some.injEq]
+    constructor
+    · rintro ⟨b, hb, hbit, rfl⟩
+      exact ⟨by omega, by omega, by rwa [show base + b - base = b by omega]⟩
+    · rintro ⟨h1, h2, hbit⟩
+      exact ⟨j - base, by omega, hbit, by omega⟩
+
+theorem nodup_chunkBits (w base : ℕ) : (chunkBits w base).Nodup := by
+  unfold chunkBits
+  split_ifs
+  · exact List.nodup_nil
   · refine (List.nodup_range).filterMap fun a a' b ha ha' ↦ ?_
     simp only [Option.mem_def, Option.ite_none_right_eq_some, Option.some.injEq] at ha ha'
     omega
-  · refine List.pairwise_lt_range.imp fun {i i'} hii' ↦ ?_
-    rw [Function.onFun, List.disjoint_left]
-    intro j hj hj'
-    simp only [List.mem_filterMap, List.mem_range, Option.ite_none_right_eq_some,
-      Option.some.injEq] at hj hj'
-    obtain ⟨b, hb, -, rfl⟩ := hj
-    obtain ⟨b', hb', -, he⟩ := hj'
-    omega
+
+theorem mem_setBitsRec (l : ℕ) : ∀ (base n j : ℕ), n < 2 ^ (32 * 2 ^ l) →
+    (j ∈ setBitsRec l base n ↔ base ≤ j ∧ j < base + 32 * 2 ^ l ∧ n.testBit (j - base) = true) := by
+  induction l with
+  | zero => intro base n j _; rw [setBitsRec]; simpa using mem_chunkBits n base j
+  | succ l ih =>
+    intro base n j hn
+    have hp : 2 ^ (32 * 2 ^ (l + 1)) = 2 ^ (32 * 2 ^ l) * 2 ^ (32 * 2 ^ l) := by
+      rw [← pow_add]; congr 1; rw [pow_succ]; ring
+    have hP : 32 * 2 ^ (l + 1) = 32 * 2 ^ l + 32 * 2 ^ l := by rw [pow_succ]; ring
+    rw [setBitsRec]
+    split_ifs with h0
+    · subst h0; simp
+    · have hlo : n % 2 ^ (32 * 2 ^ l) < 2 ^ (32 * 2 ^ l) := Nat.mod_lt _ (by positivity)
+      have hhi : n >>> (32 * 2 ^ l) < 2 ^ (32 * 2 ^ l) := by
+        rw [Nat.shiftRight_eq_div_pow, Nat.div_lt_iff_lt_mul (by positivity), ← hp]; exact hn
+      rw [List.mem_append, ih _ _ _ hlo, ih _ _ _ hhi, Nat.testBit_mod_two_pow,
+        Nat.testBit_shiftRight, hP]
+      constructor
+      · rintro (⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩)
+        · simp only [Bool.and_eq_true, decide_eq_true_eq] at h3
+          exact ⟨h1, by omega, h3.2⟩
+        · refine ⟨by omega, by omega, ?_⟩
+          rwa [show 32 * 2 ^ l + (j - (base + 32 * 2 ^ l)) = j - base by omega] at h3
+      · rintro ⟨h1, h2, h3⟩
+        by_cases hj : j < base + 32 * 2 ^ l
+        · left
+          refine ⟨h1, hj, ?_⟩
+          simp only [Bool.and_eq_true, decide_eq_true_eq]
+          exact ⟨by omega, h3⟩
+        · right
+          refine ⟨by omega, by omega, ?_⟩
+          rwa [show 32 * 2 ^ l + (j - (base + 32 * 2 ^ l)) = j - base by omega]
+
+theorem nodup_setBitsRec (l : ℕ) : ∀ base n, n < 2 ^ (32 * 2 ^ l) → (setBitsRec l base n).Nodup := by
+  induction l with
+  | zero => intro base n _; exact nodup_chunkBits _ _
+  | succ l ih =>
+    intro base n hn
+    have hp : 2 ^ (32 * 2 ^ (l + 1)) = 2 ^ (32 * 2 ^ l) * 2 ^ (32 * 2 ^ l) := by
+      rw [← pow_add]; congr 1; rw [pow_succ]; ring
+    rw [setBitsRec]
+    split_ifs
+    · exact List.nodup_nil
+    · have hlo : n % 2 ^ (32 * 2 ^ l) < 2 ^ (32 * 2 ^ l) := Nat.mod_lt _ (by positivity)
+      have hhi : n >>> (32 * 2 ^ l) < 2 ^ (32 * 2 ^ l) := by
+        rw [Nat.shiftRight_eq_div_pow, Nat.div_lt_iff_lt_mul (by positivity), ← hp]; exact hn
+      rw [List.nodup_append]
+      refine ⟨ih _ _ hlo, ih _ _ hhi, fun a ha b hb ↦ ?_⟩
+      rw [mem_setBitsRec _ _ _ _ hlo] at ha
+      rw [mem_setBitsRec _ _ _ _ hhi] at hb
+      omega
+
+private theorem toNat_lt (L : Form Blake2sCircuit.m) : L.toNat < 2 ^ (32 * 2 ^ 9) := L.isLt
+
+theorem mem_setBits (L : Form Blake2sCircuit.m) (j : ℕ) :
+    j ∈ setBits L ↔ j < 16384 ∧ L.getLsbD j = true := by
+  rw [setBits, mem_setBitsRec _ _ _ _ (toNat_lt L)]
+  simp only [Nat.zero_le, true_and, zero_add, Nat.sub_zero, BitVec.getLsbD]
+  norm_num
+
+theorem nodup_setBits (L : Form Blake2sCircuit.m) : (setBits L).Nodup :=
+  nodup_setBitsRec _ _ _ (toNat_lt L)
 
 theorem sum_list_range {M : Type} [AddCommMonoid M] (f : ℕ → M) (n : ℕ) :
     ((List.range n).map f).sum = ∑ k ∈ range n, f k := by
@@ -233,6 +298,6 @@ theorem innerTab_eq {n κ : ℕ} (rx : List EF) (hx : rx.length = ly κ) (ρ : E
   rw [sum_cube_cast hl (ptOf _ rx) (fun x ↦ chainA n κ x _),
     sum_cube_cast hl (ptOf _ rx) (fun x ↦ chainB κ x _),
     sum_cube_cast hl (ptOf _ rx) (fun x ↦ chainC κ x _),
-    col_chainA, col_chainB, col_chainC, extPt_ptOf hl, Fin.coe_cast]
+    col_chainA, col_chainB, col_chainC, extPt_ptOf hl, Fin.val_cast]
 
 end SpartanChain

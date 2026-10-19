@@ -8,7 +8,8 @@ import SpartanChainChainEval
 
 The generic potential, its step law from per-position facts (`muG_step_of`), the shape positions,
 locality, `doom_mid` and the round bounds are in `SpartanChainSoundnessKSBase`. This module proves
-`doom_absorb` and `esc_single_le` for `Doom` and assembles `mu_step`.
+`doom_absorb` and `esc_single_le` for `Doom`, `chainEvals_ok` (the verifier's evaluators are the
+extensions of the chain R1CS), and assembles `mu_step` / `mu_step_chain`.
 -/
 
 namespace SpartanChain
@@ -925,7 +926,6 @@ theorem pub_cast (κ : ℕ) (s h : Digest) (ru : List EF) :
       mle (fun u : Fin (2 ^ (14 + κ)) => pubVal (E := EF) s h u.val) (ptOf (14 + κ) ru) :=
   mle_nat_cast (lu_eq κ) _ ru
 
-set_option maxRecDepth 100000 in
 /-- **`chainEvals` are the extensions** of the chain R1CS (`chainMats_eq`, `chainPub_eq`). -/
 theorem chainEvals_ok : EvalsOK chainEvals where
   mats κ n s h rx ry hn1 hn2 hx hy := by
@@ -934,7 +934,9 @@ theorem chainEvals_ok : EvalsOK chainEvals where
     unfold chainA' chainB' chainC' castIx
     rw [matMle_chain' (ly_eq κ) (chainA n κ), matMle_chain' (ly_eq κ) (chainB κ),
       matMle_chain' (ly_eq κ) (chainC κ)]
-  pub κ n s h ru _ := (chainPub_eq κ s h ru).trans (pub_cast κ s h ru)
+  pub κ n s h ru _ := by
+    rw [show (chainEvals κ n s h).pub ru = chainPub κ s h ru by simp only [chainEvals]]
+    exact (chainPub_eq κ s h ru).trans (pub_cast κ s h ru)
 
 end ChainEvals
 
