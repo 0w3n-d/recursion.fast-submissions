@@ -30,6 +30,12 @@ def evalOps {m : ℕ} (inp : Pos m → Bool) : GOps m Bool (Array Bool) where
   res _ a b := a && b
   upd arr k a b := arr.set! k (a && b)
 
+theorem evalOps_res {m : ℕ} (inp : Pos m → Bool) (k : Pos m) (a b : Bool) :
+    (evalOps inp).res k a b = (a && b) := rfl
+
+theorem evalOps_upd {m : ℕ} (inp : Pos m → Bool) (arr : Array Bool) (k : Pos m) (a b : Bool) :
+    (evalOps inp).upd arr k a b = arr.set! k (a && b) := rfl
+
 theorem linear_eval {m : ℕ} (inp z : Pos m → Bool) :
     Generic.Linear (evalOps inp) (fun L : Form m ↦ L.eval z) where
   zero := eval_zero z
@@ -73,7 +79,7 @@ private theorem foldl_set {m : ℕ} (z : Pos m → Bool) (L : List (Pos m × Boo
     · have hp := hL p List.mem_cons_self
       by_cases hpj : p.1 = j
       · subst hpj
-        simp [hj, Array.getElem?_setIfInBounds, ha, hp]
+        simp [hj, ha, hp]
       · have : (p.1 : ℕ) ≠ j := fun h ↦ hpj (Fin.ext h)
         simp [hj, Array.getElem?_setIfInBounds, this, hpj, Ne.symm hpj]
 
@@ -155,7 +161,7 @@ theorem fastTrace_eq (k : Pos Blake2sCircuit.m) : (fastTrace d)[k.val]? = some (
   have hlin := linear_eval (chainInit d) z
   have hsz : (Array.ofFn (chainInit d)).size = 2 ^ Blake2sCircuit.m := Array.size_ofFn
   have hget : (Array.ofFn (chainInit d))[k.val]? = some (chainInit d k) := by
-    rw [Array.getElem?_ofFn, dif_pos k.isLt]
+    rw [Array.getElem?_ofFn, dite_eq_left k.isLt]
   unfold fastTrace
   dsimp only
   generalize Array.ofFn (chainInit d) = A at hsz hget ⊢
@@ -176,10 +182,14 @@ theorem fastTrace_eq (k : Pos Blake2sCircuit.m) : (fastTrace d)[k.val]? = some (
         simp only [outRows, List.mem_flatMap, List.mem_finRange, List.mem_map, true_and] at hkg
         obtain ⟨w, i, rfl⟩ := hkg
         have := pos_out_val w i
-        simp only at this
+        dsimp only at hk
         omega)
     ⟨gateBase, #[]⟩ ⟨gateBase, A⟩ ⟨rfl, rfl⟩
-    (fun kg h ↦ (hgates kg h).symm.trans (eval_var kg.1 z).symm)
+    (fun kg h ↦ by
+      rw [evalOps_res]
+      beta_reduce
+      rw [eval_var]
+      exact (hgates kg h).symm)
   obtain ⟨⟨-, hacc⟩, hvr⟩ := hsim
   -- the compression's gates, as stores of the honest values
   have hc : (Generic.accOf (evalOps (chainInit d)) (fun L ↦ L.eval z) A
@@ -188,7 +198,7 @@ theorem fastTrace_eq (k : Pos Blake2sCircuit.m) : (fastTrace d)[k.val]? = some (
         (fun a p ↦ a.set! p.1 p.2) A) := by
     rw [List.foldl_map, Generic.accOf]
     refine List.foldl_ext _ _ _ fun a kg hkg ↦ ?_
-    simp only [evalOps]
+    rw [evalOps_upd]
     rw [hgates kg (Array.mem_toList_iff.mp hkg)]
   -- the output rows, as stores of the honest values
   set r := (evalOps (chainInit d)).compressW.run ⟨gateBase, A⟩
@@ -223,5 +233,58 @@ theorem fastTrace_eq (k : Pos Blake2sCircuit.m) : (fastTrace d)[k.val]? = some (
   · exact congrArg some (init_eq d k hg ho)
 
 end
+
+/-! ## The circuit dump (known-answer harness) -/
+
+/-- The chain block with its compression gates recorded from `base`; `chainBlockAt gateBase` is
+`chainBlock` (`chainBlockAt_eq`). The argument keeps the compression out of the compiler's
+closed-term extraction (it would otherwise run when an executable starts); `never_extract`
+keeps the closed call `chainBlockAt gateBase` from being extracted. -/
+@[never_extract] def chainBlockAt (base : ℕ) : ProductCircuit Blake2sCircuit.m :=
+  let r := compressW.run ⟨base, #[]⟩
+  { cpos := constPos, inputs := chainInputs,
+    gates := constGates.toArray ++ (r.2.gates ++ (outRows r.1).toArray) }
+
+theorem chainBlockAt_eq : chainBlockAt gateBase = chainBlock := by
+  unfold chainBlockAt chainBlock blake2sCircuit
+  rfl
+
+/-- 64 bits as 16 lowercase hex digits, most significant first. -/
+def hex64 (x : ℕ) : String :=
+  String.ofList ((List.range 16).reverse.map fun j ↦ Nat.digitChar ((x >>> (4 * j)) % 16))
+
+/-- A form as 256 chunks of 64 bits, lowest chunk first, each as 16 hex digits. -/
+def hexForm (L : Form Blake2sCircuit.m) : String :=
+  String.join ((List.range 256).map fun i ↦ hex64 ((L.toNat >>> (64 * i)) % 2 ^ 64))
+
+/-- The dump line of a row: `k <a-form> <b-form>`. -/
+def rowLine (k : ℕ) (g : Gate Blake2sCircuit.m) : String :=
+  toString k ++ " " ++ hexForm g.a ++ " " ++ hexForm g.b
+
+/-- The rows of the chain block (`rowOf`), position by position. -/
+def circuitRows (base : ℕ) : List (Gate Blake2sCircuit.m) :=
+  let c := chainBlockAt base
+  let l := c.gates.toList
+  (List.finRange (2 ^ Blake2sCircuit.m)).map fun k ↦ c.rowOfList l k
+
+/-- The rows dumped are the chain block's `rowOf`, position by position. -/
+theorem circuitRows_eq :
+    circuitRows gateBase = (List.finRange (2 ^ Blake2sCircuit.m)).map chainBlock.rowOf := by
+  unfold circuitRows
+  rw [chainBlockAt_eq]
+  rfl
+
+/-- Write the row list of the chain block, one `rowLine` per position (BLUEPRINT-R1 §11.3 (2)). -/
+def dumpCircuit (h : IO.FS.Stream) : IO Unit := do
+  let rows := circuitRows gateBase
+  let mut k := 0
+  for g in rows do
+    h.putStrLn (rowLine k g)
+    k := k + 1
+
+/-- Write the honest block of the chain step from `d`: one line of `2 ^ 14` digits `0`/`1`, position
+`0` first. -/
+def dumpTrace (h : IO.FS.Stream) (d : Digest) : IO Unit :=
+  h.putStrLn (String.ofList ((fastTrace d).toList.map fun b ↦ if b then '1' else '0'))
 
 end SpartanChain

@@ -1,0 +1,8 @@
+{
+  "challenge_module": "SpartanChainChallenge",
+  "solution_module": "SpartanChainSolution",
+  "theorem_names": ["RecursionFast.Challenge.certified"],
+  "definition_names": ["RecursionFast.Challenge.submission"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": false
+}

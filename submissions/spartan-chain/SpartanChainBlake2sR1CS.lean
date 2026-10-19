@@ -128,7 +128,7 @@ def readDigest (z : Pos m → Bool) (b : ℕ) : Digest :=
 
 theorem readByte_getLsbD (z : Pos m → Bool) (b : ℕ) {i : ℕ} (hi : i < 8) :
     (readByte z b).toBitVec.getLsbD i = z (pos (b + i)) := by
-  simp [readByte, BitVec.getLsbD_ofFnLE, hi]
+  simp [readByte, hi]
 
 theorem readDigest_getLsbD (z : Pos m → Bool) (b e : ℕ) (he : e < 32) {i : ℕ} (hi : i < 8) :
     (readDigest z b)[e].toBitVec.getLsbD i = z (pos (b + 8 * e + i)) := by
@@ -324,7 +324,7 @@ private theorem constBit_counter : ∀ i : Fin 32,
 
 private theorem constBit_zero {k : ℕ} (h1 : 904 ≤ k) (h2 : k < 1152) : constBit k = false := by
   unfold constBit
-  rw [dif_neg (by omega), if_neg (by omega), if_pos (by omega)]
+  rw [dite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left (by omega)]
 
 /-- The message words of a block where every gate holds: `block (0x43 ‖ d)` for the digest `d` the
 block holds at `648 … 903`. -/
@@ -344,7 +344,6 @@ private theorem den_msg (hg : ∀ kg ∈ chainBlock.gates, z kg.1 = (kg.2.a.eval
         ← const_of_gates hg h1 (mem_constPositions.mpr (by omega))]
       congr 2
       simp only [msgBase, hj0]
-      all_goals omega
     · obtain ⟨q, hq⟩ : ∃ q, 4 * j.val + i.val / 8 = q + 1 :=
         ⟨_, (Nat.succ_pred_eq_of_pos h0').symm⟩
       rw [hq, List.getD_cons_succ, List.getD_eq_getElem _ _ (by simp; omega),
@@ -383,7 +382,7 @@ theorem block_sound_of_gates
   simp only [Fin.getElem_fin] at this
   rw [← this]
   congr 2
-  first | omega | (simp only [Fin.val_mk]; omega)
+  omega
 
 /-- **L-C1, soundness.** A Boolean block satisfying the chain block's R1CS over a nontrivial ring
 of characteristic two, with `1` at position `512`, carries at `256 … 511` the chain step of the
@@ -415,7 +414,7 @@ theorem readDigest_chainTrace (d : Digest) : readDigest (chainTrace d) 648 = d :
     (by rw [chainBlock_cpos]; intro h; have := congrArg Fin.val h; rw [pos_val hv] at this
         simp only [constPos_val'] at this; omega)]
   simp only [chainInp, pos_val hv]
-  rw [dif_pos (by omega)]
+  rw [dite_eq_left (by omega)]
   simp only [show (648 + 8 * e + i - 648) / 8 = e by omega,
     show (648 + 8 * e + i - 648) % 8 = i by omega]
 

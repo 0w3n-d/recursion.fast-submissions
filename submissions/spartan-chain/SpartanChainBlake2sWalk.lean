@@ -67,7 +67,7 @@ theorem sum_rows {c : ProductCircuit m} (hc : c.Bounded) (hcin : c.inputs.getLsb
       rw [BitVec.getLsbD_or, Bool.or_eq_false_iff] at hf
       have hkc : k ≠ c.cpos := fun h ↦ by
         have := hf.2; rw [getLsbD_var, h] at this; simp at this
-      rw [if_neg hkc, if_pos (List.mem_toFinset.mpr hk), hf.1]
+      rw [ite_eq_right hkc, ite_eq_left (List.mem_toFinset.mpr hk), hf.1]
       simp only [Bool.false_eq_true, ↓reduceIte, add_zero]
     · have hl : c.gates.toList.lookup k = none := by
         rw [List.lookup_eq_none_iff]
@@ -76,18 +76,18 @@ theorem sum_rows {c : ProductCircuit m} (hc : c.Bounded) (hcin : c.inputs.getLsb
         rintro rfl
         exact hk (List.mem_map_of_mem hp)
       have hrow : c.rowOf k = c.rowOfList [] k := by simp only [rowOf, rowOfList, hl]; rfl
-      rw [if_neg (fun h ↦ hk (List.mem_toFinset.mp h)), zero_add]
+      rw [ite_eq_right (fun h ↦ hk (List.mem_toFinset.mp h)), zero_add]
       by_cases hkc : k = c.cpos
       · subst hkc
-        rw [if_pos rfl, hcin]
+        rw [ite_eq_left rfl, hcin]
         simp only [Bool.false_eq_true, ↓reduceIte]
-      · rw [if_neg hkc, hrow]
+      · rw [ite_eq_right hkc, hrow]
         unfold rowOfList
         simp only [List.lookup_nil]
-        rw [if_neg hkc]
+        rw [ite_eq_right hkc]
         by_cases hin : c.inputs.getLsbD k = true
-        · rw [if_pos hin, if_pos hin]
-        · rw [if_neg hin, if_neg hin, h0]
+        · rw [ite_eq_left hin, ite_eq_left hin]
+        · rw [ite_eq_right hin, ite_eq_right hin, h0]
   rw [Finset.sum_congr rfl fun k _ ↦ hterm k, Finset.sum_add_distrib, Finset.sum_ite_mem,
     Finset.univ_inter, List.sum_toFinset _ hnd, hkeys, List.map_map]
   congr 2
@@ -152,6 +152,7 @@ def walkAB (e wt : Pos Blake2sCircuit.m → R) : R × R :=
 
 variable [CharP R 2] (e wt : Pos Blake2sCircuit.m → R)
 
+omit [CharP R 2] in
 private theorem accOf_walk (s : R × R) (L : List (Pos Blake2sCircuit.m × Gate Blake2sCircuit.m)) :
     Generic.accOf (walkOps e wt) (formVal wt) s L =
       (s.1 + (L.map fun kg ↦ e kg.1 * formVal wt kg.2.a).sum,
@@ -163,6 +164,7 @@ private theorem accOf_walk (s : R × R) (L : List (Pos Blake2sCircuit.m × Gate 
     rw [ih]
     simp only [walkOps, List.map_cons, List.sum_cons, add_assoc]
 
+omit [CharP R 2] in
 private theorem const_acc :
     constPositions.foldl (fun s k ↦ (walkOps e wt).upd s (pos k)
       (if constBit k then wt constPos else 0) (if constBit k then wt constPos else 0)) (0, 0) =
@@ -181,6 +183,7 @@ private theorem outRows_b (outs : Vector (Word Blake2sCircuit.m) 8) :
   obtain ⟨w, i, rfl⟩ := hkg
   rfl
 
+omit [CharP R 2] in
 private theorem out_acc {outs : Vector (Word Blake2sCircuit.m) 8} {outs' : Vector (Vector R 32) 8}
     (h : Generic.VR (formVal wt) outs outs') (s : R × R) :
     (outPairs outs').foldl (fun s p ↦ (walkOps e wt).upd s p.1 p.2 (wt constPos)) s =

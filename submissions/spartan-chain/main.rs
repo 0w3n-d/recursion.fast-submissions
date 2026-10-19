@@ -7,6 +7,8 @@
 //!   verify STMT.hex PROOF.bin   the native `Vb` (self-check); exit 0 accept, 1 reject, 2 usage/IO
 //!   dump-field | dump-circuit | dump-walk | dump-encode | dump-transcript   KAT text to stdout
 //!   dump-proof DIR              KAT leaf proofs (n = 1, 2, 16, 64) into DIR, summary to stdout
+//!   dump-mle | dump-transcript-ops | dump-phi | dump-sumcheck     more KAT text to stdout
+//!   dump-leaf-trace DIR         the n = 1 leaf's challenges, tables and values for the Lean side
 //!   check-leaf STMT.hex PROOF   diagnostic: the leaf branch without the proofCap guard
 //!   bench-field                 field multiplication micro-benchmark
 //!
@@ -221,6 +223,26 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         ["dump-transcript"] => {
             print!("{}", kat::dump_transcript(&Circuit::build()));
+            Ok(ExitCode::SUCCESS)
+        }
+        ["dump-mle"] => {
+            print!("{}", kat::dump_mle());
+            Ok(ExitCode::SUCCESS)
+        }
+        ["dump-transcript-ops"] => {
+            print!("{}", kat::dump_transcript_ops());
+            Ok(ExitCode::SUCCESS)
+        }
+        ["dump-phi"] => {
+            print!("{}", kat::dump_phi());
+            Ok(ExitCode::SUCCESS)
+        }
+        ["dump-sumcheck"] => {
+            print!("{}", kat::dump_sumcheck());
+            Ok(ExitCode::SUCCESS)
+        }
+        ["dump-leaf-trace", dir] => {
+            kat::dump_leaf_trace(&Circuit::build(), dir).map_err(|e| e.to_string())?;
             Ok(ExitCode::SUCCESS)
         }
         ["dump-proof", dir] => {

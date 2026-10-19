@@ -1,4 +1,4 @@
-import SpartanChainTranscript
+import SpartanChainSoundnessLog
 import RecursionFast.Contract.Certificate
 
 /-!
@@ -22,6 +22,9 @@ kernel. The expected bytes were computed with Python's `hashlib`
   (`colL_log4_missing`).
 * `Bad` (§10.1): a two-entry log with a state hit is bad (`bad_stateHit`); a one-entry log is not
   (`not_bad_one`).
+* The transcript forest: seed, absorb, squeeze linked by their states form the path `[0, 1, 2]`
+  (`pathOf_linked`); a squeeze of a state no entry answers is a path of its own
+  (`pathOf_orphan`).
 -/
 
 namespace SpartanChain
@@ -149,6 +152,24 @@ theorem not_bad_one : ¬ Bad [(squeezeQ katSt2, katSt3)] := by
     simp only [List.getElem_singleton, stateIn_squeezeQ, Option.some.injEq] at hs
     exact absurd hs (by decide)
   · exact hr (by simp)
+
+/-! ## The transcript forest -/
+
+/-- A constant digest. -/
+def dg (k : UInt8) : Digest := Vector.replicate 32 k
+
+/-- Seed, absorb from the seed's answer, squeeze from the absorb's answer. -/
+def logLinked : Log :=
+  [(seedQ (dg 0) 1 (dg 0), dg 1), (absorbQ (dg 1) 0x01 (bytesOf katRoot), dg 2),
+    (squeezeQ (dg 2), dg 3)]
+
+/-- **Positive**: the linked entries form one path. -/
+theorem pathOf_linked : SoundnessLog.pathOf logLinked 2 = [0, 1, 2] := by decide +kernel
+
+/-- **Negative**: a squeeze of a state no entry answers has no predecessor. -/
+theorem pathOf_orphan :
+    SoundnessLog.pathOf [(seedQ (dg 0) 1 (dg 0), dg 1), (squeezeQ (dg 9), dg 3)] 1 = [1] := by
+  decide +kernel
 
 end TranscriptControls
 

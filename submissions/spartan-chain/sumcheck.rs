@@ -427,11 +427,24 @@ pub fn inner(
 /// A degree-2 sumcheck of `Σ_y f(y) g(y)` over dense tables. Returns the round polynomials, the
 /// challenges and the final `f`, `g` values.
 pub fn product_sumcheck(
+    f: Vec<E>,
+    g: Vec<E>,
+    claim: E,
+    kind: u8,
+    tr: &mut Transcript,
+) -> (Vec<[E; 3]>, Vec<E>, E, E) {
+    product_rounds(f, g, claim, &mut |poly: &[E; 3]| {
+        tr.absorb(kind, &bytes_of(poly));
+        tr.squeeze_e()
+    })
+}
+
+/// The rounds of `product_sumcheck` with the challenges from `next` (given each polynomial).
+pub fn product_rounds(
     mut f: Vec<E>,
     mut g: Vec<E>,
     mut claim: E,
-    kind: u8,
-    tr: &mut Transcript,
+    next: &mut dyn FnMut(&[E; 3]) -> E,
 ) -> (Vec<[E; 3]>, Vec<E>, E, E) {
     let mut polys = vec![];
     let mut r = vec![];
@@ -456,8 +469,7 @@ pub fn product_sumcheck(
         }
         let poly = coeffs2(sv[0], sv[1], sv[2]);
         debug_assert_eq!(poly[1] + poly[2], claim);
-        tr.absorb(kind, &bytes_of(&poly));
-        let rl = tr.squeeze_e();
+        let rl = next(&poly);
         claim = horner(&poly, rl);
         f = fold(&f, rl);
         g = fold(&g, rl);

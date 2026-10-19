@@ -42,6 +42,7 @@ variable {R : Type*} [CommRing R]
 /-! ## Coefficient arrays -/
 
 /-- Horner: `Σ_i p[i] · x^i`. -/
+@[specialize]
 def peval (p : Array R) (x : R) : R := p.foldr (fun c acc ↦ c + x * acc) 0
 
 theorem peval_eq_sum (p : Array R) (x : R) :
@@ -73,6 +74,7 @@ theorem peval_three (a b c x : R) : peval #[a, b, c] x = a + x * b + x ^ 2 * c :
   ring
 
 /-- Coefficientwise sum. -/
+@[specialize]
 def pAdd (p q : Array R) : Array R :=
   Array.ofFn (n := max p.size q.size) fun i ↦ p.getD i 0 + q.getD i 0
 
@@ -91,6 +93,7 @@ theorem peval_pAdd (p q : Array R) (x : R) : peval (pAdd p q) x = peval p x + pe
   rw [pAdd, getD_ofFn, dite_eq_left hi, add_mul]
 
 /-- `a · X^i · q`. -/
+@[specialize]
 def pShiftScale (i : ℕ) (a : R) (q : Array R) : Array R :=
   Array.ofFn (n := i + q.size) fun k ↦ if k.val < i then 0 else a * q.getD (k.val - i) 0
 
@@ -108,6 +111,7 @@ theorem peval_pShiftScale (i : ℕ) (a : R) (q : Array R) (x : R) :
   ring
 
 /-- Product: `Σ_i p[i] · X^i · q`. -/
+@[specialize]
 def pMul (p q : Array R) : Array R :=
   Nat.fold p.size (fun i _ acc ↦ pAdd acc (pShiftScale i (p.getD i 0) q)) #[]
 
@@ -167,6 +171,7 @@ inductive Expr
 namespace Expr
 
 /-- The value at the table values `v i`. -/
+@[specialize]
 def eval (v : ℕ → R) : Expr → R
   | var i => v i
   | add a b => a.eval v + b.eval v
@@ -179,6 +184,7 @@ def deg : Expr → ℕ
   | mul a b => a.deg + b.deg
 
 /-- The value in coefficient arithmetic, the tables being the polynomials `v i`. -/
+@[specialize]
 def evalPoly (v : ℕ → Array R) : Expr → Array R
   | var i => v i
   | add a b => pAdd (a.evalPoly v) (b.evalPoly v)
@@ -204,11 +210,13 @@ end Expr
 
 /-- Table `t` on the pair `2j, 2j + 1` as a polynomial in the round variable:
 `t[2j] + X · (t[2j + 1] - t[2j])`. -/
+@[specialize]
 def linAt (t : Array R) (j : ℕ) : Array R :=
   #[t.getD (2 * j) 0, t.getD (2 * j + 1) 0 - t.getD (2 * j) 0]
 
 /-- The honest round polynomial, `half` pairs: `Σ_{j < half} e(linAt t_i j)`, `deg e + 1`
 coefficients. -/
+@[specialize]
 def roundPoly (e : Expr) (ts : Array (Array R)) (half : ℕ) : Array R :=
   Nat.fold half (fun j _ acc ↦ pAdd acc (e.evalPoly fun i ↦ linAt (ts.getD i #[]) j))
     (Array.replicate (e.deg + 1) 0)

@@ -13,7 +13,7 @@ import SpartanChainField
 * R7: `far_miss` (`(17/24)^260 ≤ (4/5)·2^-129`, so `< 2^-129.32`) and `close_miss`
   (`(5/12)^260 ≤ 2^-328`), as L-RS3 at the protocol's parameters, in exact `ℕ` form.
 * `eps_budget`: the per-step sum stays below `2^-129` with `logCap = 2^96`
-  (`3·2^-152` collisions and hits, `2^-160` state hits).
+  (`3·2^-152` collisions and hits, `2^-160` state hits, `2^-256` the `i ≤ j` state hit).
 
 Every inequality between large numbers is a `ℕ` comparison decided by the kernel's `GMP`
 arithmetic.
@@ -187,8 +187,10 @@ theorem close_miss (κ : ℕ) (D : Finset (Fin (cols κ))) (hD : dist κ - radiu
 
 /-! ### The per-step budget -/
 
-/-- `(4/5)·2^-129 + 3·2^-152 + 2^-160 ≤ 2^-129`: R7 plus the `Bad` terms at `logCap = 2^96`. -/
-theorem eps_budget : (4 / 5 : ℚ) / 2 ^ 129 + 3 / 2 ^ 152 + 1 / 2 ^ 160 ≤ 1 / 2 ^ 129 := by
+/-- `(4/5)·2^-129 + 3·2^-152 + 2^-160 + 2^-256 ≤ 2^-129`: R7 plus the `Bad` terms at
+`logCap = 2^96` (the last one the `i ≤ j` state hit, §9.3). -/
+theorem eps_budget :
+    (4 / 5 : ℚ) / 2 ^ 129 + 3 / 2 ^ 152 + 1 / 2 ^ 160 + 1 / 2 ^ 256 ≤ 1 / 2 ^ 129 := by
   norm_num
 
 /-- A single-answer round (`≤ 3` bad answers in `|EF|`) and R0 are far below `2^-129`. -/

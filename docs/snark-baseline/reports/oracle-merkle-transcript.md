@@ -131,3 +131,89 @@ The expected bytes come from Python `hashlib`, through
 - The compiled speed of `build`/`verify` at `N = 4096` has not been measured. It needs a lake
   executable target, and flat modules are not lake targets in the dev clone. Oleans were built
   with `lean -o` into `rf-core-sc/scratch/omt-build`.
+
+## Round 2: `SpartanChainSoundnessLog.lean` and measurements
+
+**Build.** The dev clone now builds flat modules (`./refresh-roots.sh`, then
+`lake build +SpartanChainMerkle +SpartanChainSoundnessLog +SpartanChainTranscriptControls`):
+2093 jobs, green. The source rule finds nothing on 32 files. Axioms are standard
+(`logs/…/axioms-log.txt`).
+
+### What `SpartanChainSoundnessLog.lean` proves
+
+All statements are against the amended contract (`logCap = 2^96`) and the review's fixes S9-M2
+and S9-M3.
+
+- **L-K1 `bad_step_le`.** On a log with `¬ Bad L` and a fresh query `q`, at most
+  `|L|·(3·2^8 + 1) + 1` answers make `L ++ [(q,a)]` bad. The `+1` is the new query's own state,
+  as the `i ≤ j` state hit requires. `bad_step_frac` restates it with `|L| < 2^96`. Helpers:
+  - `card_trunc_fiber`: each label has exactly `2^8` preimages.
+  - `length_labelsIn`: a query carries at most 2 labels.
+- **Transcript forest (§9.1).** `ansIdx`, `predIdx` and `pathOf`, the path of predecessors that
+  ends at an entry. `predIdx_lt` says the predecessor is earlier under `¬ Bad`.
+- **L-K8 `fresh_leaf`.** Assume `¬ Bad (L ++ [(q,a)])`.
+  - Every old entry keeps its predecessor and its path (`predIdx_append_old`,
+    `pathOf_append_old`).
+  - The new entry's path is its predecessor's path in `L` followed by the new entry, or the new
+    entry alone (`back_new`, with `predIdx_new`).
+- **Frontier (S9-M2).** `OnFrontier` and `frontier_append`: a fresh query removes from the
+  frontier only the entries whose squeeze it is.
+- **L-K2, generic (`extCount_split`).** For any event `P`, the sum over `a` of
+  `#completions(pre ++ [a], k)` equals `#completions(pre, k+1)`. This is the review's
+  `roundPot_split`, the martingale step of R0 and R7.
+- **Controls** (in `SpartanChainTranscriptControls.lean`):
+  - `pathOf_linked`: a seed, absorb, squeeze log forms the path `[0,1,2]`.
+  - `pathOf_orphan`: a squeeze whose state nothing answers is a path of its own.
+
+### Left open
+
+- **The §6.2 match of a chain.** The kinds and lengths of the absorbs and squeezes depend on
+  `n`'s shape, which lives in the verifier modules. It belongs with L-K4.
+- **L-K4 `runLog_chain`, intended statement.** Assume `¬ Bad L` and
+  `(leafProg c π).runLog L = some b`. Then:
+  - The run's Fiat–Shamir queries, in the order asked, are answered by entries
+    `i_1 < i_2 < … < i_r` of `L`. These are unique by `entry_unique` and ordered by
+    `pred_unique_lt`.
+  - The path of the last entry is `pathOf L i_r = [i_1, …, i_r]`.
+  - `seedOf q_{i_1} = some (s, n, h)` of the proof, and the absorb messages are the proof's
+    fields.
+  - With `L = L₀ ++ L[i_2] :: L₁`, where `i_2` is the `absorb(root)` entry, every Merkle
+    sub-run is `verify root c col ss`, so `open_binding_prefix` applies.
+  - If `b = true`, the chain is complete: `r = 1 + 1 + m + … + J`.
+
+  The proof route is `runLog_eq_some_iff` (the run is the run under `logOracle L`),
+  `runLog_bind` to split off the sub-runs, `stateIn_absorbQ` and `stateIn_squeezeQ`.
+
+### Measurements
+
+The run used a compiled exe outside the root (`logs/…/OmtBench.lean`, `bench.log`), 3 runs, at
+`n = 16`:
+
+| operation | time |
+|---|---|
+| one oracle call on 33 bytes | 5.9–7.3 µs |
+| Merkle `build`, N = 4096 columns of 64 bytes (8191 queries) | 65–77 ms |
+| 260 openings (`path` + `verify`, 260 × 13 queries) | 25–28 ms |
+| one leaf's transcript (60 absorbs ≈ 28 KB, 97 squeezes, 260 indices) | 9.7–11.3 ms |
+
+Whole process: 0.21 s wall, 84 MB.
+
+### Contract finding: the amended contract cannot start in compiled code
+
+- **The defect.** Core branch `v3/ks-potential` (c3f6380) has, in `Contract/Security.lean:74`,
+  `instance : Fintype Digest := Fintype.ofSurjective …`. It is a nullary computable instance, so
+  every executable that imports `Contract.Security` (hence `Certificate`, and this entry's
+  `verify`) evaluates it at module initialisation, which enumerates `256^32` functions.
+- **The evidence** (`logs/…/init-blowup.log`):
+  - An exe whose only import is `Contract.Security` and whose `main` prints "hello" reaches 22.9 GB
+    in 20 s without printing.
+  - A copy of the instance in a probe reproduces it.
+  - The pinned `15e4ae5` has no such instance; it uses `Nat.card`.
+- **The fix** is a one-word change in the core: `noncomputable instance`. The bench above ran in
+  a private clone with that change (`/home/devops/Verified-zkEVM/omt-bench-core`). Nothing in
+  the shared clone or the core was edited.
+- `rf-core-sc/lakefile.toml` gained a scratch `omt-bench` exe entry, marked "SCRATCH ONLY". It
+  starts only after this fix.
+
+**Code lines** (`loc.py`): SoundnessLog 276; Controls now 83; all five files 1 352 lines,
+132 theorems.

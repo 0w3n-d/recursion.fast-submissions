@@ -54,8 +54,10 @@ so it would count every Rust line as code.
   writes `proof.bin`.
 - `prove-leaf START.hex N OUT.bin`: writes one leaf proof and prints its statement.
 - `verify STMT.hex PROOF.bin`: the native `Vb`. Exit 0 is accept, 1 reject, 2 usage or IO error.
-- `dump-field | dump-circuit | dump-walk | dump-encode | dump-transcript` and `dump-proof DIR`:
-  the KAT dumps (§5).
+- `dump-field | dump-mle | dump-transcript-ops | dump-encode | dump-phi | dump-sumcheck |
+  dump-walk | dump-circuit | dump-transcript`, `dump-leaf-trace DIR` and `dump-proof DIR`: the KAT
+  dumps (§5).
+- `kat.py` (in the root) runs and diffs both sides of the KAT.
 - Diagnostics:
   - `check-leaf`: the leaf branch without the `proofCap` guard, needed for `n > 4096`.
   - `bench-field`.
@@ -219,10 +221,89 @@ None of the review's findings (BP-M1…M4, m1…m14) changes a protocol byte. M1
 proofs, and M4 is the Lean decoder's cost. Where they touch the prover (m4, m5, m6), this code
 already agrees with the corrected reading.
 
-## 5. Known-answer formats (§11.3)
+## 5. Known-answer harness (§11.3)
 
-The Rust side writes these files and the Lean `spartan-run dump-*` must write the same text.
-Reference outputs are in `logs/spartan-chain/rust/kat/`.
+### 5.1 Result: every KAT that has a Lean implementation passes
+
+`kat.py` runs the Rust `dump-*` commands and the Lean dumps, then diffs them line by line. It
+exits nonzero on any difference.
+
+- **The Lean side** is `SpartanChainKat.lean`, in the root. It holds pure `def`s that take
+  arguments, so they are not closed terms, and it has no elaboration-time code. The source rule
+  reports 0 findings.
+- **The driver** is `scratch/kat/KatMain.lean` in `rf-core-sc`, outside the root. It is the
+  scratch `[[lean_exe]] spartan-kat` and writes the files.
+- **The command:**
+
+  ```sh
+  python3 -I kat.py --rust <spartan-chain-prover> --lean-dir rf-core-sc \
+    --lean-exe rf-core-sc/.lake/build/bin/spartan-kat --out <dir>
+  ```
+
+Run of 2026-10-19 (`logs/spartan-chain/kat/kat.log`; outputs in `logs/spartan-chain/kat/out/`):
+
+| dump | lines | Lean code exercised | result |
+|---|---|---|---|
+| `field` | 2 000 | `F`/`EF` `*`, `sq`, `toBytes` (`SpartanChainField*`) | SAME |
+| `mle` | 1 026 | `eqTable`, `mleEval`, `eqPts` (`SpartanChainMLE`) | SAME |
+| `transcript-ops` | 27 | `seed`, `absorb` at message lengths 0…200, `squeeze`, `chE`, `squeezeIdx` at `ℓ_N = 12, 10`, under `blake2sOracle` (`SpartanChainTranscript`) | SAME |
+| `encode` | 32 768 | `Ligero.encAtE (kapArr 9) 9` at every point, `k = 512`, `N = 4096` (`SpartanChainRS`/`Ligero`) | SAME |
+| `phi` | 82 | `phiTable`, `phiApply`, `target`, `weightEval` (`SpartanChainRingSwitch`) | SAME |
+| `sumcheck` | 9 | `honest (mul (var 0) (var 1))`, `bindAll` (`SpartanChainSumcheck`) | SAME |
+| `walk` | 8 | `walkAB` (`SpartanChainBlake2sWalk`; row 512 skipped, **A1 confirmed**) | SAME |
+| `circuit` | 16 384 | `circuitRows gateBase` = `chainBlock.rowOf` (`circuitRows_eq`, `SpartanChainBlake2sWitness`) | SAME |
+| `leaf` | 233 | the `n = 1` KAT leaf, recomputed in Lean from the Rust prover's challenges and tables, against the bytes of the Rust proof (below) | SAME |
+
+The `leaf` KAT is the strongest of these.
+
+- **Inputs.** `dump-leaf-trace` writes `leaf-input.txt`:
+  - the statement;
+  - `τ`, `r_x`, `ρ`, `r_y`, `f`, `r''`;
+  - the bit tables `Az`, `Bz`, `Cz` and `z = (w ‖ pub)`;
+  - the packed witness `q`;
+  - the dense `M̃ρ(r_x, ·)`, built row by row from the §2.3 definition (`matrix_table_naive`), not
+    by the prover's structured algorithm.
+- **What the Lean side recomputes:**
+  - the root, by `Ligero.commit` (naive column encoding and `Merkle.build`);
+  - `ū`, by `Ligero.prove1` after `Transcript.seed`;
+  - the 15 outer round polynomials, by `honest (eq·(A·B + C))` over `[eqTable τ, A, B, C]`;
+  - `v_A, v_B, v_C`, by `mleEval`;
+  - the 15 inner round polynomials, by `honest` over `[M, z]`;
+  - the 64 slices, by `mleEval` of the bit-planes at `r_hi`;
+  - `T`, by `target`;
+  - the 9 ring-switch round polynomials, by `honest` over `[weightTable f r_hi, q]`.
+- **Result.** All 233 lines equal the values in the Rust proof's bytes (`leaf-expect.txt`). So
+  the Rust prover's bucketed, tensor-structured sumchecks and its additive FFT produce exactly the
+  polynomials and the commitment that the Lean definitions give. That covers A3's neighbourhood,
+  A6 (packing) and A7 (variable order).
+
+**Negative control** (`kat-negative-control.log`). One hex digit changed in the Rust `mle` dump
+gives `DIFF (1 lines)`, `KAT: FAIL`, exit 1.
+
+**No discrepancy was found, so no fix was needed on either side.** The Rust code changed only
+by additions:
+
+- the dumps `mle`, `transcript-ops`, `phi`, `sumcheck`, `leaf-trace`;
+- `product_rounds`, which takes the challenges from a closure (the bytes are unchanged; the
+  `dump-proof` KAT is stable);
+- `walk` now prints only `A0, B0` (row 512 skipped), because the Lean side has only that variant.
+
+**Not yet comparable.** `dump-transcript` (the full leaf's state sequence) and `dump-proof`
+(byte-identical leaf proofs, §11.3 (6)) need the Lean `proveLeaf`/`P`. `Prover.lean` does not
+exist yet. Their Rust references are in `logs/spartan-chain/rust/kat/`. Adding them to `kat.py`
+means adding two names to the driver.
+
+**A finding while building the harness (already fixed upstream).** At the amended contract's
+`c3f6380`, `instance : Fintype Digest` (`Contract/Security.lean`) was a computable closed term.
+Every compiled executable that imports `Contract.Security` evaluated it at start-up and ran out
+of memory: 6.8 GB within 7 s, for a program that only prints "ok". Bisected to that module with a
+probe executable. That covers every entry's compiled `verify`. The interpreter
+(`lake env lean --run`) was unaffected. Commit `05fde28` ("the Fintype Digest instance is
+noncomputable") fixed it while this harness was being built. The compiled `spartan-kat` was then
+rebuilt, and it runs every dump in 21 s in total (`kat.log`). Through the interpreter, `walk` had
+taken 462 s and `leaf` 690 s, and `encode` and `circuit` had not finished after 25 minutes.
+
+### 5.2 Formats
 
 **Inputs.**
 
@@ -232,45 +313,47 @@ Reference outputs are in `logs/spartan-chain/rust/kat/`.
 
 **Hex conventions.**
 
-- A `K` value is 16 lowercase hex digits of the word, most significant digit first (`%016x`).
-- An `E` value is `c0.c1.c2`, each in the `K` format.
-- Byte strings are lowercase hex, two digits per byte, in byte order.
+- A `K` value is 16 lowercase hex digits of the word, most significant first.
+- An `E` value is `c0.c1.c2`.
+- Byte strings are two lowercase hex digits per byte, in byte order.
 
 **The files.**
 
-- **`dump-field`** (2 000 lines).
-  - Lines `kmul i a b a·b a² bytes(a)`, for `i < 1000` with `a = K(katRand "field-k-a" i)` and
-    `b = K(katRand "field-k-b" i)`.
-  - Then lines `emul i a b a·b a² bytes(a)` with tags `field-e-a` and `field-e-b`.
-- **`dump-circuit`** (16 384 lines). Line `k na nb ha hb` for each position `k` of `chainBlock`'s
-  `rowOf`:
-  - `na`, `nb` are the popcounts of the `a` and `b` forms;
-  - `ha`, `hb` are `blake2s256` of the form as 2 048 bytes (byte `i` bit `b` is position `8i+b`).
+- **`field`.** Lines `kmul i a b a·b a² bytes(a)`, for `i < 1000`, with tags `field-k-a` and
+  `field-k-b`. Then lines `emul …` with tags `field-e-a` and `field-e-b`.
+- **`mle`.**
+  - `eq u eq(r,u)` for `u < 1024`, with `r[l] = katRand "mle-r" l`, `l < 10`;
+  - `mle Σ_u t[u] eq(r,u)` with `t[u]` from tag `mle-t`;
+  - `eqpts eq(r, r2)` with `r2` from tag `mle-r2`.
+- **`transcript-ops`.**
+  - The seed is `s = katRand "tr-s" 0`, `n = 5`, `h = katRand "tr-h" 0`; the line is `seed st`.
+  - For kind `i+1`, `i < 8`: absorb a message of length `[0,1,31,32,33,63,64,200][i]`, whose byte
+    `j` is `katRand "tr-msg-<i>" ⌊j/32⌋ [j mod 32]`. The line is `absorb kind len st`, followed by
+    two lines `squeeze st chE(st)`.
+  - Then `idx ℓ st c_0,…,c_259` for `ℓ = 12` and then `ℓ = 10`.
+- **`encode`.** Lines `enc i c Enc(msg_i)_c`: `k = 512`, `N = 4096`,
+  `msg_i[j] = chE(katRand "encode-<i>" j)`, `i < 8`.
+- **`phi`.** The stage coefficients are `f_p = katRand "phi-f" p`.
+  - `ck k c_k` for `k < 64`;
+  - `phi i a Φ(a)` for `i < 16`, with `a` from tag `phi-a`;
+  - `target Σ x^i Φ(s_i)`, with `s_i` from tag `phi-s`;
+  - `weight W̃` at `r_hi`, `r''` of 9 coordinates, from tags `phi-r` and `phi-r2`.
+- **`sumcheck`.** Product tables `f`, `g` of 256 entries (tags `sc-f`, `sc-g`), challenges
+  `sc-r l`. Lines `round l c0 c1 c2`, then `final f(r) g(r)`.
+- **`walk`.** Lines `walk i A0̃ B0̃`, with row 512 skipped. `r_k[l]` comes from
+  `walk-rk (14i+l)` and `r_j[l]` from `walk-rj (14i+l)`.
+- **`circuit`.** Line `k na nb ha hb` for each position `k` of `chainBlock.rowOf`, row 512
+  included:
+  - `na`, `nb` are popcounts;
+  - `ha`, `hb` are `blake2s256` of the form as 2 048 little-endian bytes.
 
-  Row 512 is `rowOf`'s `(var 512, var 512)`. In total there are 53 619 173 nonzeros in `A` and
-  35 685 307 in `B` (≈ 8.9·10^7, as the blueprint says).
-- **`dump-walk`** (8 lines). Line `walk i A0 B0 A0' B0'`:
-  - `r_k[l] = chE(katRand "walk-rk" (14i+l))` and `r_j[l]` likewise with tag `walk-rj`, `l < 14`;
-  - `A0, B0` skip row 512 (A1); `A0', B0'` include `rowOf 512`.
-- **`dump-encode`** (32 768 lines). Line `enc i c Enc(msg_i)_c`:
-  - `k = 512`, `N = 4096`, `msg_i[j] = chE(katRand "encode-<i>" j)`;
-  - `i < 8`, `c < 4096`.
-- **`dump-transcript`** (126 lines). Line `idx op st`, where `op` is one of `seed`,
-  `absorb <kind hex> <msg length>` or `squeeze`, and `st` is the state after it. It covers the
-  leaf `s = 00 01 … 1f`, `n = 2`, from the seed to the last index squeeze (Merkle queries are not
-  transcript states).
-- **`dump-proof DIR`** (4 lines, plus `DIR/kat-n<n>.bin`). Line `proof n s stmt size blake2s(π)`
-  for `n ∈ {1, 2, 16, 64}`, with `s = katRand "proof-start" n`.
-
-  | `n` | proof size | `blake2s(π)` prefix |
-  |---|---|---|
-  | 16 | 143 711 B | `1c269726…` |
-  | 64 | 193 467 B | `ceac6ba5…` |
-
-  The full values are in `kat/proof.txt`.
-
-`kat.py` is not written: no Lean dump exists yet to diff against, and the diff is `diff -u` file
-by file.
+  In total `A` has 53 619 173 nonzeros and `B` 35 685 307.
+- **`leaf`.** Lines `root`, `ubar j`, `outer l c0…c3`, `vabc`, `inner l c0 c1 c2`, `slice i`,
+  `target`, `rs l c0 c1 c2`, for the leaf `n = 1`, `s = katRand "proof-start" 1`.
+- **Rust only, until the Lean prover exists.**
+  - `transcript`: the full leaf's state sequence for `s = 00…1f`, `n = 2`.
+  - `proof`: `proof n s stmt size blake2s(π)` for `n ∈ {1, 2, 16, 64}`, with
+    `s = katRand "proof-start" n`.
 
 ## 6. Deviations from the blueprint
 
@@ -291,13 +374,8 @@ by file.
 
 ## 7. Open points
 
-1. **Lean-side byte equality is untested until `spartan-run dump-*` exists.** The highest-risk
-   items:
-   - A1 (row 512);
-   - A3 (opening order);
-   - A6 (packing);
-   - the inner table's region-2 terms, which `matrix_formula_matches_definition` covers on the
-     Rust side only.
+1. **Byte equality of whole proofs** (`dump-proof` against a Lean `P`) waits for `Prover.lean`.
+   Every component below the prover already agrees (§5.1).
 2. The native verifier's column checks are single-threaded and take 0.4 s at `n = 1024`. That does
    not matter for R1 (`n = 16`). It is the same `7k`-per-column cost the Lean `V` will pay
    (blueprint §12).

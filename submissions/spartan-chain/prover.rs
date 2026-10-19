@@ -45,11 +45,37 @@ fn combine_rows(q: &[u64], m: usize, k: usize, c: &[E]) -> Vec<E> {
 
 /// The honest leaf proof for `(s, n)`, and the timings of its phases. With `log`, the
 /// transcript's state sequence is returned too.
+/// The challenges and tables of one leaf proof (the known-answer harness, `kat.rs`).
+#[derive(Default)]
+pub struct LeafTrace {
+    pub tau: Vec<E>,
+    pub r_x: Vec<E>,
+    pub rho: E,
+    pub r_y: Vec<E>,
+    pub f: Vec<E>,
+    pub r2: Vec<E>,
+    pub w: Vec<u64>,
+    pub a: Vec<u64>,
+    pub b: Vec<u64>,
+    pub c: Vec<u64>,
+    pub h: Digest,
+}
+
 pub fn prove_leaf(
     circ: &Circuit,
     s: &Digest,
     n: u64,
     log: bool,
+) -> (Vec<u8>, Timings, Option<Vec<(String, Digest)>>) {
+    prove_leaf_traced(circ, s, n, log, None)
+}
+
+pub fn prove_leaf_traced(
+    circ: &Circuit,
+    s: &Digest,
+    n: u64,
+    log: bool,
+    trace: Option<&mut LeafTrace>,
 ) -> (Vec<u8>, Timings, Option<Vec<(String, Digest)>>) {
     let mut tm = vec![];
     if n == 0 {
@@ -171,6 +197,21 @@ pub fn prove_leaf(
         }
     }
     assert_eq!(bytes.len(), leaf_size(n));
+    if let Some(tc) = trace {
+        *tc = LeafTrace {
+            tau: tau.clone(),
+            r_x: out.r_x.clone(),
+            rho,
+            r_y: inn.r_y.clone(),
+            f: f.to_vec(),
+            r2: r2.clone(),
+            w: wit.w.clone(),
+            a: wit.a.clone(),
+            b: wit.b.clone(),
+            c: wit.c.clone(),
+            h: wit.h,
+        };
+    }
     lap("open", &mut t);
     tm.push(("total", t0.elapsed().as_secs_f64()));
     (bytes, Timings(tm), tr.log)

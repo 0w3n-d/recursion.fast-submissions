@@ -200,6 +200,7 @@ theorem frobMap_stages_zeros (s' m : ℕ) (a : R) :
 /-! ## Computable code -/
 
 /-- `n` squarings: `a ^ 2 ^ n`. -/
+@[specialize]
 def sqIter : ℕ → R → R
   | 0, a => a
   | n + 1, a => sqIter n (a * a)
@@ -213,6 +214,7 @@ theorem sqIter_succ' (n : ℕ) (a : R) : sqIter (n + 1) a = sqIter n a * sqIter 
   rw [sqIter_eq, sqIter_eq, ← sq, ← pow_mul, pow_succ]
 
 /-- The staged map with squarings. -/
+@[specialize]
 def frobMapC : List (ℕ × R) → R → R
   | [], a => a
   | (s, f) :: st, a => frobMapC st (a + f * sqIter s a)
@@ -223,12 +225,14 @@ theorem frobMapC_eq (st : List (ℕ × R)) (a : R) : frobMapC st a = frobMap st 
   | cons p st ih => obtain ⟨s, f⟩ := p; rw [frobMapC, frobMap, ih, sqIter_eq]
 
 /-- `Φ(a)`, computed: `63` squarings and `6` multiplications for six stages. -/
+@[specialize]
 def phiApply (fs : List R) (a : R) : R := frobMapC (stages (fs.length - 1) fs) a
 
 theorem phiApply_eq (fs : List R) (a : R) : phiApply fs a = Phi fs a := frobMapC_eq _ _
 
 /-- The coefficients `c_k` of `Φ(a) = Σ_k c_k · a ^ 2 ^ k`, `2 ^ |fs|` of them: the table of the
 later stages, then the same table times `f ^ 2 ^ e`. -/
+@[specialize]
 def phiTable : List R → Array R
   | [] => #[1]
   | f :: fs =>
@@ -266,6 +270,7 @@ theorem Phi_eq_table [CharP R 2] (fs : List R) (a : R) :
     ring
 
 /-- The target `T = Σ_i x^i · Φ(s_i)` (Horner in `x`). -/
+@[specialize]
 def target (x : R) (fs : List R) (s : Array R) : R := peval (s.map (phiApply fs)) x
 
 theorem target_eq (x : R) (fs : List R) (s : Array R) :
@@ -276,9 +281,11 @@ theorem target_eq (x : R) (fs : List R) (s : Array R) :
   simp [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hi, phiApply_eq, mul_comm]
 
 /-- The prover's weight table `W(u') = Φ(eq(r, u'))`. -/
+@[specialize]
 def weightTable (fs r : List R) : Array R := (eqTable r).map (phiApply fs)
 
 /-- `W̃(r'') = Σ_k c_k · eq(r ^ 2 ^ k, r'')`, the point squared once per `k`. -/
+@[specialize]
 def weightEval (fs r r'' : List R) : R :=
   let c := phiTable fs
   (Nat.fold c.size (fun k _ (p : R × List R) ↦

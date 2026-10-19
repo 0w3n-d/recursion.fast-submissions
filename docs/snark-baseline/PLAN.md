@@ -105,3 +105,12 @@ review, kernel-checked probes under `logs/adv-probes/`), `notes/E1`–`E4` (expl
   the user: push the branch, open a pull request that references #5, and after the merge move
   this repository's pin in its own commit. Until then the honest entry builds against the shared
   development clone `/home/devops/Verified-zkEVM/rf-core-sc`, which tracks that branch.
+- **[D-9] Start-up bug in the amendment, fixed.** The amendment's `instance : Fintype Digest` was
+  computable, so every compiled binary that imports the contract enumerated `256^32` digests at
+  start-up and never started. The Merkle/transcript agent found it. Fix: `noncomputable instance`,
+  commit `05fde28` on `v3/ks-potential`. With it, a compiled binary starts in 0.20 s using 86 MB.
+  Recorded on #5.
+- **[D-10] Blueprint §9 was revised twice.** The reviews `docs/reviews/BLUEPRINT-R1-review.md`
+  and `BLUEPRINT-R1-S9-review.md` together found 7 majors, all in the definitions of the
+  security argument. None touched the protocol, bytes or parameters, and ε = 2^-129 holds
+  throughout. §9 now names the implemented definitions verbatim.

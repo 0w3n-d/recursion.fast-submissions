@@ -2,9 +2,7 @@
 //! and the verifier's closed-form `M̃ρ(r_x, r_y)`.
 
 use crate::blake2s::{chain_step, Digest};
-use crate::circuit::{Circuit, CPOS};
-#[cfg(test)]
-use crate::circuit::BLOCK;
+use crate::circuit::{Circuit, BLOCK, CPOS};
 use crate::field::E;
 use crate::mle::{eq_at, eq_ee, eq_table};
 use crate::par;
@@ -293,8 +291,8 @@ pub fn matrix_eval(circ: &Circuit, sh: &Shape, r_x: &[E], r_y: &[E], rho: E) -> 
     at + rho * bt + rho * rho * ct
 }
 
-/// The dense table `M̃ρ(r_x, y)` over every `y` (tests only: exponential in `ℓ`).
-#[cfg(test)]
+/// The dense table `M̃ρ(r_x, y)` over every `y`, built row by row from §2.3 (tests and the
+/// known-answer harness only: quadratic in the block).
 pub fn matrix_table_naive(circ: &Circuit, sh: &Shape, r_x: &[E], rho: E) -> Vec<E> {
     // Build A, B, C entries row by row from the definitions of §2.3.
     let rows = circ.row_bitsets();

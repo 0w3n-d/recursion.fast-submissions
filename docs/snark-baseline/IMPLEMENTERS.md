@@ -58,6 +58,12 @@ Run it on the root before you finish.
   blueprint statement is false or unprovable as written, **stop and report** with a
   counterexample; don't weaken it silently.
 - Don't commit. The orchestrator commits.
+- **Build budget.** The machine is shared by about ten agents and has 62 GB. Each module should
+  check in under about 2 minutes and under about 4 GB. Run probes under
+  `systemd-run --user --scope -p MemoryMax=8G timeout 900 …`. A module that needs more is a
+  build-time defect, and build time is a stated priority of this work. Never let the kernel or
+  `decide` evaluate the `2^14`-row block or BLAKE2s on concrete data; reason about the generic
+  definitions instead.
 - Give every Lean or cargo command a `timeout`. If a build runs much longer than expected,
   inspect it with `ps` (locks, a package being rebuilt from scratch) rather than waiting.
 

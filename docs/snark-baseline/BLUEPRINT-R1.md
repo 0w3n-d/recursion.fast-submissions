@@ -660,307 +660,491 @@ is L-C2 applied to `w_dec` (§9). The lemma ids are listed in §9.4.
 
 ## 9. The security argument in the potential form
 
-Revised after BP-M1 and BP-M2: Merkle trees are read **per column** (a missing column is a
-column the prover can never open, not a reason to stop charging), `Bad` also charges hits on
-Fiat–Shamir states and repeated queries, and the potential's step law is argued with the bad
-answers split off before the martingale step (BP-m3). Everything below is stated for a fixed
-`n` with `1 ≤ n ≤ chainCap = 2^20`, whose shape `(κ, m, k, N, ℓ_N, J)` is §5.2 and §6.1; `t = 260`.
+Revised twice: after BP-M1/BP-M2 (per-column trees, `Bad` with state hits and repeats) and
+after the focused re-review `docs/reviews/BLUEPRINT-R1-S9-review.md` (S9-M1: a rejection
+disjunct in `Doom`, rounds indexed by chain position, `p` as the conditional count of the escape
+event; S9-M2: the potential sums over **frontier** chains only; S9-M3: the prefix cut is the
+`absorb(root)` entry and the state hit is `i ≤ j`). This section is written to be formalised
+as it stands: every object is a Lean-level definition, every lemma has its statement and its
+module, and where a module already exists the names are **its** names
+(`SpartanChainMerkle`, `SpartanChainTranscript`, `SpartanChainSoundnessLog`,
+`SpartanChainSoundnessPCS`, `SpartanChainSumcheck`, `SpartanChainSoundnessSpartan`,
+`SpartanChainProximity`, `SpartanChainPCSBounds`, `SpartanChainRingSwitch`,
+`SpartanChainRingSwitchField`, `SpartanChainLigero`; namespaces `SpartanChain`,
+`SpartanChain.SoundnessLog`, `SpartanChain.SoundnessPCS`, `SpartanChain.PCS`; flat files as
+`IMPLEMENTERS.md` prescribes, so §10's `Soundness/KS.lean` is `SpartanChainSoundnessKS`).
+Names marked *(to build)* do not exist yet. Everything below is for a fixed leaf shape: `n`
+with `1 ≤ n ≤ chainCap = 2^20`, `κ := Nat.clog 2 n`, `(m, k, N, ℓ_N, J) = (rows κ, msgLen κ,
+cols κ, lN κ, nAns (lN κ) tQ)` (§5.2, §6.1; `SpartanChainPCSBounds`, `SpartanChainTranscript`),
+`e := radius κ`, `d := dist κ`, `t = tQ = 260`, `ℓ_x = ℓ_y = 15 + κ`.
+
+The contract (`rf-core-ks` `c3f6380`): `μ : Log → ℝ≥0`; `empty : μ [] = 0`;
+`step : L.length < logCap → μ L < 1 → q ∉ L.map Prod.fst → Σ_{a : Digest} μ (L ++ [(q,a)]) ≤
+(μ L + ε) · 2^256`; `final : L.length ≤ logCap → μ L < 1 → (V c π).runLog L = some true →
+∃ w, E c π L = some w ∧ Rel c w`. `Log = List (ByteArray × Digest)`.
 
 ### 9.1 Objects read off the log
 
-A log `L` is a list of entries `e = (q, a)` (`q : ByteArray`, `a : Digest`), indexed `e_0, …,
-e_{|L|−1}`. `runLog` answers a query `q` by the **first** entry of `L` whose query is `q`
-(`List.find?`), and returns `none` when there is none.
+An entry is `e = (q, a)` (`e.1 : ByteArray`, `e.2 : Digest`); `trunc a : Label` is its first
+31 bytes. `runLog` answers a query by the first entry of `L` with that query (`List.find?`).
 
-**Fields of a query.** For a query `q`:
+**Fields of a query** (`SpartanChainMerkle`, `SpartanChainTranscript`; exist).
 
-* `labelsIn(q) : Finset (31 bytes)`: `{λ_0, λ_1}` if `q = 0x01 ‖ λ_0 ‖ λ_1` (63 bytes);
-  `{root}` if `q = 0x20 ‖ st ‖ 0x01 ‖ root` (65 bytes, an `absorb(root)`); else `∅`.
-* `stateIn(q) : Option Digest`: `some st` if `q = 0x20 ‖ st ‖ kind ‖ msg` (`|q| ≥ 34`) or
-  `q = 0x30 ‖ st` (33 bytes); else `none`.
-* `seedOf(q) : Option (Digest × ℕ × Digest)`: `some (s, n, h)` if `q = 0x10 ‖ s ‖ enc64 n ‖ h`
-  (73 bytes); else `none`.
+* `Merkle.parseLeaf w q : Option ByteArray` (`0x00 ‖ col`, `|col| = w`); `Merkle.parseNode q :
+  Option (Label × Label)` (`0x01 ‖ λ_0 ‖ λ_1`, 63 bytes); `Merkle.parseAbsorbRoot q : Option
+  Label` (`0x20 ‖ st ‖ 0x01 ‖ root`, 65 bytes); `Merkle.labelsIn q : List Label` (the two
+  children of a node query, the root of an `absorb(root)`, else `[]`; `length_labelsIn ≤ 2`).
+* `Transcript.stateIn q : Option Digest` (`some st` for `0x20 ‖ st ‖ kind ‖ msg`, `|q| ≥ 34`,
+  and for `0x30 ‖ st`, 33 bytes; `stateIn_absorbQ`, `stateIn_squeezeQ`).
+* `Transcript.seedOf q : Option (Digest × ℕ × Digest)` (`0x10 ‖ s ‖ enc64 n ‖ h`, 73 bytes;
+  `seedOf_seedQ`).
 
-**Bad events.** `Bad(L)` holds iff there are indices `i < j` with:
+**Bad events** (`SpartanChainTranscript`; exist). `Transcript.Bad L := Merkle.Collision L ∨
+Merkle.Hit L ∨ Transcript.StateHit L ∨ Transcript.Repeated L`, with
 
-* (i) *collision*: `q_i ≠ q_j` and `[a_i]_{31} = [a_j]_{31}`;
-* (ii) *label hit*: `[a_j]_{31} ∈ labelsIn(q_i)`;
-* (iii) *state hit*: `stateIn(q_i) = some a_j` (the full 32 bytes);
-* (iv) *repeat*: `q_i = q_j`.
+* `Collision L := ∃ e₁ ∈ L, ∃ e₂ ∈ L, e₁.1 ≠ e₂.1 ∧ trunc e₁.2 = trunc e₂.2` (unordered);
+* `Hit L := ∃ i j, ∃ (hij : i < j) (hj : j < L.length), trunc L[j].2 ∈ labelsIn L[i].1`;
+* `StateHit L := ∃ i j, ∃ (hij : i ≤ j) (hj : j < L.length), stateIn L[i].1 = some L[j].2`
+  (**`i ≤ j`**, S9-M3: an entry answering its own state field is bad);
+* `Repeated L := ¬ (L.map Prod.fst).Nodup`.
 
-`Bad` is monotone under appending. Under `¬Bad(L)`: all answers of `L` are pairwise distinct
-(by (i) and (iv), already after truncation to 31 bytes); `find?` on a query of `L` returns the
-only entry with that query; every 31-byte label and every 32-byte state that occurs as a field
-of a query of `L` either has its preimage entry (the entry whose answer it is) **earlier** in
-`L` or has none at all.
+`bad_append : Bad L → Bad (L ++ L')`. Under `¬Bad L`: answers determine queries
+(`query_eq_of_answer`), every entry is the `find?` of its query (`entry_unique`), and
+**L-K7 `pred_unique_lt`**: for `j < L.length` with `stateIn L[j].1 = some st`, at most one `i`
+has `L[i].2 = st`, and every such `i` is `< j`.
 
-**Partial trees per column.** For a 31-byte `root`, a column index `c < N` and a log `L`,
-`col_L(root, c) : Option (8m bytes)` descends from the root, level `l = ℓ_N − 1` down to `0`,
-with a current label `λ` (initially `root`):
+* **L-K1 `SoundnessLog.bad_step_le`** (exists): `¬Bad L → q ∉ L.map Prod.fst →
+  (univ.filter fun a : Digest => Bad (L ++ [(q, a)])).card ≤ L.length · (3 · 2^8 + 1) + 1`
+  (`card_trunc_fiber`: a label has `2^8` preimages; collisions `|L| · 2^8`; hits `2|L| · 2^8`
+  by `length_labelsIn`; state hits `|L|` old states plus the new query's own, the `+ 1` of
+  `i ≤ j`; no repeat for a fresh `q`). **`bad_step_frac`** (exists): with `L.length < logCap`
+  the count is `≤ 2^96 · (3 · 2^8 + 1) + 1`, a fraction `< 3 · 2^{-152} + 2^{-160} +
+  2^{-256}` of `2^256`.
 
-* at a node level `l`: let `e = (q, a)` be the first entry of `L` with `[a]_{31} = λ` (none ⇒
-  `none`); require `q = 0x01 ‖ λ_0 ‖ λ_1` (63 bytes; otherwise `none`); continue with
-  `λ := λ_{bit_l(c)}`;
-* at the bottom: let `e = (q, a)` be the first entry with `[a]_{31} = λ` (none ⇒ `none`);
-  require `q = 0x00 ‖ bytes` with `|bytes| = 8m` (otherwise `none`); return `some bytes`.
+**Trees per column** (`SpartanChainMerkle`; exist). `Merkle.pre L λ := L.find? (trunc ·.2 =
+λ)`; `Merkle.colL L w root ℓ c : Option ByteArray` descends `ℓ` node levels from `root` (bit
+`l` of `c` chooses the child at height `l + 1`) to a leaf query of `w` bytes, `none` on any
+missing or malformed query; `Merkle.colOr L w root ℓ fill c := (colL L w root ℓ c).getD fill`.
 
-`tree_L(root) : Fin N → Option (8m bytes)` is `c ↦ col_L(root, c)`, and the **filled matrix**
-`U_L(root) ∈ K^{m×N}` has column `c` equal to the `m` `K`-elements of `col_L(root, c)` when it is
-`some`, and the zero column when it is `none`. `tree_L(root)` is total and defined for every
-log, with no "dangling" case: a missing column is simply a column the prover cannot open (L-M3).
+* **L-M2 `Merkle.tree_of_log`** (positive control): a log that contains the build's queries,
+  answered as `H` answers them, with `¬Collision L`, has `colL L w (root …) ℓ c = some
+  cols[c]` for every `c < 2^ℓ`.
+* **L-M4 `Merkle.tree_prefix`**: `¬Hit (L₀ ++ e :: L₁) → parseAbsorbRoot e.1 = some root →
+  colL (L₀ ++ e :: L₁) w root ℓ c = colL L₀ w root ℓ c`. The cut is **the `absorb(root)` entry
+  itself** (S9-M3); helpers `colL_append`, `colL_prefix`, `colL_of_append_one`.
+* **L-M3 `Merkle.open_binding_prefix`**: `¬Collision (L₀ ++ e :: L₁) → ¬Hit (L₀ ++ e :: L₁) →
+  parseAbsorbRoot e.1 = some root → col.size = w → ss.length = ℓ → (verify root c col
+  ss).runLog (L₀ ++ e :: L₁) = some true → colL L₀ w root ℓ c = some col`. (The one-log form
+  `open_binding` needs only `¬Collision`.) A column with `colL L₀ … c = none` has no
+  verifying path on any `Bad`-free `L₀ ++ e :: L₁`.
 
-**Transcript structure.** For an entry `e` of `L` with `stateIn(q_e) = some st`, `pred_L(e)` is
-the entry of `L` whose answer is `st`, if any. Under `¬Bad(L)` it is unique and precedes `e`
-(L-K7). A **chain** of `L` is a list `e_1, …, e_r` of entries of `L` such that `seedOf(q_{e_1}) =
-some (s, n, h)` with `1 ≤ n ≤ chainCap`, `pred_L(e_{i+1}) = e_i` for `i < r`, and the queries
-`q_{e_2}, …, q_{e_r}` match, in order, the kinds and lengths of §6.2 for the shape of `n`: an
-absorb of kind `0x01` with a 31-byte message, then `m` squeezes, then an absorb of kind `0x02`
-with `24k` bytes, then `ℓ_x` squeezes, then `ℓ_x` pairs (absorb `0x03` of 96 bytes, squeeze), an
-absorb `0x04` of 72 bytes and a squeeze, `ℓ_y` pairs (absorb `0x05` of 72 bytes, squeeze), an
-absorb `0x06` of 1 536 bytes and 6 squeezes, `8+κ` pairs (absorb `0x07` of 72 bytes, squeeze),
-an absorb `0x08` of `24k` bytes, and `J` squeezes; a list that stops anywhere in this pattern is a
-chain (the pattern need not be complete). The **statement** of the chain is `(s, n, h)`, its
-**messages** are the message fields of its absorb entries (`root`, `ū`, the `g_l`, `(v_A, v_B,
-v_C)`, the `g'_l`, the slices, the `g''_l`, `v`), its **challenges** are `chE` of its squeeze
-answers (and the column indices, §6.1, of its last `J` answers). Since `pred_L` is a function, a
-chain is determined by its last entry: **sums over chains are sums over entries of `L`**, and an
-entry lies on at most one chain. Two chains may share a prefix (the adversary forks at an absorb
-with a different message); a squeeze entry lies on exactly the chains through its state, all of
-which share the prefix up to it. The **prefix** of a chain `T` is `L₀(T)`, the entries of `L`
-strictly before `T`'s `absorb(root)` entry; under `¬Bad(L)` all of `T`'s entries come after it
-in the order `e_1, e_2, …` (L-K7), and the chain's committed matrix is
+**The committed matrix** (`SpartanChainSoundnessPCS`; exist).
+`SoundnessPCS.filled κ L₀ root : Fin (rows κ) → Fin (cols κ) → F` is `U_{L₀}(root)`: column
+`c` is `readFs (colOr L₀ (8 · rows κ) root (lN κ) ByteArray.empty c) 0 (rows κ)`, with
+`getD i 0` (a missing column reads as the zero column: a column the prover can never open,
+never a reason to stop charging); `filled_of_colL : colL L₀ (8 · rows κ) root (lN κ) c = some
+col → filled κ L₀ root i c = (readFs col 0 (rows κ)).getD i 0`; `UE κ U := fun i c => EF.ofF
+(U i c)` lifts to `EF` (`UE_sum_apply`).
 
-`U_T := U_{L₀(T)}(root_T)`,
+**The transcript forest** (`SpartanChainSoundnessLog`; exist). `ansIdx L st := L.findIdx?
+(·.2 = st)`; `predIdx L j := L[j]?.bind fun e => (stateIn e.1).bind (ansIdx L)` (the index of
+`pred_L`); `back L f j` follows `predIdx` down through strictly earlier entries with fuel `f`;
+`pathOf L j := back L (j + 1) j : List ℕ` is the **forest path** ending at entry `j`
+(`predIdx_lt` under `¬Bad`; `back_fuel`). Under `¬Bad (L ++ [x])`: `pathOf_append_old : j <
+L.length → pathOf (L ++ [x]) j = pathOf L j` and **L-K8 `back_new`**: `pathOf (L ++ [(q, a)])
+L.length = match (stateIn q).bind (ansIdx L) with | some i => pathOf L i ++ [L.length] | none
+=> [L.length]` (`predIdx_new`): the fresh entry is a leaf of the forest, with no self-loop case
+(`i ≤ j`). **The frontier** (S9-M2): `OnFrontier L e := e ∈ L ∧ squeezeQ e.2 ∉ L.map Prod.fst`;
+`frontier_append : e ∈ L → (OnFrontier (L ++ [(q, a)]) e ↔ OnFrontier L e ∧ q ≠ squeezeQ e.2)`.
 
-a function of `L₀(T)` and `root_T` alone; by L-M4 it equals `U_L(root_T)` for the whole `L`
-and every extension of `L` that keeps `¬Bad`.
+**Chains** *(to build, `SpartanChainSoundnessLog`)*. The expected transcript of a leaf of shape
+`κ` is a list of steps, §6.2 step by step:
 
-A **run's chain** (L-K4): if `(leafProg c π).runLog L = some b` and `¬Bad(L)`, the entries that
-answer the run's queries, taken in the order the run asks them, form a chain of `L` whose
-statement is the proof's `(s, n, h)` and whose messages are the proof's fields; if `b = true`
-the chain is complete (through the `J` index squeezes).
+```
+inductive Step | seed | absorb (kind : UInt8) (len : ℕ) | squeeze
+def shape (κ : ℕ) : List Step :=
+  [.seed, .absorb 0x01 31] ++ replicate m .squeeze ++ [.absorb 0x02 (24k)] ++ replicate ℓ_x .squeeze
+  ++ (replicate ℓ_x [.absorb 0x03 96, .squeeze]).flatten ++ [.absorb 0x04 72, .squeeze]
+  ++ (replicate ℓ_y [.absorb 0x05 72, .squeeze]).flatten ++ [.absorb 0x06 1536] ++ replicate 6 .squeeze
+  ++ (replicate (8+κ) [.absorb 0x07 72, .squeeze]).flatten ++ [.absorb 0x08 (24k)] ++ replicate J .squeeze
+def len (κ : ℕ) : ℕ := (shape κ).length
+def Step.matches : Step → ByteArray → Prop      -- tag and length: seed 73; absorb kind len: 34 + len; squeeze 33
+def entriesOf (L : Log) (is : List ℕ) : Log := is.map fun i => L[i]!
+def Matches (es : Log) : Prop :=                 -- a seed, then the steps of its shape, state-linked
+  ∃ s n h, es[0]?.bind (fun e => seedOf e.1) = some (s, n, h) ∧ 1 ≤ n ∧ n ≤ chainCap ∧
+    es.length ≤ len (Nat.clog 2 n) ∧
+    ∀ i (hi : i + 1 < es.length), stateIn es[i+1].1 = some es[i].2 ∧
+      ((shape (Nat.clog 2 n))[i+1]'_).matches es[i+1].1
+def IsChain (L : Log) (j : ℕ) : Prop := j < L.length ∧ Matches (entriesOf L (pathOf L j))
+def chains (L : Log) : List ℕ := (List.range L.length).filter (IsChain L ·)   -- classical
+```
 
-### 9.2 The state function (round by round)
+A **position** `ρ < len κ` is an index into `shape κ`; a chain may stop anywhere in `shape`. A
+chain of `L` is an entry index `j` whose forest path, read as entries, `Matches`; it is
+determined by `j`, so **sums over chains are sums over entries of `L`** and each entry ends at
+most one chain. For `j ∈ chains L` write `es := entriesOf L (pathOf L j)`, `ρ := es.length −
+1`; the chain's **statement** is `(s, n, h)`, its **root** is `parseAbsorbRoot es[1].1`, its
+**messages** are the message fields of its absorb entries (`root`, `ū`, the `g_l`,
+`(v_A, v_B, v_C)`, the `g'_l`, the slices `s_i`, the `g''_l`, `v`), its **challenges** are
+`chE es[ρ'].2` at squeeze positions (`r`, `τ`, `r_x`, `ρ`, `r_y`, `f`, `r''`) and `indices
+(lN κ) tQ (the last J answers)` for the column indices (`Transcript.chE`, `indices`, `idxOf`,
+`cnt`, `nAns`). Its **cut** and **prefix** are the second index of its path:
 
-Fix a chain `T` of `L` with statement `(s, n, h)` such that **`chainEnd s n ≠ h`** (for a true
-statement nothing is charged: `final` is met by the parsed witness `.leaf s n`), with `U := U_T`.
-Every quantity below is a function of `T`'s entries (hence of a prefix of `L`); none looks at
-later entries. "Far" and "close" are §5.5's `eClose` with the bound `e = ⌊(d−1)/3⌋`; in the close
-case `q_dec`, `w_dec` are the unique decoding (L-RS4) and `z_dec := (w_dec ‖ pub(s, h))`,
-`F(x) := (Az_dec)(x)·(Bz_dec)(x) + (Cz_dec)(x)`, which is **not** identically zero on the cube
-(L-C2, since `w_dec` is Boolean and `chainEnd s n ≠ h`). The sumcheck polynomials are
+`cut L j := (pathOf L j)[1]!`, `L₀ L j := L.take (cut L j)`, `Uof L j := filled κ (L₀ L j) root`.
 
-`G(X) := eq(τ, X)·((Az_dec)̃(X)·(Bz_dec)̃(X) + (Cz_dec)̃(X))` (outer; individual degree `≤ 3`),
-`G'(Y) := M̃_ρ(r_x, Y)·z̃_dec(Y)` (inner; degree `≤ 2`), `G''(U') := W̃(U')·q̃_dec(U')` (ring
-switch; degree `≤ 2`), with the true round polynomials `g*_l(X) := Σ_{x' ∈ {0,1}^{ℓ−l−1}}
-G(r_{<l}, X, x')` (likewise `g'*_l`, `g''*_l`) and the claims `cl_0 := 0`, `cl_{l+1} := g_l(r_{x,l})`
-(likewise `cl'`, with `cl'_0 := v_A + ρ v_B + ρ² v_C`, and `cl''`, with `cl''_0 := T`).
+Under `¬Bad L`: `split_at_cut : L = L₀ L j ++ L[cut L j] :: L.drop (cut L j + 1)` with
+`parseAbsorbRoot L[cut L j].1 = some root` (`List.take_append_drop`), which is the split of
+L-M3 and L-M4, so `Uof L j` is `filled` of the whole log and of every `Bad`-free extension
+(`tree_prefix`); in `step` only `L₀_append : j < L.length → ¬Bad (L ++ [x]) → L₀ (L ++ [x]) j =
+L₀ L j` is needed (`pathOf_append_old`, `List.take_append_of_le_length`).
 
-The **doom predicate** `Doom_T(ρ)` after each round `ρ` of the chain, and the **escape event**
-`Esc_T(ρ) := Doom_T(ρ−1) ∧ ¬Doom_T(ρ)`:
+* **L-K8 `chains_append`** *(to build)*: `¬Bad (L ++ [e]) → chains (L ++ [e]) = chains L ++
+  (if IsChain (L ++ [e]) L.length then [L.length] else [])`, and `IsChain (L ++ [e]) L.length`
+  holds iff `e` is a seed (`seedOf e.1 = some (s, n, h)`, `1 ≤ n ≤ chainCap`) or `(stateIn
+  e.1).bind (ansIdx L) = some i` with `IsChain L i` and `e.1` matching the step after `i`'s
+  position (`back_new`, `pathOf_append_old`). Every old chain keeps its path, `L₀`, `Uof`,
+  messages and challenges.
+* **L-K4 `runLog_chain`** *(to build, needs `SpartanChainVerifier`)*: `¬Bad L → (leafProg c
+  π).runLog L = some true →` there is `j ∈ chains L` with `(pathOf L j).length = len κ`,
+  statement `(s, n, h)` and messages read from `π` (`seedOf_seedQ`, `entry_unique`,
+  `runLog_eq_some_iff`, `queries_squeezeN`), such that every check of `leafProg` on the
+  chain's data holds (`¬Rej es`, §9.2), and the column phase accepts on `L`:
+  `verify2_runLog` (exists, `SpartanChainSoundnessPCS`) then gives, for every `j' < tQ`, that
+  `(Merkle.verify root idx[j'] col_{j'} path_{j'}).runLog L = some true` and `colCheck κ
+  (kapArr (lk κ)) r a ū v idx[j'] (readFs col_{j'} 0 (rows κ)) = true` with `idx` the indices
+  `squeezeIdx` reads off `L`. The ordering (each entry after its predecessor) is
+  `predIdx_lt`; the Merkle queries are not chain entries (S9-m3).
 
-| round `ρ` | answers | `Doom_T(ρ)` | `Esc_T(ρ)` bound (fraction of the fresh answers) | lemma |
-|---|---|---|---|---|
-| start | — | true | — | |
-| R0: `r_0 … r_{m−1}` | `m` squeezes | `FarDoom := far(U) ∧ ¬eClose(Σ_i r_i U[i], e)`, or `¬far(U)` | `far(U) ∧ eClose(Σ_i r_i U[i], e)`: `≤ d/\|E\| ≤ 2^{-169.2}` | L-RS2 |
-| R1, coordinate `l`: `τ_l` | 1 squeeze each | `FarDoom ∨ P_{l+1} ≢ 0`, where `P_l(X_l, …, X_{ℓ_x−1}) := Σ_x eq((τ_{<l}, X_l, …), x)·F(x)` (multilinear; `P_0 ≢ 0`) | `P_l ≢ 0 ∧ P_{l+1} ≡ 0`: at most one `τ_l`, `≤ 1/\|E\|` | L-S2 |
-| R2, round `l`: `r_{x,l}` | 1 squeeze each | `FarDoom ∨ cl_{l+1} ≠ g*_{l+1}(0) + g*_{l+1}(1)` (for `l = ℓ_x−1`: `cl_{ℓ_x} ≠ G(r_x)`) | doomed entering (`cl_l ≠ g*_l(0)+g*_l(1)`; the check `g_l(0)+g_l(1) = cl_l` passed, so `g_l ≠ g*_l`) and `g_l(r_{x,l}) = g*_l(r_{x,l})`: `≤ 3/\|E\|` | L-S1 |
-| after `(v_A, v_B, v_C)` | absorb | `FarDoom ∨ (v_A, v_B, v_C) ≠ ((Az_dec)̃(r_x), (Bz_dec)̃(r_x), (Cz_dec)̃(r_x))` — implied by the previous row when the check `cl_{ℓ_x} = eq(τ, r_x)·(v_A v_B + v_C)` passes (no division: equal triples would make the two sides of the previous row equal) | — | |
-| R3: `ρ` | 1 squeeze | `FarDoom ∨ cl'_0 ≠ Σ_y M̃_ρ(r_x, y)·z_dec(y)` | the triple is wrong and `v_A + ρ v_B + ρ² v_C = v*_A + ρ v*_B + ρ² v*_C`: `≤ 2/\|E\|` | L-S3 |
-| R4, round `l`: `r_{y,l}` | 1 squeeze each | `FarDoom ∨ cl'_{l+1} ≠ g'*_{l+1}(0) + g'*_{l+1}(1)` (for `l = ℓ_y−1`: `cl'_{ℓ_y} ≠ M̃_ρ(r_x, r_y)·z̃_dec(r_y)`) | as R2, degree 2: `≤ 2/\|E\|` | L-S1 |
-| after the slices | absorb | `FarDoom ∨ δ ≠ 0`, `δ_i := s_i + Q̃_i^{dec}(r_hi)` — implied by the previous row when the check `cl'_{ℓ_y} = M̃_ρ(r_x, r_y)·((1 + r_ytop)·Σ_i eq(r_lo, i) s_i + r_ytop·pub̃(r_u))` passes (equal `δ = 0` would make `z̃_V = z̃_dec(r_y)`) | — | |
-| R5, stage `p`: `f_p` | 1 squeeze each (6) | `FarDoom ∨ ∃ k < M_p, π^{(p+1)}_k ≠ 0`, with `π^{(p)}_k := Σ_i x^i·(Φ_p(δ_i))^{2^k}` (`Φ_p` the map after `p` stages, `Φ_0 = id`); entering: `∃ k < 2M_p = 2^{6−p}, π^{(p)}_k ≠ 0`, which at `p = 0` is L-R1 | `π^{(p+1)}_k = π^{(p)}_k + f_p^{2^k}·π^{(p)}_{k+M_p}` for `k < M_p`, so all vanish for at most one `f_p`: `≤ 1/\|E\|` | L-R2 |
-| after R5 | — | `FarDoom ∨ T ≠ T*`, `T* := Σ_{u'} W(u')·q_dec(u')` — this is `π^{(6)}_0 = Σ_i x^i Φ(δ_i) = T + T*` (L-R3: `T* = Σ_i x^i Φ(Q̃_i^{dec}(r_hi))`) | — | L-R1, L-R3 |
-| R6, round `l`: `r''_l` | 1 squeeze each | `FarDoom ∨ cl''_{l+1} ≠ g''*_{l+1}(0) + g''*_{l+1}(1)` (for `l = 7+κ`: `cl''_{8+κ} ≠ W̃(r'')·q̃_dec(r'')`) | as R2, degree 2: `≤ 2/\|E\|` | L-S1 |
-| after `v` | absorb | `FarDoom ∨ v ≠ Σ_i a_i·q_dec[i]` (in `E^k`) — implied by the previous row when the check `cl''_{8+κ} = W̃(r'')·Σ_j b_j v_j` passes: `v = Σ_i a_i q_dec[i]` would give `Σ_j b_j v_j = q̃_dec(r'')` (L-E3) and so equal sides; **no division by `W̃(r'')`**, and the argument holds when `W̃(r'') = 0` | — | |
-| R7: the `J` index answers | `J` squeezes | some decoded index lies in `D`, where `D := D_far := {c : Enc(ū)_c ≠ Σ_i r_i U[i][c]}` if `far(U)` (then `\|D\| > e` under `FarDoom`), and `D := D_close := {c : Enc(v)_c ≠ Σ_i a_i U[i][c]}` if `¬far(U)` (then `\|D\| ≥ d − e` under the previous row, by L-RS1 and the decoding agreeing outside `S`) | all `t` indices miss `D`: `≤ (1 − \|D\|/N)^t`, i.e. `< (17/24)^{260} = 2^{-129.35}` (far), `< (5/12)^{260} = 2^{-328}` (close) | L-RS3 |
-| end | — | the final checks fail: the index `c* ∈ D` is opened; a verifying path makes the opened column `U`'s column `c*` (L-M3), at which the mode's equation (`Enc(ū)_{c*} = Σ_i r_i U[i][c*]` resp. `Enc(v)_{c*} = Σ_i a_i U[i][c*]`) is false; so `leafProg` rejects | — | L-K3 |
+### 9.2 Doom, rejection and escape, by chain position (`SpartanChainSoundnessKS`, to build)
 
-Notes. (1) In far mode (`FarDoom`), every later `Doom_T(ρ)` holds outright and no escape is
-possible at R1–R6; the per-round bounds hold trivially (the escape set is empty). (2) In close
-mode, `q_dec` is fixed by `U` alone, before any challenge. (3) The escapes of R0 and R7 are
-events over a block of `m` resp. `J` answers; §9.3 charges them answer by answer through a
-conditional count. (4) A chain whose statement is true (`chainEnd s n = h`) has no doom
-predicate and is never charged. (5) A chain that stops before a round is complete, or whose
-next entry does not match §6.2, is charged nothing beyond its partial-round term.
+Everything here is a function of a matrix `U : Fin (rows κ) → Fin (cols κ) → F` and an entry
+list `es` (`Matches es`); for a chain `j` of `L` they are instantiated at `U := Uof L j`,
+`es := entriesOf L (pathOf L j)`, and for a formal extension (below) at the same `U`. No
+definition reads a later entry. Abbreviations:
+
+* `FS := chainEnd s n ≠ h` (the statement is false).
+* `far := ¬ eClose (code κ) (UE κ U) (radius κ)` (`SpartanChainProximity.eClose`,
+  `PCS.code`). Close mode is `¬far`; there `SoundnessPCS.qDec κ U : Fin (rows κ) → Fin (2^lk
+  κ) → F` is the decoded message matrix (exists; `Classical.choose` over `Decodes κ U Q S`,
+  `qDec_spec : eClose … → ∃ S, Decodes κ U (qDec κ U) S`, `qDec_eq`; unique by
+  `decode_unique`, in `F` by `close_in_K`/`msg_in_K`), `wDec U : Fin 2^{14+κ} → F` *(to build)*
+  its bits (§4.1's packing, `wDec_bool : ∀ u, wDec U u = 0 ∨ wDec U u = 1`) and
+  `zDec U := join (wDec U) (pub s h)` (§2.3 layout; the `hz` of `z_mle_slices`). `A B C` are
+  the chain matrices of `(κ, n)` in `SpartanChainSoundnessSpartan`'s abstract form
+  (`matrix_mle_eq` connects `SpartanChainChain`'s formulas to `matMle`).
+* After R0 (`m` answers, `r_i := chE a_i`): `FarDoom := far ∧ ¬ Close (code κ) (radius κ)
+  (Σ_i r_i • UE κ U i)` (`SpartanChainProximity.Close`).
+* R2/R4/R6 claims follow §3: `cl_0 := 0`, `cl_{l+1} := peval g_l r_{x,l}`; `cl'_0 := v_A + ρ
+  v_B + ρ² v_C`, `cl'_{l+1} := peval g'_l r_{y,l}`; `cl''_0 := T`, `cl''_{l+1} := peval g''_l
+  r''_l`. `Ftbl := Array.ofFn (residual A B C (zDec U))`, `OT := outerTables τ A B C (zDec U)`,
+  `IT := innerTables r_x ρ A B C (zDec U)`, `WT := #[Array.ofFn (fun u => Phi f (eq r_hi (cube
+  u))), Array.ofFn (fun u => EF.ofF (qDec κ U (row u) (col u)))]` (`prod_trueSum`;
+  `weight_mle` identifies `V`'s `W̃` with the extension of the first table).
+* `δ_i := s_i + mle (Q^{dec}_i) r_hi` (the slices' errors, §4.2, `Q^{dec}_i := EF.ofF ∘ qDec κ
+  U i`), `w i := algebraMap F EF (F.x ^ i)`, and `rsDoom w δ 5 fs` as in
+  `SpartanChainSoundnessSpartan` (`s' = 5`: six stages, `2^{6−p}` conjugates after `p`).
+* After R7 (`J` answers `b`): `idx := indices (lN κ) tQ b` (answer `⌊j / cnt⌋` carries index
+  `j`), and the difference set `D := if far then Dset κ U r ū else Dset κ U a v`
+  (`SoundnessPCS.Dset κ U w msg := {c | enc (kap (lk κ)) (lk κ) (dom (cols κ)) msg c ≠ Σ_i w i ·
+  EF.ofF (U i c)}`; `a` is the row tensor of `r''`, §5.4). The miss event is
+  `SoundnessPCS.Miss (lN κ) tQ J D b` (`∀ j < t, idx[j] ∉ D`; `miss_iff`).
+
+**Rejection** `Rej es : Prop`: some check of `leafProg` that is a function of `es`'s data
+fails. The checks, each available from the position that completes its inputs: (a) at
+`absorb(g_l)`: `g_l.size = 4 ∧ peval g_l 0 + peval g_l 1 = cl_l` (`V` computes it as `c_1 +
+c_2 + c_3 = cl_l`, §3, equal in characteristic 2); (b) at `absorb(v_A ‖ v_B ‖ v_C)`: `cl_{ℓ_x}
+= eq(τ, r_x) · (v_A v_B + v_C)`; (c) at `absorb(g'_l)`: `g'_l.size = 3 ∧ peval g'_l 0 +
+peval g'_l 1 = cl'_l`; (d) at `absorb(slices)`: `cl'_{ℓ_y} = M̃_ρ(r_x, r_y) · z̃_V` with `z̃_V
+:= (1 + r_top) · Σ_i eq(r_lo, i) s_i + r_top · pub̃(r_u)`; (e) at `absorb(g''_l)`: `g''_l.size
+= 3 ∧ peval g''_l 0 + peval g''_l 1 = cl''_l`; (f) at `absorb(v)`: `cl''_{8+κ} = W̃(r'') ·
+Σ_j b_j v_j`. `Rej` is a disjunction over the checks whose position is `≤ ρ`, hence
+**monotone** along the chain (`rej_mono : Rej es → Rej (es ++ es')`). Shape and size checks
+are `Matches`; the Merkle and column checks are not functions of the chain (they are L-K3).
+
+**Algebraic doom** `Alg U es : Prop`, by the position class of `ρ` (read off `shape κ`):
+
+| position class | `Alg U es` |
+|---|---|
+| seed; `absorb(root)`; R0 answer `j < m` | `FS` |
+| R0 answer `m`; `absorb(ū)` | `FS ∧ ¬(far ∧ Close (code κ) (radius κ) (Σ_i r_i • UE κ U i))`, i.e. `FS ∧ (FarDoom ∨ ¬far)` |
+| R1: `τ_l`, `l < ℓ_x` | `FarDoom ∨ (¬far ∧ tbl (ℓ_x − l − 1) (bindT Ftbl [τ_0, …, τ_l]) ≠ 0)` |
+| R2: `absorb(g_l)` | `FarDoom ∨ (¬far ∧ cl_l ≠ trueSum outerExpr (bindAll OT [r_{x,0}, …, r_{x,l−1}]) (ℓ_x − l))` |
+| R2: `r_{x,l}` | the same with `l + 1` (claim `cl_{l+1}`, `l + 1` variables bound) |
+| `absorb(v_A ‖ v_B ‖ v_C)` | `FarDoom ∨ (¬far ∧ (v_A, v_B, v_C) ≠ (mle (matVec A z) r_x, mle (matVec B z) r_x, mle (matVec C z) r_x))`, `z = zDec U` |
+| R3: `ρ` | `FarDoom ∨ (¬far ∧ cl'_0 ≠ trueSum innerExpr IT ℓ_y)` |
+| R4: `absorb(g'_l)` / `r_{y,l}` | as R2 with `innerExpr`, `IT`, `cl'`, `ℓ_y` |
+| `absorb(slices)` | `FarDoom ∨ (¬far ∧ δ ≠ 0)` |
+| R5: `f_p`, `p < 6` | `FarDoom ∨ (¬far ∧ rsDoom w δ 5 [f_0, …, f_p])` |
+| R6: `absorb(g''_l)` / `r''_l` | as R2 with `innerExpr`, `WT`, `cl''`, `8 + κ` |
+| `absorb(v)`; R7 answer `j < J` | `FarDoom ∨ (¬far ∧ v ≠ fun j => Σ_i a_i · EF.ofF (qDec κ U i j))` |
+| R7 answer `J` | `(FarDoom ∨ (¬far ∧ v ≠ …)) ∧ ¬ Miss (lN κ) tQ J D b` |
+
+(`tbl`, `bind0`, `bindT`, `bindAll`, `trueSum`, `peval`, `outerExpr`, `innerExpr`,
+`outerTables`, `innerTables`, `residual`, `matVec`, `mle`, `rsDoom` are the existing
+definitions of `SpartanChainMLE`, `SpartanChainSumcheck`, `SpartanChainSoundnessSpartan`.) A
+chain whose statement is true has `Alg` false through `absorb(ū)`, so it has no R0 escape and
+no `τ_0` escape (both need `FS`); from `τ_0` on, every escape bound uses only the doom before
+the squeeze, never `FS`, so no case distinction on the statement is needed anywhere else.
+
+**Doom, escape**:
+
+```
+def Doom (U) (es : Log) : Prop := Rej es ∨ Alg U es
+def EscAt (U) (es : Log) : Prop := 2 ≤ es.length ∧ Doom U es.dropLast ∧ ¬ Doom U es
+def Esc (L : Log) : Prop := ∃ j ∈ chains L, EscAt (Uof L j) (entriesOf L (pathOf L j))
+```
+
+For a chain `j` with `predIdx L j = some i`, `es.dropLast = entriesOf L (pathOf L i)`
+(`back`), so `EscAt` compares the chain with its predecessor chain. The per-position facts:
+
+* **`doom_absorb`**: if `(shape κ)[ρ]` is an absorb then `Doom U es.dropLast → Doom U es`.
+  By class: `absorb(root)` from the seed, `absorb(ū)` from R0 answer `m`, `absorb(g_{l+1})`
+  from `r_{x,l}`, `absorb(g'_0)` from `ρ`, `absorb(g'_{l+1})` from `r_{y,l}`,
+  `absorb(g''_{l+1})` from `r''_l`: the same predicate on both sides; `absorb(g_0)` from
+  `τ_{ℓ_x−1}`: `zc_end` then `outer_start` (`cl_0 = 0 ≠ trueSum outerExpr OT ℓ_x`);
+  `absorb(triple)` from `r_{x,ℓ_x−1}`: `outer_final` and, if check (b) passes,
+  `triple_wrong`, else `Rej`; `absorb(slices)` from `r_{y,ℓ_y−1}`: `inner_final`,
+  `z_mle_slices`, `ne_of_claim` (if (d) passes; `δ = 0` would make `z̃_V = mle (zDec U) r_y`),
+  else `Rej`; `absorb(g''_0)` from `f_5`: `rs_end` with `prod_trueSum`; `absorb(v)` from
+  `r''_{7+κ}`: the `WT` final value is `W̃(r'') · mle (q̃_dec) r''` (`trueSum_bindAll` as in
+  `inner_final`), check (f), `ne_of_claim`, then `eval_of_correct` (exists: `Σ_j b_j (Σ_i a_i
+  q_dec[i][j]) = Σ_{i,j} a_i b_j q_dec[i][j]`) and `mle_split` (L-E3): `v = Σ_i a_i q_dec[i]`
+  would give `Σ_j b_j v_j = mle (q̃_dec) r''`; else `Rej`. No division anywhere (BP-m13).
+  Consequence: `EscAt` is false at every absorb position, so `Esc` can only occur at squeeze
+  positions.
+* **`doom_mid`**: at R0 answers `j < m` and R7 answers `j < J`, `Doom U es ↔ Doom U
+  es.dropLast` (same `Rej`, same `Alg`): no escape inside a multi-answer round.
+* **Single-answer escape bounds** `esc_single_le`, for `es` ending just before a
+  single-answer squeeze (the next entry is `(squeezeQ es.getLast!.2, a)`), with
+  `ext1 es a := es ++ [(squeezeQ es.getLast!.2, a)]`:
+  `(univ.filter fun a : Digest => EscAt U (ext1 es a)).card ≤ 3 · 2^64`. Proof: `EscAt`
+  needs `¬Rej` and `¬FarDoom`, so the escape is `¬far ∧ Alg(before) ∧ ¬Alg(after)`, an event
+  on `chE a` whose set `S ⊆ EF` has `S.card ≤ 3` by the round's lemma; then `card_chE_mem` (`=
+  S.card · 2^64`). The round lemmas (`SpartanChainSoundnessSpartan`, all exist):
+
+  | squeeze | doom before (hypothesis of the lemma) | lemma | `S.card ≤` |
+  |---|---|---|---|
+  | `τ_0` | `FS ∧ ¬far` ⇒ `¬Sat A B C (zDec U)` (L-C2 `chain_sound`, `wDec_bool`) ⇒ `tbl ℓ_x Ftbl ≠ 0` (`zc_start`) | `zc_escape_le` | 1 |
+  | `τ_l`, `l ≥ 1` | `tbl (ℓ_x − l) (bindT Ftbl τ_{<l}) ≠ 0` | `zc_escape_le` | 1 |
+  | `r_{x,l}` | `cl_l ≠ trueSum outerExpr (bindAll OT r_{x,<l}) (ℓ_x − l)`; escape ⇒ check (a) holds and `peval g_l r = trueSum outerExpr ((bindAll OT r_{x,<l}).map (bind0 · r)) (ℓ_x − l − 1)` | `round_escape_le` (`outerExpr_deg = 3`) | 3 |
+  | `ρ` | the triple is wrong | `batch_escape_le` (`inner_trueSum`) | 2 |
+  | `r_{y,l}` | as `r_{x,l}` with `innerExpr`, `IT` | `round_escape_le` (`innerExpr_deg = 2`) | 2 |
+  | `f_0` | `δ ≠ 0` ⇒ `rsDoom w δ 5 []` (`ring_inj_EF`, `rs_start`) | `rs_escape_le` | 1 |
+  | `f_p`, `p ≥ 1` | `rsDoom w δ 5 f_{<p}` | `rs_escape_le` | 1 |
+  | `r''_l` | as `r_{x,l}` with `innerExpr`, `WT` | `round_escape_le` | 2 |
+
+  (`bindAll_append : bindAll ts (cs ++ [c]) = (bindAll ts cs).map (bind0 · c)` is the one
+  glue lemma, `SpartanChainSumcheck`.) In far mode the escape set is empty (`FarDoom` is a
+  disjunct of both sides).
+
+**Multi-answer rounds: one mechanism for R0 and R7.** For `es` ending at the position that
+enters R0 (`absorb(root)`) or R7 (`absorb(v)`), with `r := m` resp. `J` answers in the round,
+the **formal extension** by an answer list `as : List Digest` chains the squeezes:
+`ext es as := es ++ [(squeezeQ es.getLast!.2, as[0]), (squeezeQ as[0], as[1]), …]` (a fold;
+`Matches (ext es as)` for `as.length ≤ r`, `stateIn_squeezeQ`). The round's **escape event** on
+the full answer list is `P es as := EscAt U (ext es as)`, which by `doom_mid` is `Doom U es ∧
+¬Doom U (ext es as)`:
+
+* R0: `¬Rej es ∧ FS ∧ far ∧ Close (code κ) (radius κ) (Σ_i chE as[i] • UE κ U i)`;
+* R7: `Doom U es ∧ ¬Rej es ∧ Miss (lN κ) tQ J D (fun i => as[i])`.
+
+The **conditional escape count** after `pre : List Digest` answers (`pre.length ≤ r`):
+
+`condCount U es pre : ℝ≥0 := (SoundnessLog.extCount (P es) pre (r − pre.length) : ℝ≥0) / 2^(256 (r − pre.length))`
+
+(`extCount P pre k := (univ.filter fun rest : Fin k → Digest => P (pre ++ List.ofFn
+rest)).card`, exists).
+
+* **L-K2 `extCount_split`** (exists; formerly L-K2a/b/c): `Σ_{a : Digest} extCount P (pre ++
+  [a]) k = extCount P pre (k + 1)`. Hence **`condCount_split`**: for `pre.length < r`,
+  `Σ_a condCount U es (pre ++ [a]) = 2^256 · condCount U es pre`; and **`condCount_last`**:
+  for `pre.length = r`, `condCount U es pre = if P es pre then 1 else 0` (`extCount` with `k =
+  0` is the indicator).
+* **`r0_esc_le`** *(to build, `SpartanChainSoundnessPCS`)*: `condCount U es [] ≤ 2^{-169}` for
+  `es` entering R0. The event implies `far ∧ Close (…) (Σ_i chE as[i] • UE κ U i)`;
+  `r0_answers` (exists: `¬eClose (code κ) (UE κ U) (radius κ) → Nat.card {a : Fin (rows κ) →
+  Digest // Close (code κ) (radius κ) (Σ_i chE (a i) • UE κ U i)} · 2^169 ≤ (2^256)^(rows κ)`,
+  from `r0_far_bad` and `card_chE_vec`) gives the count after `List.ofFn`/`Fin` conversion.
+* **`r7_esc_le`** *(to build, `SpartanChainSoundnessPCS`)*: `condCount U es [] ≤ (4/5) ·
+  2^{-129}` for `es` entering R7. The event implies `Doom U es ∧ ¬Rej es ∧ Miss … D b`; `Doom
+  ∧ ¬Rej` is the `absorb(v)` row, so in far mode `FarDoom` and `far_Dset_card` (exists:
+  `¬Close (code κ) (radius κ) (Σ_i r_i • UE κ U i) → radius κ + 1 ≤ (Dset κ U r ū).card`) give
+  `|D| ≥ e + 1` and `r7_far` (exists: `Nat.card {b : Fin J → Digest // Miss (lN κ) tQ J D b}
+  · 2^129 · 5 ≤ 4 · (2^256)^J`, through `r7_count` and `layout_ok`) bounds the count; in close
+  mode `qDec_spec` and `close_Dset_card` (exists: `Decodes κ U Q S → msg ≠ (fun j => Σ_i a_i ·
+  EF.ofF (Q i j)) → dist κ − radius κ ≤ (Dset κ U a msg).card`) give `|D| ≥ d − e` and
+  `r7_close` (exists: `… · 2^328 ≤ (2^256)^J`) bounds it by `2^{-328}`. The review's optional
+  closed form for R7 is not needed: `r7_count` already counts the whole block.
 
 ### 9.3 The potential
 
-For a chain `T` whose last entry is the `j`-th squeeze of a multi-answer round (`1 ≤ j < m` in
-R0, `1 ≤ j < J` in R7) and whose doom entering the round holds, the **conditional escape count**
-is
-
-* R0: `p_T(L) := #{(a_{j+1}, …, a_m) ∈ Digest^{m−j} : far(U) ∧ eClose(Σ_{i<m} chE(a_i)·U[i], e)} / 2^{256(m−j)}`
-  (with `a_1 … a_j` the chain's answers so far; `0` when `¬far(U)`);
-* R7: `p_T(L) := #{(a_{j+1}, …, a_J) ∈ Digest^{J−j} : all t indices decoded from (a_1, …, a_J) miss D_T} / 2^{256(J−j)}`;
-
-and `p_T(L) := 0` for every other chain. `Esc(L)` holds iff some chain `T` of `L` has a complete
-round `ρ` with `Esc_T(ρ)`. The potential:
-
 ```
-μ(L) := 1                                    if Bad(L) ∨ Esc(L)
-μ(L) := min(1, Σ_{T chain of L} p_T(L))      otherwise
+def pRound (L : Log) (j : ℕ) : ℝ≥0 :=                     -- by the position class of es := entriesOf L (pathOf L j)
+  | R0 answer i, 1 ≤ i < m  => condCount (Uof L j) (es.dropLast^[i]) (the last i answers)
+  | R7 answer i, 1 ≤ i < J  => condCount (Uof L j) (es.dropLast^[i]) (the last i answers)
+  | _                       => 0
+noncomputable def μ (L : Log) : ℝ≥0 :=
+  if Bad L ∨ Esc L then 1
+  else ((chains L).map fun j => if OnFrontier L L[j]! then pRound L j else 0).sum
 ```
 
-(the sum is over the entries of `L` that end a partial multi-answer round, §9.1).
+(`chains L` is a `List ℕ` without duplicates, so the sum is `List.sum`; below `Σ_{j ∈ chains
+L}` abbreviates it.) No `min(1, ·)` (S9-m4): `μ L < 1` already gives `¬Bad L ∧ ¬Esc L`. A
+chain in the middle of R0 or R7 can be extended only by the entry answering `squeezeQ` of its
+last answer (an absorb with that state matches no step of `shape`), so **a frontier chain is
+one whose next answer has not been asked** (S9-M2); its `pRound` is counted once, and the
+prefixes of a partial round are not on the frontier.
 
-* `empty`: `μ [] = 0` (no entries, no chains).
-* `step`. Let `q ∉ L.map Prod.fst`, `L.length < logCap = 2^96`, `μ L < 1`; so `¬Bad(L)`,
-  `¬Esc(L)`, `X := Σ_T p_T(L) < 1` and `μ L = X`. Write `L_a := L ++ [(q, a)]`. Then
+* **`empty`**: `chains [] = []`, `Bad []` and `Esc []` are false, so `μ [] = 0`.
+* **`step`** (`mu_step`). Let `q ∉ L.map Prod.fst`, `L.length < 2^96`, `μ L < 1`. Then
+  `¬Bad L`, `¬Esc L`, `X := Σ_{j ∈ chains L} [OnFrontier L L[j]] pRound L j < 1`, `μ L = X`.
+  Write `L_a := L ++ [(q, a)]`, `e_a := (q, a)`, `j_new := L.length`.
+  1. **`mu_le`** (pointwise): `μ L_a ≤ [Bad L_a] + [Esc L_a] + Σ_{j ∈ chains L_a} [OnFrontier
+     L_a L_a[j]] pRound L_a j` (if `Bad ∨ Esc` the left side is `1 ≤` the first two terms; else
+     it is the sum).
+  2. **`step_bad`**: `Σ_a [Bad L_a] ≤ 2^96 · (3 · 2^8 + 1) + 1 < 2^256 · (3 · 2^{-152} +
+     2^{-160} + 2^{-256})` (`bad_step_frac`).
+  3. **`step_split`**, for `a` with `¬Bad L_a`: `chains L_a = chains L ++ new` (L-K8); for
+     `j ∈ chains L`, `pathOf L_a j = pathOf L j` and `L₀ L_a j = L₀ L j`, so `pRound L_a j =
+     pRound L j` and `EscAt` is unchanged (false); `OnFrontier L_a L[j] ↔ OnFrontier L L[j] ∧ q
+     ≠ squeezeQ L[j].2` (`frontier_append`). Let `i* := (stateIn q).bind (ansIdx L)` (the
+     predecessor, `predIdx_new`; unique by `pred_unique_lt`). Then
+     `[Esc L_a] + Σ_{chains L_a} … = [EscAt (Uof L i*) (es_{i*} ++ [e_a])] + X − [OnFrontier L
+     L[i*]] pRound L i* + [OnFrontier L_a e_a] pRound L_a j_new` when `IsChain L_a j_new` and
+     `i* = some _`, and `= X` otherwise (a seed `[e_a]` has `pRound = 0` and no escape; a
+     non-chain entry changes nothing).
+  4. **Intended values.** Define the right side of 3 for **every** `a` through the formal
+     extension `ext es_{i*} [a]` (S9-m2), so that `Σ_{a : ¬Bad L_a} (actual) = Σ_{a : ¬Bad
+     L_a} (intended) ≤ Σ_a (intended)`, every term being `≥ 0`. By the position class of the
+     new entry:
+     - not a chain extension, a seed, or an absorb: `Σ_a (intended) = 2^256 · X`
+       (`doom_absorb`; `pRound = 0` at absorb positions and at the positions that expect an
+       absorb);
+     - a single-answer squeeze: `pRound` is `0` before and after; `Σ_a [EscAt] ≤ 3 · 2^64`
+       (`esc_single_le`): `≤ 2^256 · (X + 3 · 2^{-192})`;
+     - R0 or R7, answer `i + 1` of `r`: the chain `i*` ends at answer `i` of the round (or
+       enters it, `i = 0`), with `pre` its `i` answers and `es₀` the entering prefix. For `i =
+       0`: `pRound L i* = 0` and `Σ_a condCount U es₀ [a] = 2^256 · condCount U es₀ []`
+       (`condCount_split`) `≤ 2^256 · δ` with `δ = 2^{-169}` (`r0_esc_le`) resp. `(4/5) ·
+       2^{-129}` (`r7_esc_le`). For `0 < i + 1 < r`: `Σ_a pRound L_a j_new = 2^256 · condCount
+       U es₀ pre` (`condCount_split`) and `EscAt` is false (`doom_mid`). For `i + 1 = r`:
+       `pRound` after is `0` and `Σ_a [EscAt (ext es₀ (pre ++ [a]))] = Σ_a condCount U es₀
+       (pre ++ [a]) = 2^256 · condCount U es₀ pre` (`condCount_last`, `condCount_split`). In
+       every case `≤ 2^256 · (X + δ)`.
+  5. Hence `Σ_a μ L_a ≤ 2^256 · (X + 3 · 2^{-152} + 2^{-160} + 2^{-256} + (4/5) · 2^{-129}) ≤
+     2^256 · (μ L + 2^{-129})`: **`ε = 2^{-129}`** by `PCS.eps_budget` extended by the
+     `2^{-256}` term (`(4/5) · 2^{-129} + 3 · 2^{-152} + 2^{-160} + 2^{-256} ≤ 2^{-129}`; the
+     other kinds are below `2^{-169}`, `single_round_le`). Numerically `log₂` of the sum is
+     `−129.3499` (`logs/blueprint-review/check.out`, "eps total"; the added `2^{-256}` is
+     `2^{126}` times smaller than the leading term and does not move the quoted digits).
+* **`final`** (`mu_final`). `(V c π).runLog L = some true`, `μ L < 1`, so `¬Bad L ∧ ¬Esc L`.
+  Node proofs: `checkNode_sound` (no query). Leaf proofs with `n = 0` or `chainEnd s n = h`:
+  the witness `.leaf s n` is in `Rel` (`n ≤ chainCap` and `c = leafStmt h n` are checked by
+  `leafProg` before any query; `decodeWit_cons`). Leaf proofs with `n ≥ 1` and `chainEnd s n ≠
+  h`: L-K4 gives the complete chain `j ∈ chains L` with `¬Rej es` and, through
+  `verify2_runLog`, the verifying Merkle runs and passing column checks at every `idx[j']`.
+  **`doom_of_not_esc`**: `Doom U (es.take 1)` (`FS`) and, for every `k < len κ`, `¬EscAt U
+  (es.take (k + 2))` (from `¬Esc L`: `es.take (k + 2)` is `entriesOf L (pathOf L i_k)` for the
+  `k`-th index of the path, itself a chain) give `Doom U (es.take (k + 2))`; so `Doom U es` at
+  the last position, which with `¬Rej es` is the last row of the table: `¬Miss … D b`, some
+  `j' < t` has `idx[j'] ∈ D`. **L-K3 `accept_not_doomed`**: `split_at_cut` writes `L = L₀ ++
+  L[cut L j] :: L₁`; `opened_not_mem` (exists; `open_binding_prefix` with `¬Collision`, `¬Hit`
+  from `¬Bad`, then `filled_of_colL` and `accept_not_mem` from `colCheck_iff`) on the `j'`-th
+  Merkle run and column check gives `idx[j'] ∉ Dset κ (filled κ L₀ root) r ū ∧ idx[j'] ∉ Dset κ
+  (filled κ L₀ root) a v`, i.e. `idx[j'] ∉ D` for `U = Uof L j` — contradiction. So this case
+  does not occur.
 
-  `Σ_a μ(L_a) ≤ #{a : Bad(L_a)} + Σ_{a : ¬Bad(L_a)} ([Esc(L_a)] + Σ_T p_T(L_a))`
-
-  (on `Bad(L_a)` the summand is `1`; otherwise `min(1, ·) ≤ ·`). The first term is at most
-  `L.length·(3·2^8 + 1) < 2^96·(3·2^8 + 1)`, i.e. a fraction `3·2^{-152} + 2^{-160}` of `2^256`
-  (L-K1). For the second, under `¬Bad(L_a)` the new entry is a **leaf** of the transcript
-  forest: its answer is no earlier state (iii), no earlier label (ii) and no earlier answer (i),
-  so every chain of `L` is a chain of `L_a` with the same entries, prefix, `U_T`, messages and
-  challenges (its `p_T` and its escapes are unchanged), and the only new chain, if any, is one
-  chain `T` of `L` extended by the new entry (L-K8; the new entry has a unique predecessor, or is
-  a seed, which starts a chain in the doomed initial state with `p = 0`). By the kind of the new
-  entry:
-  - an absorb, a Merkle query, a seed, or an entry that matches no chain: no term changes;
-  - a single-answer squeeze of `T` (R1–R6): `[Esc(L_a)]` is `1` for at most `3·2^{64}` answers
-    (`chE` has exactly `2^{64}` preimages per element of `E`; at most `3` elements are bad):
-    fraction `≤ 3/|E| = 3·2^{-192}`;
-  - the first answer of a multi-answer round of `T`: `Σ_a p_T(L_a) = 2^256·Pr[Esc_T(round)]`,
-    the round's escape probability (L-K2a), `≤ 2^{-169.2}` (R0, L-RS2 with the `2^{64m}`
-    preimage count) or `< 2^{-129.35}` (R7, L-RS3);
-  - a middle answer: `Σ_a p_T(L_a) = 2^256·p_T(L)` (L-K2b);
-  - the last answer: `p_T` disappears and `Σ_a [Esc(L_a)] = 2^256·p_T(L)` (L-K2c).
-
-  In every case `Σ_{a : ¬Bad(L_a)} (…) ≤ Σ_a (X + Δ_a) ≤ 2^256·(X + δ)` with `δ` the kind's
-  bound (the sum over the `¬Bad` answers of the intended value is at most the sum over all
-  answers, every term being non-negative). Hence
-  `Σ_a μ(L_a) ≤ 2^256·(X + 3·2^{-152} + 2^{-160} + 2^{-129.35}) ≤ (μ L + ε)·2^256` with
-  **`ε = 2^{-129}`** (`2^{-129.3499} + 3·2^{-152} + 2^{-160} = 2^{-129.3499…} < 2^{-129}`;
-  `logs/blueprint-review/check.out`, "eps total").
-* `final`: `(V c π).runLog L = some true`, `μ L < 1`, `L.length ≤ logCap`. Then `¬Bad(L)` and
-  `¬Esc(L)`. Node proofs: `checkNode_sound` (no query). Leaf proofs with `n = 0` or with
-  `chainEnd s n = h`: the parsed witness `.leaf s n` is in `Rel` (`n ≤ chainCap` and
-  `c = leafStmt h n` are checked by `leafProg`). Leaf proofs with `chainEnd s n ≠ h`: the run's
-  entries form a complete chain `T` of `L` (L-K4); `Doom_T` holds at the start and, since no
-  round of `T` escaped (`¬Esc(L)`), after every round through R7; a chain doomed after R7 is
-  rejected by `leafProg` (L-K3, through L-M3) — contradiction with `some true`.
-
-The `KState` is built in `Soundness/KS.lean`; `KS` follows with `qV` from L-Q1. (`ε = 2^{-129}`
-is declared as `2^{-128}` in `claim.json`; `CertificateR.bounds` compares.)
+`KState (Rel Vb) V E 2^{-129}` is `⟨μ, empty, mu_step, mu_final⟩` (L-K5 `kstate`); `KS` adds
+L-Q1 (`ks`). (`ε = 2^{-129}` is declared as `2^{-128}` in `claim.json`; `CertificateR.bounds`
+compares.)
 
 ### 9.4 Lemma inventory (statement, module)
 
-Circuit and chain (`Blake2sR1CS.lean`, `Chain.lean`):
+Names marked **(exists)** are in the root now, with the statements quoted in §9.1–§9.3; the
+others are to be proved in the module named.
 
-* **L-C1** `block_sound`, `block_complete` (§2.2.2), with `holds_chainBlock_imp (hz : z 512 =
-  true)` and `bounded_chainBlock` (§2.2.1).
-* **L-C2** `chain_sound : (∀ u, w u ∈ {0,1}) → Sat n s h (w ‖ pub s h) → chainEnd s n = h`.
-* **L-C3** `chain_complete : Sat n s (chainEnd s n) (chainWitness s n ‖ pub s (chainEnd s n))`
-  and `chainWitness` Boolean with `pos 512 = 1` in every block.
-* **L-C4** `walk_eq_sum` (§2.4.2, the sum over `k ≠ 512`); `shift_mle : ∀ t t' ∈ {0,1}^κ,
-  S̃(t,t') = [t' + 1 = t]`; `matrix_mle_eq`: the formulas of §2.4 (with `A0, B0` the row forms
-  of `chainBlock` with row 512 cleared) equal `Σ_{x,y} eq(r_x,x)eq(r_y,y)·M(x,y)` for
-  `M ∈ {A,B,C}`.
+Circuit and chain (`SpartanChainBlake2sR1CS`, `SpartanChainChain`):
 
-Multilinear (`MLE.lean`): **L-E1** `eq_sum_one : Σ_u eq(r,u) = 1`; **L-E2** `eq_mle : Σ_u eq(a,u)eq(u,b)
-= eq(a,b)`; **L-E3** `mle_split` (tensor split of variables); **L-E4** `eq_frob : eq(r,u)^{2^k} =
-eq(r^{2^k},u)` for `u` Boolean.
+* **L-C1** `block_sound`, `block_complete` (§2.2.2), `holds_chainBlock_imp (hz : z 512 =
+  true)`, `bounded_chainBlock` (§2.2.1).
+* **L-C2** `chain_sound : (∀ u, w u ∈ {0,1}) → Sat n s h (w ‖ pub s h) → chainEnd s n = h`, and
+  its bridge `sat_iff_abstract : Sat n s h z ↔ SpartanChain.Sat A B C z` for the abstract
+  matrices of `(κ, n)` (so that `zc_start` applies to `zDec U`).
+* **L-C3** `chain_complete`; **L-C4** `walk_eq_sum`, `shift_mle`, `matrix_mle_eq` (stated
+  against `matMle`), `pub_mle` (the 513-lookup formula of §3 equals `mle (pub s h)`).
 
-Sumcheck (`Sumcheck.lean`): **L-S1** `round_bad_le : ` for `g ≠ g*` of degree `≤ d` with
-`g(0)+g(1) = g*(0)+g*(1)`, `#{r : g(r) = g*(r)} ≤ d` (Mathlib `Polynomial.card_roots'`);
-**L-S2** `zerocheck_bad_le : ` for a nonzero multilinear `P` in `ℓ` variables, drawing coordinates
-one at a time, each coordinate makes the restriction vanish for at most one value;
-**L-S3** `batch_bad_le : (v_A,v_B,v_C) ≠ (t_A,t_B,t_C) → #{ρ : Σ ρ^i v_i = Σ ρ^i t_i} ≤ 2`;
-**L-S4** `sumcheck_complete`: the honest round polynomials pass every check for every challenge.
+Multilinear (`SpartanChainMLE`, exist): **L-E1** `eq_sum_one`; **L-E2** `eq_mle`; **L-E3**
+`mle_split`; **L-E4** `eq_frob`; `mle_eqPt`, `mle_comb`.
 
-Ring switching (`RingSwitch.lean`): **L-R1** `ring_inj : δ ∈ E^{64}, δ ≠ 0 → ∃ k < 64,
-Σ_i x^i δ_i^{2^k} ≠ 0` (Annex A §A.3: with the `F₂`-coordinates `Δ_w ∈ K`, the `K`-bases
-`{1, y^{2^k}, y^{2^{k+1}}}` for each `k < 64`, and the 64 distinct conjugates `x^{2^k}`; the two
-families of facts are kernel-decided in `Field.lean`, see §10 — `y ∈ F_8` makes `y^{2^k}`
-3-periodic, so `ybasis` is three determinants with `F₂` entries, and `conj_distinct` may come
-from the modulus's irreducibility certificate instead of 64 squaring chains; either proof is
-acceptable, the statements are fixed); **L-R2** `stage_bad_le_one` (leanerVM
-`card_stage_zero_le_one`, Mathlib-only, copied): a family with some `π_k ≠ 0`, `k < 2M`, keeps
-some `π_k ≠ 0`, `k < M`, after the stage `(M, f)` for all `f` but at most one;
-**L-R3** `ring_complete : Σ_{u'} Φ(eq(r,u'))·q(u') = Σ_i x^i Φ(Q̃_i(r))` for `q(u') = Σ_i Q_i(u')x^i`,
-`Q_i` Boolean; **L-R4** `weight_mle : W̃(r'') = Σ_k c_k eq(r^{2^k}, r'')`; **L-R5** `phi_eq_sum`
-(`frobMap_eq_sum`, copied).
+Sumcheck (`SpartanChainSumcheck`, exist): **L-S1** `round_bad_le` (`g ≠ g*`, both of degree
+`≤ d`: `#{r : g(r) = g*(r)} ≤ d`; S9-m1: no hypothesis on `g(0) + g(1)`), used through
+**`round_escape_le`** (`(hts : ∀ t ∈ ts, t.size = 2^(m+1)) (hfalse : claim ≠ trueSum e ts (m +
+1)) (g) : (univ.filter fun r => (g.size = e.deg + 1 ∧ peval g 0 + peval g 1 = claim) ∧ peval
+g r = trueSum e (ts.map (bind0 · r)) m).card ≤ e.deg`); **L-S2** `zerocheck_bad_le`; **L-S3**
+`batch_bad_le`; **L-S4** `sumcheck_complete`; `roundPoly_check`, `roundPoly_next`,
+`trueSum_bindAll`, `verifyRounds_honest`. To add: `bindAll_append`.
 
-Code and PCS (`RS.lean`, `Proximity.lean`, `Ligero.lean`): **L-RS1** `code_dist : c, c' ∈ C, c ≠ c'
-→ #{i : c_i ≠ c'_i} ≥ N − k + 1` (from `basis_deg : deg X_j = j`, monic); **L-RS2** (AHIV22
-4.3–4.5, counting form) `far_bad_le : 3e < d → d < |E| → ¬ eClose U e → #{r ∈ E^m : Δ(Σ r_i U[i], C)
-≤ e} ≤ d·|E|^{m−1}`. Its proof is a **port with provenance** of ArkLib's sorry-free
-`Data/CodingTheory/ProximityGap/AHIV22.lean` and `AHIV22Support.lean` (Apache-2.0; the
-affine-line lemma `exists_codewords_agree_of_many_close_scalars`, `dist_interleaved_code_to_code_lb`,
-`e_le_dist_over_3`, `prob_of_bad_pts`), with one change: ArkLib samples uniformly from the row
-span, R0 samples `r ∈ E^m`, so the double count is redone directly over `E^m` along a fixed
-`β` with `Σ β_i U[i] = v*` (the same proof, no pushforward lemma); **L-RS3** `miss_le : |D| ≥ δN →
-#{index tuples missing D} ≤ (1−δ)^t·N^t` (exact: `(N − |D|)^t`), lifted to the `J` answers by the
-exact uniformity of §6.1's chunking; **L-RS4** `close_unique` and `close_in_K` (§5.5); **L-RS5**
-`encode_complete`: `Enc(Σ r_i Q[i]) = Σ r_i Enc(Q[i])` (linearity) and the tensor evaluation equals
-`Enc(·)_c`.
+Algebraic rounds (`SpartanChainSoundnessSpartan`, exist): `zc_start`, `zc_escape_le`,
+`zc_end`, `outer_trueSum`, `outer_start`, `outer_final`, `triple_wrong`, `inner_trueSum`,
+`batch_escape_le`, `inner_final`, `z_mle_slices`, `ne_of_claim`, `rsDoom`, `rs_start`,
+`rs_escape_le`, `rs_end`, `prod_trueSum`, `bindT`, `tbl_bindT`.
 
-Merkle and log (`Merkle.lean`, `Soundness/Log.lean`):
+Ring switching (`SpartanChainRingSwitch`, `SpartanChainRingSwitchField`, exist): **L-R1**
+`ring_inj_EF`; **L-R2** `stage_bad_le_one`; **L-R3** `ring_final`; **L-R4** `weight_mle`;
+**L-R5** `frobMap_eq_sum`; `Phi`, `stages`, `frobPair`.
 
-* **L-M1** `path_complete`: for every `H`, the prover's path for column `c` verifies against the
-  root it computed.
-* **L-M2** `tree_of_log` (a positive control for `tree_L`): if the prover's build queries for
-  `U` are in `L`, answered as `H` answers them, then `tree_L(root) c = some (column c of U)` for
-  every `c`.
-* **L-M3** `open_binding` (restated; absorbs the former L-M4's "no completion" clause):
-  `¬Bad(L) → L₀ <+: L → (∃ e ∈ L \ L₀ at the cut, root ∈ labelsIn(q_e)) →
-  (verifyPath root c col path).runLog L = some true → tree_{L₀}(root) c = some col`.
-  Here `verifyPath` is `V`'s path check (recompute `λ(c)` from `col`, climb with the sibling
-  labels, compare with `root`). Proof: top-down along the path; at each level the path's query
-  is answered in `L` by an entry whose truncated answer is the current label, and by (i) and
-  (iv) that entry is the first one with that truncated answer, so `col_L` takes the same step;
-  by L-M4 `col_{L₀} = col_L`. Consequence: a column with `tree_{L₀}(root) c = none` has no
-  verifying path in `L`.
-* **L-M4** `tree_prefix` (restated): `¬Bad(L) → L₀ <+: L → (some entry of L at or after the
-  cut has root ∈ labelsIn(q)) → tree_{L₀}(root) = tree_L(root)`. Proof: every entry of the tree
-  under `root` precedes the first entry whose query carries `root` (else a label hit (ii)), by
-  induction on the depth, and `col` only reads first entries by truncated answer.
+Code and PCS (`SpartanChainRS`, `SpartanChainProximity`, `SpartanChainPCSBounds`, exist):
+**L-RS1** `code_dist`, `MinDist.le_dist`, `MinDist.eq_of_agree`, `enc_injective`,
+`mem_rsCode_iff`, `enc_mem_rsCode`, `msg_in_K`; **L-RS2** `far_bad_le` (the AHIV22 port,
+counting form: `Nat.card {r : Fin m → E // Close C e (Σ_i r i • U i)} ≤ d · |E|^{m−1}` under
+`MinDist C d`, `3e < d`, `d < |E|`, `¬eClose C U e`) and its instance `r0_far_bad`; **L-RS3**
+`miss_card` (`= (|ι| − |D|)^t`), `miss_le`, `miss_le_rat`, and the instances `far_miss`,
+`close_miss`; **L-RS4** `close_unique`, `close_in_K`, `IsDecomp.comb`, `dist_ge_of_agree`,
+`close_iff_agree`; **L-RS5** `encode_complete`, `encAt_eq`; the shape and its arithmetic
+`muR, lk, lN, rows, msgLen, cols, dist, radius, tQ`, `cols_eq`, `dist_eq`, `radius_eq`,
+`three_radius_lt`, `code_minDist`, `dist_mul_le`, `far_ratio`, `close_ratio`, `pow17_le`,
+`pow17_259`, `eps_budget` (to be extended by `+ 1/2^256`), `single_round_le`.
 
-Knowledge state (`Soundness/Log.lean` for L-K1, L-K4, L-K7, L-K8; `Soundness/KS.lean` for the
-rest):
+Transcript (`SpartanChainTranscript`, exist): `chE`, `card_chE_fiber`, `card_chE_mem`,
+`idxOf`, `idxVec`, `cnt`, `nAns`, `indices`, `card_idx_fiber`, `card_idx_mem`,
+`idxOf_testBit`, `squeezeN`, `queries_squeezeN`, `run_squeezeN`, `stateIn`, `seedOf`,
+`StateHit`, `Repeated`, `Bad`, `bad_append`, **L-K7** `pred_unique_lt`, `pred_before`,
+`query_eq_of_answer`, `entry_unique`.
 
-* **L-K1** `bad_step_le` (restated): `¬Bad(L) → q ∉ L.map Prod.fst → #{a : Digest | Bad(L ++
-  [(q,a)])} ≤ L.length·(3·2^8 + 1)`. Count: (i) at most `L.length` truncated answers, each with
-  `2^8` full answers; (ii) at most `2·L.length` labels in the queries of `L`, each `2^8`; (iii) at
-  most `L.length` states; (iv) impossible for a fresh `q`. With `L.length < 2^96` the fraction is
-  `< 3·2^{-152} + 2^{-160}`.
-* **L-K2a** `first_answer`: for a chain `T` of `L` entering a multi-answer round (doomed), the
-  new entry being its first squeeze, `Σ_a p_T(L ++ [(q,a)]) = 2^256·Pr_T[escape]`, where the
-  right side is the counting probability of §9.2's R0 or R7 escape event over all `m` resp. `J`
-  answers; **L-K2b** `middle_answer`: for `1 ≤ j < m−1` resp. `j < J−1`,
-  `Σ_a p_T(L ++ [(q,a)]) = 2^256·p_T(L)`; **L-K2c** `last_answer`: `Σ_a [Esc_T(round) in L ++
-  [(q,a)]] = 2^256·p_T(L)`. All three are the splitting of a count over `Digest^{J−j}` by its
-  first coordinate.
-* **L-K3** `accept_not_doomed`: for a complete chain `T` of `L` with `¬Bad(L)` and `Doom_T`
-  after R7, `(leafProg c π).runLog L ≠ some true` for the proof `π` carrying `T`'s messages (the
-  index `c* ∈ D` is opened; L-M3 identifies the opened column with `U`'s; the mode's column
-  equation fails there).
-* **L-K4** `runLog_chain` (restated): `¬Bad(L) → (leafProg c π).runLog L = some b →` the
-  entries `find?`-answering the run's queries, in the order asked, form a chain of `L` with the
-  proof's statement and messages; `b = true →` the chain is complete. The ordering part
-  (each entry after its predecessor) is L-K7; the matching part is the shape of `leafProg`'s
-  queries (§6.2) and `find?`.
-* **L-K5** `kstate : KState (Rel Vb) V E 2^{-129}` with `μ` of §9.3 (restated for the amended
-  contract: `empty`, `step` with `(μ L + ε)·2^256`, `final` with `L.length ≤ 2^96`).
-* **L-K6** `ks : KS (Rel Vb) V E 2^{-129} 2^{14}`.
-* **L-K7** `pred_unique_lt`: `¬Bad(L) → stateIn(q_e) = some st → ` at most one entry of `L` has
-  answer `st`, and if `e'` does then `e'` precedes `e` in `L`.
-* **L-K8** `fresh_leaf`: `¬Bad(L ++ [(q,a)]) →` the chains of `L ++ [(q,a)]` are the chains of
-  `L` (with the same `pred`, prefix `L₀`, `U_T`, messages and challenges) plus at most one chain
-  ending in the new entry, which extends a chain of `L` or is a new seed.
+Merkle (`SpartanChainMerkle`, exist): **L-M1** `path_complete`; **L-M2** `tree_of_log`;
+**L-M3** `open_binding`, `open_binding_prefix`; **L-M4** `tree_prefix`; `pre`, `colL`,
+`colOr`, `Collision`, `Hit`, `labelsIn`, `parseLeaf`, `parseNode`, `parseAbsorbRoot`,
+`colL_append`, `colL_prefix`, `colL_of_append_one`, `collision_append`, `hit_append`.
 
-Query bound (`Verifier.lean`): **L-Q1** `queries_le : ∀ H c π, ((V c π).queries H).length ≤ 2^{14}`
-(the structured count of §6.3 for `n ≤ 2^{20}`; zero for rejects before the first query and for
-nodes).
+Log and forest (`SpartanChainSoundnessLog`): exist: `card_trunc_fiber`, `length_labelsIn`,
+**L-K1** `bad_step_le`, `bad_step_frac`, `ansIdx`, `predIdx`, `back`, `pathOf`, `back_fuel`,
+`predIdx_lt`, `predIdx_append_old`, `back_append_old`, `predIdx_new`, **L-K8** `back_new`,
+`pathOf_append_old`, `OnFrontier`, `frontier_append`, `extCount`, **L-K2** `extCount_split`.
+To build: `Step`, `Step.matches`, `shape`, `len`, `entriesOf`, `Matches`, `IsChain`,
+`chains`, `cut`, `L₀`, `L₀_append`, `split_at_cut`, `chains_append`, **L-K4** `runLog_chain`
+(after `SpartanChainVerifier`).
 
-Decoder (`Decode.lean`): `packFast_eq`, `bytesAtF_eq`, `decodeWitF_eq`, `decodeF_eq`,
-`encodeF_eq` (copied from S2a, §1.2.1).
+Modes and decoding (`SpartanChainSoundnessPCS`): exist: `UE`, `UE_sum_apply`, `filled`,
+`filled_of_colL`, `card_chE_vec`, `r0_answers`, `Decodes`, `decode_exists`, `decode_unique`,
+`decodes_honest`, `qDec`, `qDec_spec`, `qDec_eq`, `Dset`, `far_Dset_card`, `close_Dset_card`,
+`accept_not_mem`, `eval_of_correct`, `opened_not_mem`, `verify2_runLog`, `idxAll`,
+`card_idxAll_fiber`, `card_avoid`, `Miss`, `miss_iff`, `r7_count`, `layout_ok`, `r7_far`,
+`r7_close`. To build: `wDec`, `wDec_bool`, `zDec`, `r0_esc_le`, `r7_esc_le`.
 
-Certificate (`Submission.lean`): `Vb_eq`, `check_eq`, `checkNode_sound`, `fits_of_rel`,
-`certificate`, `certified` (the rendered challenge).
+Potential (`SpartanChainSoundnessKS`, to build): `Rej`, `rej_mono`, `Alg`, `Doom`, `EscAt`,
+`Esc`, `ext`, `ext1`, `doom_absorb`, `doom_mid`, `esc_single_le`, `condCount`,
+`condCount_split`, `condCount_last`, `pRound`, `μ`, `mu_le`, `step_bad`, `step_split`,
+`mu_step`, `doom_of_not_esc`, **L-K3** `accept_not_doomed`, `mu_final`, **L-K5** `kstate :
+KState (Rel Vb) V E 2^{-129}`, **L-K6** `ks : KS (Rel Vb) V E 2^{-129} 2^{14}`.
+
+Query bound (`SpartanChainVerifier`): **L-Q1** `queries_le : ∀ H c π, ((V c π).queries
+H).length ≤ 2^{14}` (§6.3).
+
+Decoder (`SpartanChainDecode`, exist): `packFast_eq`, `bytesAtF_eq`, `decodeWitF_eq`,
+`decodeF_eq`, `encodeF_eq`.
+
+Certificate (`SpartanChainSubmission`): `Vb_eq`, `check_eq`, `checkNode_sound`,
+`fits_of_rel`, `certificate`, `certified`.
 
 ---
 
@@ -1199,3 +1383,77 @@ Lean-side changes, by module:
   reduced objects only after a measurement (§10.1); new controls for `tree_L`, `Bad`, `decodeF`.
 * **Rust** (`native/`): no change. The `circuit` KAT (row list) and the `proof` KAT
   (byte-identical leaf proofs) are as before.
+
+
+### Second review response (`docs/reviews/BLUEPRINT-R1-S9-review.md`)
+
+The protocol, the byte format (§6–§7) and every parameter are unchanged; `ε = 2^{-129}`
+stands (§9.3 step 5: `(4/5) · 2^{-129} + 3 · 2^{-152} + 2^{-160} + 2^{-256} ≤ 2^{-129}`). §9
+was rewritten in place so that it is formalisable as written: Lean-level definitions, the
+`step` and `final` proofs as lists of lemmas with statements and modules, and the names of
+the modules that exist (`SpartanChainMerkle`, `SpartanChainTranscript`,
+`SpartanChainSoundnessLog`, `SpartanChainSoundnessPCS`, `SpartanChainSumcheck`,
+`SpartanChainSoundnessSpartan`, `SpartanChainProximity`, `SpartanChainPCSBounds`) used
+verbatim.
+
+| finding | status | where |
+|---|---|---|
+| S9-M1 failed checks do not doom | fixed | §9.2: `Doom U es := Rej es ∨ Alg U es`, `Rej` the disjunction of the checks (a)–(f) available at the chain's position, monotone (`rej_mono`); positions are indices into `shape κ` (§9.1), `ρ − 1` is `es.dropLast` (the predecessor's path); `doom_absorb` (an absorb never undooms; each case named to its lemma: `zc_end`/`outer_start`, `outer_final`/`triple_wrong`, `inner_final`/`z_mle_slices`/`ne_of_claim`, `rs_end`/`prod_trueSum`, `ne_of_claim`/`eval_of_correct`/`mle_split`); `doom_mid`; `p` is `condCount`, the conditional count (`extCount`) of `EscAt` on the formal extension, for R0 and R7 alike, so it vanishes under `Rej` |
+| S9-M2 `μ` double-counts prefixes | fixed | §9.3: `μ` sums `pRound` over the chains whose last entry is `OnFrontier` (`SoundnessLog.OnFrontier`, `frontier_append`); chains are forest paths `pathOf L j`, so each entry ends at most one chain; `step_split` has the middle-answer case `X − pRound L i* + pRound L_a j_new` |
+| S9-M3 L-M4 and L-K7 false as written | fixed | §9.1: L-M4 is `Merkle.tree_prefix` and L-M3 is `Merkle.open_binding_prefix`, both with the log split `L₀ ++ e :: L₁` at the `absorb(root)` entry `e`; `StateHit` has `i ≤ j`; L-K7 is `Transcript.pred_unique_lt` as implemented; L-K1 is `SoundnessLog.bad_step_le` (`≤ L.length · (3 · 2^8 + 1) + 1`) with the `2^{-256}` term carried through `eps_budget`; L-K4 `runLog_chain` returns the chain index `j`, whose cut `cut L j := (pathOf L j)[1]!` splits `L` (`split_at_cut`) for `opened_not_mem`/`open_binding_prefix` in `final`; `step` needs only `L₀_append` (`pathOf_append_old`); L-K8 is `back_new` (no self-loop case) |
+| implementer's correction 1 (L-M2 needs `¬Collision`) | adopted | §9.1 L-M2 is `tree_of_log` with `¬Collision L` |
+| implementer's correction 2 (`StateHit` with `i ≤ j`) | adopted | §9.1 (same as S9-M3) |
+| implementer's correction 3 (L-M4 cut at the absorb) | adopted | §9.1 (same as S9-M3) |
+| S9-m1 L-S1's hypothesis inverted | fixed | §9.4 L-S1 `round_bad_le` with `g ≠ g*` only, used through `round_escape_le` whose escape set carries the passed check |
+| S9-m2 L-K2 stated on `L ++ [(q,a)]` | fixed | §9.2–§9.3: `condCount` and the "intended values" of `step` 4 are functions of `(U, es)` and the answers through the formal extension `ext`; `Σ_{¬Bad} actual = Σ_{¬Bad} intended ≤ Σ_all intended` is literal |
+| S9-m3 L-K4 wording | fixed | §9.1 L-K4: the chain is the run's Fiat–Shamir entries; the Merkle runs and column checks are the separate clause `verify2_runLog` |
+| S9-m4 `min(1, ·)` unnecessary | fixed | §9.3: `μ` without `min` |
+| simplification 1: one generic round lemma | adopted | §9.2: `SoundnessLog.extCount_split` (exists) is L-K2; `condCount_split`/`condCount_last` derive from it; `step_split` has three cases (no-op, single-answer, multi-answer) and R0 and R7 share the mechanism |
+| simplification 2: closed form for R7 | not needed | `SoundnessPCS.r7_count` already counts the whole block of `J` answers (`r7_far`, `r7_close`), so R7 uses the same `condCount` as R0; `r7_esc_le` is `far_Dset_card` + `r7_far` in far mode and `close_Dset_card` + `r7_close` in close mode |
+| simplification 3: drop `min` | adopted | as S9-m4 |
+
+### Changes affecting implementers (second review)
+
+Formats, parameters, the protocol and the Rust prover are untouched. By module:
+
+* **`SpartanChainMerkle`, `SpartanChainTranscript`** (done): no change; §9 names
+  `Collision`, `Hit`, `StateHit` (`i ≤ j`), `Repeated`, `Bad`, `pre`, `colL`, `colOr`,
+  `parseAbsorbRoot`, `labelsIn`, `tree_prefix`, `open_binding_prefix`, `pred_unique_lt`,
+  `entry_unique`, `query_eq_of_answer`, `card_chE_mem`, `indices`, `idxVec` as they are.
+* **`SpartanChainSoundnessLog`** (done in part): §9 names `bad_step_le`, `bad_step_frac`,
+  `ansIdx`, `predIdx`, `pathOf`, `back_new`, `pathOf_append_old`, `OnFrontier`,
+  `frontier_append`, `extCount`, `extCount_split` as they are. To add (§9.1): `Step`,
+  `Step.matches`, `shape`, `len`, `entriesOf`, `Matches`, `IsChain L j` (the path of `j`
+  `Matches`), `chains L` (the indices that are chains), `cut`, `L₀`, `L₀_append`,
+  `split_at_cut`, `chains_append`, and `runLog_chain` once `SpartanChainVerifier` exists.
+* **`SpartanChainSoundnessPCS`** (done in part): §9 names `UE`, `filled`, `filled_of_colL`,
+  `r0_answers`, `qDec`, `qDec_spec`, `Decodes`, `Dset`, `far_Dset_card`, `close_Dset_card`,
+  `accept_not_mem`, `opened_not_mem`, `verify2_runLog`, `eval_of_correct`, `Miss`,
+  `r7_count`, `r7_far`, `r7_close` as they are. To add: `wDec`, `wDec_bool`, `zDec` (the bits
+  of `qDec` and the §2.3 layout), `r0_esc_le`, `r7_esc_le` (§9.2).
+* **`SpartanChainSoundnessSpartan`, `SpartanChainSumcheck`** (done): statements unchanged;
+  §9.2 uses `zc_start`, `zc_escape_le`, `zc_end`, `outer_start`, `round_escape_le`,
+  `outer_final`, `triple_wrong`, `batch_escape_le`, `inner_final`, `z_mle_slices`,
+  `ne_of_claim`, `rs_start`, `rs_escape_le`, `rs_end`, `prod_trueSum`, `rsDoom`, `bindT`,
+  `bindAll`. To add in `SpartanChainSumcheck`: `bindAll_append : bindAll ts (cs ++ [c]) =
+  (bindAll ts cs).map (bind0 · c)`.
+* **`SpartanChainPCSBounds`** (done): `eps_budget` gains the term `+ 1 / 2^256` (the `i ≤ j`
+  state hit): `(4/5) / 2^129 + 3 / 2^152 + 1 / 2^160 + 1 / 2^256 ≤ 1 / 2^129`.
+* **`SpartanChainChain`** (B): add `sat_iff_abstract` (the chain `Sat n s h z` is
+  `SpartanChain.Sat A B C z` for the abstract matrices of `(κ, n)`) and `pub_mle` (§3's
+  513-lookup formula is `mle (pub s h)`), so that `zc_start` and `z_mle_slices` apply to
+  `zDec U`.
+* **`SpartanChainVerifier`** (C): `leafProg`'s checks must be literally (a)–(f) of §9.2 (the
+  round check as `c_1 + … + c_d = claim`, equal to `peval g 0 + peval g 1 = claim`) and the
+  column phase `Ligero.verify2`; each absorb and squeeze goes through
+  `Transcript.absorb`/`squeeze`/`squeezeN` so that `queries_squeezeN`-style lemmas give L-K4.
+* **`SpartanChainSoundnessKS`** (E, new): `Rej`, `rej_mono`, `Alg` (the table of §9.2),
+  `Doom`, `EscAt`, `Esc`, `ext`, `ext1`, `doom_absorb`, `doom_mid`, `esc_single_le`,
+  `condCount`, `condCount_split`, `condCount_last`, `pRound`, `μ`, `mu_le`, `step_bad`,
+  `step_split`, `mu_step`, `doom_of_not_esc`, `accept_not_doomed`, `mu_final`, `kstate`,
+  `ks`. L-K2a/b/c are retired in favour of `extCount_split`.
+* **`SpartanChainControls`** (D): add controls for `Matches`/`IsChain` (the honest transcript
+  of a 1-leaf is a chain; with one state byte changed it is not), `OnFrontier` (a chain whose
+  next squeeze is in the log is not on the frontier), `Rej` (a wrong round-polynomial size
+  rejects) and `Dset` on a toy code (`far_Dset_card`'s hypothesis is reachable).
+* **Rust (`native/`)**: no change.

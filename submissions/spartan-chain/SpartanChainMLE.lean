@@ -265,6 +265,7 @@ theorem pt_cons (c : R) (r : List R) : pt (c :: r) = Fin.cons c (pt r) := by
   refine Fin.cases ?_ (fun i ↦ ?_) l <;> rfl
 
 /-- `Σ_{i < n} F i` as a loop. -/
+@[specialize]
 def sumTo {M : Type*} [AddCommMonoid M] (n : ℕ) (F : ℕ → M) : M :=
   Nat.fold n (fun i _ acc ↦ acc + F i) 0
 
@@ -279,6 +280,7 @@ theorem sumTo_eq_fin {M : Type*} [AddCommMonoid M] (ℓ : ℕ) (F : ℕ → M) :
   rw [sumTo_eq, Fin.sum_univ_eq_sum_range]
 
 /-- The `2 ^ |r|` values `eq(r, u)`, variable `0` the low bit: one pass per variable. -/
+@[specialize]
 def eqTable : List R → Array R
   | [] => #[1]
   | c :: r =>
@@ -318,9 +320,11 @@ theorem tbl_eqTable' {ℓ : ℕ} (r : List R) (h : r.length = ℓ) :
   rw [tbl_eqTable, pt_eq_ptOf]
 
 /-- `Σ_u t[u] · s[u]` over the indices of `t`. -/
+@[specialize]
 def dot (t s : Array R) : R := sumTo t.size fun u ↦ t.getD u 0 * s.getD u 0
 
 /-- `f̃(r) = Σ_u eq(r, u) · t[u]`, computed with `eqTable`. -/
+@[specialize]
 def mleEval (t : Array R) (r : List R) : R := dot (eqTable r) t
 
 /-- **The computed extension is the extension** of the table `t` (entries past the end are
@@ -338,6 +342,7 @@ theorem mleEval_eq' {ℓ : ℕ} (t : Array R) (r : List R) (h : r.length = ℓ) 
   rw [mleEval_eq, pt_eq_ptOf]
 
 /-- Variable `0` of `t` fixed to `c`: `t[2j] + c · (t[2j + 1] - t[2j])`. -/
+@[specialize]
 def bind0 (t : Array R) (c : R) : Array R :=
   Array.ofFn (n := t.size / 2) fun j ↦
     t[2 * j.val]'(by omega) + c * (t[2 * j.val + 1]'(by omega) - t[2 * j.val]'(by omega))
@@ -357,6 +362,7 @@ theorem tbl_bind0 {ℓ : ℕ} (t : Array R) (c : R) (ht : t.size = 2 ^ (ℓ + 1)
     Array.getElem?_eq_getElem h0, Array.getElem?_eq_getElem h1]
 
 /-- `eq(a, b)` on two points of the same length. -/
+@[specialize]
 def eqPts (a b : List R) : R := (List.zipWith (fun x y ↦ x * y + (1 - x) * (1 - y)) a b).prod
 
 theorem eqPts_cons (x y : R) (a b : List R) :

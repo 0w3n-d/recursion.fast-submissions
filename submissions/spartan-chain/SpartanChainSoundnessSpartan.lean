@@ -20,12 +20,12 @@ lemmas, no division).
 | start | `¬ Sat A B C z` ⇒ the residual table `F` is nonzero | `zc_start` | — |
 | R1, `τ_l` | the table `F` bound at `τ_{<l}` is nonzero | `zc_escape_le` | 1 |
 | R1 → R2 | all bound: `F̃(τ) ≠ 0`, the outer claim `0` is false | `zc_end`, `outer_start` | — |
-| R2, `r_{x,l}` | `claim ≠ trueSum outerExpr (outer tables bound at r_{x,<l})` | `round_escape_le` | 3 |
+| R2, `r_{x,l}` | `claim ≠ trueSum outerExpr (outer tables bound)` | `round_escape_le` | 3 |
 | after R2 | the triple `(v_A, v_B, v_C)` is wrong | `outer_final`, `triple_wrong` | — |
 | R3, `ρ` | the triple is wrong; escape: the batched claim is true | `batch_escape_le` | 2 |
 | R4, `r_{y,l}` | `claim ≠ trueSum innerExpr (inner tables bound)` | `round_escape_le` | 2 |
 | after R4 | the slices are wrong (`δ ≠ 0`) | `inner_final`, `z_mle_slices`, `ne_of_claim` | — |
-| R5, `f_p` | `rsDoom` (`∃ k < 2^(s'+1-p), π_k ≠ 0`); start by L-R1 | `rs_start`, `rs_escape_le` | 1 |
+| R5, `f_p` | `rsDoom` (`∃ k < 2^(s'+1-p), π_k ≠ 0`); L-R1 | `rs_start`, `rs_escape_le` | 1 |
 | after R5 | `T ≠ Σ_{u'} W(u') q(u')` | `rs_end`, `prod_trueSum` | — |
 | R6, `r''_l` | `claim ≠ trueSum innerExpr (#[W, q] bound)` | `round_escape_le` | 2 |
 | after R6 | the evaluation claim `v'` is wrong | `ne_of_claim` | — |
@@ -247,7 +247,8 @@ theorem triple_wrong {claim e vA vB vC tA tB tC : E} (hdoom : claim ≠ e * (tA 
 /-- The inner tables: `M̃_ρ(r_x, ·) = Ã + ρ B̃ + ρ² C̃` on the cube, and `z`. -/
 def innerTables (rx : Fin a → E) (ρ : E) (A B C : Fin (2 ^ a) → Fin (2 ^ b) → E)
     (z : Fin (2 ^ b) → E) : Array (Array E) :=
-  #[Array.ofFn fun y ↦ matMle A rx (cube y) + ρ * matMle B rx (cube y) + ρ ^ 2 * matMle C rx (cube y),
+  #[Array.ofFn fun y ↦
+      matMle A rx (cube y) + ρ * matMle B rx (cube y) + ρ ^ 2 * matMle C rx (cube y),
     Array.ofFn z]
 
 /-- The inner true sum is the batched true triple. -/

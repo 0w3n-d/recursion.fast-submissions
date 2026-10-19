@@ -239,7 +239,7 @@ theorem sim_mul {a b : Form m} {va vb : α} (ha : va = φ a) (hb : vb = φ b) :
   have hrun : (o.mul va vb).run g =
       (o.res (pos g.next) va vb, ⟨g.next + 1, o.upd g.acc (pos g.next) va vb⟩) := rfl
   rw [hrun, hs.1]
-  refine ⟨⟨by simp [hs.1], ?_⟩, ?_⟩
+  refine ⟨⟨by simp, ?_⟩, ?_⟩
   · simp only [accOf, Array.toList_push, List.foldl_append, List.foldl_cons, List.foldl_nil]
     rw [hs.2, ha, hb]; rfl
   · rw [ha, hb]; exact hgate

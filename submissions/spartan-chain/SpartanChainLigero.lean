@@ -52,10 +52,13 @@ theorem tensorF_eq (ks : Array F) (a : F) (ℓ : ℕ) : tensorF ks a ℓ = tenso
   | zero => rfl
   | succ ℓ ih => simp only [tensorF, tensorAux, ih]; rfl
 
+/-- `Σ_{j<2^ℓ} t_j · msg_j` (three `F` products per term). -/
+def dotE (ℓ : ℕ) (t : Array F) (msg : Array EF) : EF :=
+  Fin.foldl (2 ^ ℓ) (fun acc j => acc + EF.smulBase (t.getD j 0) (msg.getD j 0)) 0
+
 /-- `Enc(msg)_a` for an `EF` message: the tensor at `a`, then `Σ_j X_j(a)·msg_j`. -/
 def encAtE (ks : Array F) (ℓ : ℕ) (msg : Array EF) (a : F) : EF :=
-  let t := (tensorF ks a ℓ).1
-  Fin.foldl (2 ^ ℓ) (fun acc j => acc + EF.smulBase (t.getD j 0) (msg.getD j 0)) 0
+  dotE ℓ (tensorF ks a ℓ).1 msg
 
 theorem smulBase_eq_smul (c : F) (x : EF) : EF.smulBase c x = c • x := by
   rw [EF.smulBase_eq_mul, Algebra.smul_def, EF.algebraMap_eq_ofF]
@@ -64,7 +67,7 @@ theorem smulBase_eq_smul (c : F) (x : EF) : EF.smulBase c x = c • x := by
 theorem encAtE_eq (ks : Array F) (ℓ : ℕ) {N : ℕ} (msg : Array EF) (c : Fin N) :
     encAtE ks ℓ msg (ptOf c) = enc (kapFn ks) ℓ (dom N) (fun j => msg.getD j 0) c := by
   rw [← dom_eq_ptOf, ← encAt_eq]
-  simp only [encAtE, encAt, tensor, tensorF_eq, smulBase_eq_smul]
+  simp only [encAtE, dotE, encAt, tensor, tensorF_eq, smulBase_eq_smul]
 
 /-- `Σ_{i<m} w_i · col_i` (`col` over `F`, `w` over `EF`). -/
 def comb (m : ℕ) (w : Array EF) (col : Array F) : EF :=
@@ -107,8 +110,15 @@ theorem columnAt_getD (ks : Array F) (ℓ : ℕ) (Q : Array (Array F)) {N : ℕ}
 /-- **The two column equations** at index `c` (§5.4): `Enc(ū)_c = Σ_i r_i U[i][c]` and
 `Enc(v)_c = Σ_i a_i U[i][c]`. -/
 def colCheck (κ : ℕ) (ks : Array F) (r a ubar v : Array EF) (c : ℕ) (col : Array F) : Bool :=
-  decide (encAtE ks (lk κ) ubar (ptOf c) = comb (rows κ) r col) &&
-    decide (encAtE ks (lk κ) v (ptOf c) = comb (rows κ) a col)
+  let t := (tensorF ks (ptOf c) (lk κ)).1
+  decide (dotE (lk κ) t ubar = comb (rows κ) r col) &&
+    decide (dotE (lk κ) t v = comb (rows κ) a col)
+
+/-- `colCheck` with the tensor unshared. -/
+theorem colCheck_eq (κ : ℕ) (ks : Array F) (r a ubar v : Array EF) (c : ℕ) (col : Array F) :
+    colCheck κ ks r a ubar v c col =
+      (decide (encAtE ks (lk κ) ubar (ptOf c) = comb (rows κ) r col) &&
+        decide (encAtE ks (lk κ) v (ptOf c) = comb (rows κ) a col)) := rfl
 
 theorem colCheck_iff (κ : ℕ) (ks : Array F) (r a ubar v : Array EF) {N : ℕ} (c : Fin N)
     (col : Array F) :
@@ -117,7 +127,7 @@ theorem colCheck_iff (κ : ℕ) (ks : Array F) (r a ubar v : Array EF) {N : ℕ}
           ∑ i : Fin (rows κ), EF.ofF (col.getD i 0) * r.getD i 0 ∧
         enc (kapFn ks) (lk κ) (dom N) (fun j => v.getD j 0) c =
           ∑ i : Fin (rows κ), EF.ofF (col.getD i 0) * a.getD i 0 := by
-  simp [colCheck, encAtE_eq, comb_eq]
+  simp [colCheck_eq, encAtE_eq, comb_eq]
 
 /-- **Column completeness** (L-RS5 at one column): for the honest matrix, `w`'s combination of
 the rows encodes to `w`'s combination of the column, for every `w`. -/
@@ -149,7 +159,7 @@ theorem colCheck_honest (κ : ℕ) (ks : Array F) (r a : Array EF) (Q : Array (A
     (c : Fin N) :
     colCheck κ ks r a (combRows (rows κ) (msgLen κ) r Q) (combRows (rows κ) (msgLen κ) a Q) c
       (columnAt ks (lk κ) Q (ptOf c)) = true := by
-  simp [colCheck, enc_combRows]
+  simp [colCheck_eq, enc_combRows]
 
 /-! ### Bytes (§7) -/
 

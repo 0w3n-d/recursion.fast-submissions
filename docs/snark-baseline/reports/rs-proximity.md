@@ -115,18 +115,13 @@ Yes, L-RS2 is true as written. It even holds with `(e+1)` in place of `d` and wi
 
 ## What remains open
 
-- Nothing in this group. The numeric facts (`(17/24)^{260} < 2^{-129.35}`, `e+1 > 7k/3`) and the
-  conditional-count form needed for the potential `p_T` (R0 mid-round) belong to
-  `Soundness/PCS.lean` and are not done here.
-- **Build infrastructure (for the orchestrator).** In `/home/devops/Verified-zkEVM/rf-core-sc`,
-  neither `lake build +SpartanChainRS` ("unknown module") nor `lake build SpartanChain` ("unknown
-  module prefix 'SpartanChainField'") works. The cause is that the `SpartanChain` library has
-  `roots = ["SpartanChain"]` and no globs, so lake does not treat the flat sibling modules as
-  local. I built the oleans by hand with
-  `lake env lean --root=<entry root> -o .lake/build/lib/lean/<M>.olean -i …ilean SpartanChainRoot/<M>.lean`.
-  Listing the modules in `roots` (or `globs`) would fix it.
-- `SpartanChain.lean` (the umbrella) now also imports `SpartanChainRS`, `SpartanChainProximity`
-  and `SpartanChainRSControls`.
+- Nothing in this group. The numeric bounds of §5.5 and R0/R7 at the protocol's parameters are
+  now in `SpartanChainPCSBounds.lean`; see `ligero.md`.
+- §14 asks for `Proximity.lean` to be "a port with provenance" of ArkLib's `AHIV22.lean`.
+  - The statement of L-RS2 is unchanged.
+  - The proof is independent, with ArkLib `7653a90` as the guide, cited in the module docstring.
+- Build: the earlier `lake` problem is fixed by the orchestrator's `refresh-roots.sh`.
+  `lake build +SpartanChainRSControls` is green.
 
 ## Measurements
 
