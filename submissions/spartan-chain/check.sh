@@ -225,10 +225,9 @@ if [ "${HARNESS:-0}" = 1 ]; then
   echo "== 11. harness, proof half (the organiser clone's scripts/harness-local.sh)"
   clone "$ORG"
   "${TIME[@]}" "$ORG/scripts/setup-scratch.sh" org 2>&1 | tee "$L/setup-org.log"
-  (cd "$ORG" && timeout "$TIMEOUT" lake exe gate --closure Mathlib,RecursionFast.Contract,RecursionFast.Library,RecursionFast.Controls \
-    "$L/import-allowlist.txt") 2>&1 | tail -1
-  (cd "$ORG" && python3 -I scripts/olean-manifest.py gen "$L/olean-manifest.sha256" --org "$ORG" \
-    --closure "$L/import-allowlist.txt") 2>&1 | tail -1
+  # the allowlist and the manifest of the clean organiser build, with CompPoly's BF64/Ext3 closure
+  # (the interim branch's scripts/org-closure.sh; DESIGN-v3 §7.4, AGENTS.md §10)
+  "$ORG/scripts/org-closure.sh" "$L"
   "${TIME[@]}" "$ORG/scripts/harness-local.sh" --org "$ORG" --manifest "$L/olean-manifest.sha256" \
     --allowed-imports "$L/import-allowlist.txt" --work "$L/harness-work" \
     "$B/claim.json" "$B" "$B/comparator-nanoda.json" 2>&1 | tee "$L/harness.log"

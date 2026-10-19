@@ -201,7 +201,16 @@ All runs are `CHECK OK` in PREVIEW mode.
   about its four leaves (≈ 0.95 s) plus under 0.1 s of codec. A 1 MiB random proof is rejected in
   4 ms. The smoke run of `check.sh` measured the root check at 1.19 s of process wall
   (`logs/spartan-chain/infra/check-m2b/smoke.log`). Each level still copies its children
-  (`extract`), so caterpillar proofs remain `O(|π|·depth)` (m4), now at memcpy cost.
+  (`extract`) and re-encodes the node (`encodeNodeB … = π`), so caterpillar proofs remain
+  `O(|π|·depth)` (m4). **Correction (review V3-S2b-m1):** an earlier version of this line said
+  "now at memcpy cost"; that is false. The final review measured valid caterpillar proofs with
+  the compiled `entry-verify`: 6.8 s at depth 1 000 (168 KB), 64.0 s at depth 3 000 (504 KB),
+  **275.0 s at depth 6 000 (1 008 080 B)**, about 80 ns per byte re-processed and 4.6 × `verify_s
+  = 60 s` (`logs/s2b-final-review-probes/caterpillar/`). This is a DoS-column property of this
+  unranked entry, for anyone who runs `verify` on a statement the prover chose; the benchmark's
+  root and sample checks run on runner-fixed digests, which force the honest shape (depth `r`).
+  Under the code freeze the code stays; a linear check (offset views, no re-encoding) is
+  possible.
 - **S2b-m3, fixed.**
   - `check.sh` no longer uses `Run`. It builds the local runner `entry-verify` outside the root
     (`vb (Leaf.leafVerifier chainEvals)`, in the scratch core clone's `entrymain/`).
@@ -220,3 +229,35 @@ All runs are `CHECK OK` in PREVIEW mode.
   - m2, the equality of `Submission.P` with `Leaf.proveLeaf`: it needs the prover module's
     `leafHeader`, and is for the final instantiation.
   - m6 to m12 concern other modules.
+
+## Final harness run (code freeze; `logs/spartan-chain/infra/harness-final.log`, `harness-final/`)
+
+`HARNESS=1 check.sh`, 1918 s wall. Verdicts:
+
+- Hygiene: 0 findings. Source rule: 61 files, 0 findings.
+- The solution is regenerated from the stub and the claim, equals the committed file, and builds.
+- Axiom audit: 111 declarations, only the three axioms.
+- Negative claims: image bit, fuel 7 and `qV − 1` are all rejected.
+- `SMOKE: OK`. The Lean root check takes 1.22 s and the DoS maximum is 0.09 s.
+- **Comparator:**
+  - The Lean kernel **accepts**.
+  - **nanoda was OOM-killed.** The kernel log shows a global OOM kill of `nanoda_bin` at 53.6 GB
+    anonymous RSS, out of 62 GB on a machine shared with other agents. It exited with 137 after
+    about 29 minutes.
+  - **`HARNESS: REJECT (comparator, exit 1)`**.
+- **Gate, run by hand on the comparator's tree** (`harness-final/gate-direct.log`). REJECT, for
+  two reasons:
+  1. CompPoly's `Fields.Extension.Arithmetic` registers a `@[csimp]` lemma. CompPoly is
+     classified untrusted because the interim allowlist and manifest close only over Mathlib,
+     Contract, Library and Controls. With the `BF64`/`Ext3` closure added, as `AGENTS.md` §10
+     intends (`harness-final/diag-compoly/`), CompPoly is pinned (28 modules), the `csimp` is only
+     reported, and this reason disappears.
+  2. Rule 4's field list is still v2's. `submission` is noncomputable (`ε`), so the gate checks
+     `[P, cfg]` and fails on "structure `Submission` has no field `cfg`" (core issue #9, item 4;
+     S3).
+
+  In both runs the gate's axiom check passes: the closure of `certified` has 32 932 constants
+  and uses only `propext`, `Classical.choice` and `Quot.sound`.
+- **Prover KAT at `n = 16`** (`harness-final/prove-kat-n16.log`). The Lean
+  `Run.proveLeafBytes chainWf`, which is the submission's `P` by `rfl`, gives 143 711 bytes,
+  **identical** to the Rust proof. It took 34.9 s of process wall and 224 MB.

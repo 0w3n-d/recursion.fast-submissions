@@ -30,10 +30,7 @@ the review's BP-m5): `blockA k j = (k ≠ 512) ∧ (rowOf k).a_j`.
   `rowA`, `rowB`, `rowC` with `matVec_chainA` …: the same, row by row.
 * `pubVal`, `zOf w s h`: the extended witness; `ChainSat n κ w s h := Sat chainA chainB chainC
   (zOf w s h)` (the abstract `Sat` of `SpartanChainSoundnessSpartan.lean`).
-* **L-C2 `chain_sound`**: a `0/1` witness satisfying `ChainSat n κ w s h` has `chainEnd s n = h`.
-* **L-C3 `chain_complete`**: `chainWitness s κ` (block `t` is the honest block of the step from
-  `chainEnd s t`) satisfies `ChainSat n κ _ s (chainEnd s n)`; `chainWitnessBits` computes it
-  (`fastTrace` per block, `chainWitnessBits_eq`).
+* L-C2 `chain_sound` and L-C3 `chain_complete` are proved in `SpartanChainChainSound.lean`.
 -/
 
 namespace SpartanChain

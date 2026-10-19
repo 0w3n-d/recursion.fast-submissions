@@ -1,6 +1,7 @@
 import SpartanChainSoundnessFinal
 import SpartanChainVerifier
 import SpartanChainChainSound
+import SpartanChainSubmission
 
 /-!
 # Non-vacuity controls of the certificate's definitions (blueprint §10.1, §14 Controls items)
@@ -20,6 +21,12 @@ The inventory (definition → positive control → negative control) is
   check (`verify2_rejects_col`), which a tampered column does (`Ligero.Controls.colCheck_tampered`).
 * The chain R1CS: the honest witness satisfies it (`L-C3 chain_complete`); no Boolean witness
   satisfies it for a wrong end (`chainSat_wrong_end`).
+* Booleanity is load-bearing (review S2b-m7): the chain R1CS has no booleanity rows, and on the
+  reduced AND gadget `x · y = 1` a non-Boolean witness `(y, y⁻¹)` satisfies the row while every
+  Boolean witness is `(1, 1)` (`and_gadget_bool`, `and_gadget_nonbool`): `chain_sound`'s `0/1`
+  hypothesis is supplied by the packing (`wDec_bool`), not by the R1CS.
+* The declared error (review V3-S2b-m6): a claim declaring `ε = 2^-130`, below the proved
+  `2^-129`, is not certified, whatever the facts (`claim_eps_negative`).
 All are theorems; none evaluates BLAKE2s in the kernel.
 -/
 
@@ -132,5 +139,44 @@ theorem chainSat_wrong_end {E : Type} [Field E] [CharP E 2] {n κ : ℕ} (hn : 1
     {s h : Digest} (hh : chainEnd s n ≠ h) {w : Fin (wLen κ) → E}
     (hw : ∀ u, BlockR1CS.IsBool (w u)) : ¬ ChainSat n κ w s h :=
   fun hsat => hh (chain_sound hn hnκ hw hsat)
+
+/-! ### Booleanity is load-bearing (S2b-m7), on the reduced AND gadget -/
+
+/-- The AND gadget as a one-row R1CS on `z = (1, x, y, out)`: `x · y = out`. -/
+def andA : Fin (2 ^ 0) → Fin (2 ^ 2) → EF := fun _ j => if j.val = 1 then 1 else 0
+def andB : Fin (2 ^ 0) → Fin (2 ^ 2) → EF := fun _ j => if j.val = 2 then 1 else 0
+def andC : Fin (2 ^ 0) → Fin (2 ^ 2) → EF := fun _ j => if j.val = 3 then 1 else 0
+
+theorem and_sat_iff (x y o : EF) : Sat andA andB andC ![1, x, y, o] ↔ x * y = o := by
+  simp [Sat, matVec, andA, andB, andC, Fin.sum_univ_four]
+
+/-- With Boolean `x, y` and public output `1`, the gadget forces `x = y = 1`. -/
+theorem and_gadget_bool {x y : EF} (hx : x = 0 ∨ x = 1) (hy : y = 0 ∨ y = 1)
+    (h : Sat andA andB andC ![1, x, y, 1]) : x = 1 ∧ y = 1 := by
+  rw [and_sat_iff] at h
+  rcases hx with rfl | rfl <;> rcases hy with rfl | rfl <;> simp_all
+
+theorem y_ne_zero : EF.y ≠ 0 := by decide +kernel
+theorem y_ne_one : EF.y ≠ 1 := by decide +kernel
+
+/-- **Negative control for booleanity**: without it, the same row with output `1` is satisfied by
+the non-Boolean `(y, y⁻¹)`, `y ≠ 0, 1`. -/
+theorem and_gadget_nonbool :
+    Sat andA andB andC ![1, EF.y, EF.y⁻¹, 1] ∧ EF.y ≠ 0 ∧ EF.y ≠ 1 := by
+  refine ⟨(and_sat_iff _ _ _).2 (mul_inv_cancel₀ y_ne_zero), y_ne_zero, y_ne_one⟩
+
+/-! ### The declared error (V3-S2b-m6) -/
+
+open scoped NNReal in
+/-- **Negative for `ε`**: a claim declaring `ε = 2^-130` (below the proved `2^-129`) is not
+certified, whatever the leaf verifier and prover. -/
+theorem claim_eps_negative (LV : LeafVerifier) (pl : Digest → ℕ → Digest → OProg ByteArray) :
+    ¬ CertificateR { claimR1 with ε := (2 : ℝ≥0)⁻¹ ^ 130 } (submission LV pl) := by
+  intro h
+  have h1 := h.bounds.1
+  simp only [submission, εR1] at h1
+  have : ((2 : ℝ≥0)⁻¹ ^ 130 : ℝ≥0) < (2 : ℝ≥0)⁻¹ ^ 129 :=
+    pow_lt_pow_right_of_lt_one₀ (by norm_num) (by norm_num) (by norm_num)
+  exact absurd h1 (not_le.mpr this)
 
 end SpartanChain.Controls

@@ -66,7 +66,8 @@ Every file name is prefixed `SpartanChain`.
 | `μ` | **`C:mu_empty`** (`μ [] = 0`) | **`C:mu_repeat`** (`μ = 1` on a log with a repeated query) |
 | decoder `decodeF`/`encodeF` | `Decode:decodeF_encodeF` | `Decode:decodeF_bad_tag` |
 | `leafProg`/`check`/`V` (top level) | `VT:zeroLeaf_accepted`, `VT:zeroNode_accepted`, `VT:check_encode_node` | `VT:zeroLeaf_canaries`, `VT:zeroNode_canaries`, `VT:zeroLeaf_other_stmt`, `VT:bad_tag_rejected`, `VT:leaf_push_rejected`, `VT:leaf_pop_rejected`, `VT:node_push_rejected`, `VT:node_pop_rejected` |
-| claim / certificate numbers | `Submission:certificateR_claim` | `Submission:claim_negatives` |
+| claim / certificate numbers | `Submission:certificateR_claim` | `Submission:claim_negatives` (image, fuel, `qV`); **`C:claim_eps_negative`** (`ε = 2^-130` declared: not certified) |
+| booleanity of `w` (packing, `wDec_bool`) | `C:and_gadget_bool` (Boolean witnesses of the AND row are `(1, 1)`) | **`C:and_gadget_nonbool`** (non-Boolean `(y, y⁻¹)` satisfies it: the R1CS has no booleanity rows, so `chain_sound`'s `0/1` hypothesis is load-bearing) |
 | PCS parameters (`t = 260`) | `PCSBounds:pow17_le`, `PCSBounds:shape_table` | `PCSBounds:pow17_259` (`t = 259` is not enough) |
 
 **Bold** marks the controls added in `SpartanChainControls.lean` by this audit.

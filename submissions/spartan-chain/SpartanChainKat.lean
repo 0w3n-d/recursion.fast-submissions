@@ -1,6 +1,7 @@
 import SpartanChainLigero
 import SpartanChainRingSwitch
 import SpartanChainBlake2sWitness
+import SpartanChainSoundnessSpartan
 import RecursionFast.Contract.Certificate
 
 /-!
@@ -190,9 +191,6 @@ structure LeafInput where
   z : Array EF
   q : Array F
   M : Array EF
-
-/-- The outer summand `eq · (A·B + C)`, tables `0 … 3`. -/
-def outerExpr : Expr := .mul (.var 0) (.add (.mul (.var 1) (.var 2)) (.var 3))
 
 /-- Bit `i` of every word of `q`, as `0/1` in `EF` (the bit-plane `Q_i`). -/
 def plane (q : Array F) (i : ℕ) : Array EF :=

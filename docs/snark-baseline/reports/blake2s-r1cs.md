@@ -109,8 +109,9 @@ has `Field`/`CharP 2` instances), and the walk was run on `EF`. No `Field` impor
 ## Open
 
 * The compiled timing of `walkAB` and `fastTrace`. `Run.lean` should measure them.
-* The Rust `circuit` KAT. The format is fixed in the `SpartanChainBlake2sWitness` docstring: `k`,
-  then two forms, each as 256 × 16 hex digits, lowest 64-bit chunk first.
-* Merging `walkAB` into Chain's `Ã, B̃` formula (§2.4: `A0̃(r_k, r_j) = walkAB(eq(r_k,·), eq(r_j,·)).1`).
-  Chain also needs `fastTrace` → `chainWitness`.
+* *(Done since; review V3-S2b-m5/S2b-m11.)* The Rust `circuit` KAT. The format is fixed in the
+  `SpartanChainBlake2sWitness` docstring: `k`, then two forms, each as 256 × 16 hex digits, lowest
+  64-bit chunk first.
+* *(Done since; review V3-S2b-m5/S2b-m11.)* Merging `walkAB` into Chain's `Ã, B̃` formula (§2.4:
+  `A0̃(r_k, r_j) = walkAB(eq(r_k,·), eq(r_j,·)).1`), and `fastTrace` → `chainWitness`.
 * One linter warning (an unused `simp` argument) remains in `SpartanChainBlake2sWitness`.
