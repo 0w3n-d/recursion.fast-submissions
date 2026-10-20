@@ -127,7 +127,7 @@ Severity classes:
 | # | Id(s) | One-line problem | Severity | Fix exists? | Decision needed |
 |---|---|---|---|---|---|
 | 2.1 | #5; F1-1, F1-2; ADV-M2, ADV-M3; D-2, D-8, D-9; V3-S2-KS-M1 … m6 | `KS` at `errorCap` is unsatisfiable for every Merkle/BCS verifier | **blocks** (every succinct entry) | **yes**: `v3/ks-potential` `05fde28`, PR #11 open, unmerged | merge PR #11; `logCap` `2^96` or `2^58` (REPORT §6 Q2) |
-| 2.2 | #4 and its comment; O-25; V3-S1-M1; ADV-M5 | a certified `V` may recognise BLAKE2s and accept a magic proof | **exploit** | design only; a separate design track is running | **pending**: see `notes/F2-o25-*.md` |
+| 2.2 | #4 and its comment; O-25; V3-S1-M1; ADV-M5 | a certified `V` may recognise BLAKE2s and accept a magic proof | **exploit** | direction settled (§2.2): contract-owned verifier template over first-order data, INV′, A1–A4; not implemented | **user**: reverse Q6? T, MG1 (recommended) or review-only ranking |
 | 2.3 | #6(a); ADV-M1; O-18, O-9 | `T_V = 2 s` wall time does not exclude witness-sending (threads, fast BLAKE2s) | **exploit** (wins board T while proving nothing) | design only | CPU time / one core / step count (REPORT §6 Q7) |
 | 2.4 | #6(b); ADV-M4 | board T rewards avoiding recursion (witness-sending below level `j`) | **exploit** (incentive) | design only | cap at every level, or rank column R |
 | 2.5 | #7; F1-3; ADV-M7; D-3; O-15(2), O-21; Q1 | node extraction is decoding; the RISC-V image and the budget make it infeasible | **blocks** (every recursive entry) | none; **decided 2026-10-20**: `E` in Lean with a proved step bound | the step-unit budget value |
@@ -277,9 +277,89 @@ pays `(2^96(3·2^8+1)+1)/2^256` per fresh query plus `(4/5)·2^-129` (REPORT §2
 
 ---
 
-### 2.2 O-25 (CGH) — decision pending, see notes/F2-o25-*.md
+### 2.2 O-25 (CGH) — direction settled; the reversal of Q6 awaits the user
 
-<!-- O25-DECISION -->
+**Settled direction (2026-10-20, after two design rounds and two independent adversarial
+reviews).**
+
+Sources:
+- the design memo `notes/F2-o25-uninstantiability.md`: round 1 (Candidate E) and round 2
+  (Candidate T, §R2.0–R2.11);
+- the reviews `docs/reviews/F2-o25-review.md` (round 1: E broken, O25-M1…M6) and
+  `docs/reviews/F2-o25-review-r2.md` (round 2: T's core holds, O25T-M1…M6, m1…m9, middle ground
+  MG1).
+
+1. **Rejected: making `V` parametric (Candidate E and #4's own proposal).** Opaque digests with
+   equality only are sound; kernel probes closed every Lean escape hatch tried. But every other
+   channel a real SNARK verifier needs reopens the one-line backdoor:
+   - an index map whose width `V` chooses (`idx a 256 0` is the whole answer; kernel-checked);
+   - `CommRing` with `DecidableEq` over the one deployed field, which names every element;
+   - decoding proof bytes into the field;
+   - degree-1 recognition `x − τ`.
+
+   **Post-hoc challenge verification** also defeats every design in which submission-written
+   checks see a challenge as a value. After `c₁`, the prover sends BLAKE2s wires over the prefix,
+   and low-degree checks confirm `c₁` equals their output. No fixed point stops it.
+2. **Adopted: the core of Candidate T.** Every part of the verifier that touches the oracle is
+   contract-owned: the transcript, the sumcheck/zerocheck checks and the PCS/Merkle/proximity
+   checks. Submissions supply only **first-order data that is fixed and bound into the seed before
+   any challenge**, plus `P` and the extractor. The invariant, as corrected by O25T-M1 (**INV′**):
+   no submission-authored code ever produces or consumes an operand of an acceptance check that
+   depends on the oracle. Concretely:
+   - the seed query is made by the contract;
+   - the public input `x` is a contract-fixed map of the statement, not a submission function;
+   - the seed binds the statement, `csDigest` (over the *expanded* instance) and `paramsDigest`.
+3. **Admissibility rules A1–A4** (O25T-M2) go into the contract header and the rulebook. Without
+   them, one constructor with a challenge term reopens the backdoor as data. Data-defined
+   functions are:
+   - (A1) evaluated only at challenges and at PCS-bound evaluations of pre-challenge commitments,
+     with a degree bound;
+   - (A2) never given a challenge as a coefficient or variable, and the witness is committed in a
+     single phase;
+   - (A3) multi-round sub-protocols (lookup, permutation, grand product, GKR, memory checking) are
+     template gadgets only;
+   - (A4) no datatype is an interpreter.
+4. **Templates are short reference specifications, with a kernel theorem `impl = spec`.** A spec
+   is reviewed once, against an enumerable checklist, with an embargo on whoever proposed it
+   (O25T-M5). That review is the one remaining human-trust item.
+5. **Breadth: recommended MG1, which is the user's decision.**
+   - Agents choose the constraint format (uniform R1CS, CCS, AIR or Plonkish with bounded-degree
+     custom gates).
+   - They choose a compiler (Spartan-like sumcheck, HyperPlonk-like zerocheck or STARK-AIR
+     quotient), a PCS (Ligero, WHIR, Basefold or FRI) and a field (`GF(2^64)`/`EF`, Goldilocks²
+     or BabyBear⁴), each from a contract-owned menu that satisfies A1–A4.
+   - New menu items arrive by core pull request.
+   - Free-form `V` stays as an **unranked research track**. It is enforced by type and by a tier
+     field in `records.json`, not by policy (O25T-m6).
+
+   **This reverses Q6** ("No organiser compiler"; "the submitted object is the non-interactive
+   argument itself"; field-agnostic). The user must choose: T as specified, MG1, or review-only
+   ranking.
+
+**Open blockers to fix before implementation:**
+- O25T-M3: spartan-chain cannot be expressed. Its matrices depend on `n` and `κ`, and T has no
+  node branch.
+- O25T-M4: the ranked board is empty at launch. The Ligero leaf exceeds `proofCap`, and a generic
+  evaluator inside a self-verifying node costs `nnz(cs)`. It needs a WHIR-class template and a
+  node design under A3.
+- O25T-m2: T-3 predates `4b3356a`. Use `ext`/`Computes`, `δ`/`CompleteWithError` and the 288-line
+  contract.
+- O25T-m4: the generic `Template.ks` is a new extraction proof, not a generalisation of
+  spartan-chain's.
+- O25T-m7: the contract grows by about 100–130 lines, to roughly 390–420 of 500.
+
+**Strength, stated precisely:**
+- KS remains a kernel theorem.
+- By the contract's definitions (structural, no meta-theorem), no submission-authored code can
+  express the `Backdoor.lean`, ADV-M5 or post-hoc mechanism.
+- That the template itself never recognises BLAKE2s rests on reviewing a short spec against A1–A4.
+- The irreducible residual is BLAKE2s-Fiat–Shamir soundness of the template for every admissible
+  instance. No ROM theorem can remove it (CGH98; GK03 and BBHMR19 for this protocol family).
+  Removing it would need correlation intractability of BLAKE2s, which is unproven.
+- A clever adversary needs a new Fiat–Shamir attack beyond KRS25/Fenzi26, delivered through
+  first-order data, or a subverted template review.
+- The cheap future risk is a menu item that violates A2. A1–A4 must therefore be checked for every
+  new template.
 
 **Status.** The user decided on 2026-10-20 that **the ROM-uninstantiability gap O-25 / #4 must
 be closed**. A separate design track is working on the fix; its notes will be
