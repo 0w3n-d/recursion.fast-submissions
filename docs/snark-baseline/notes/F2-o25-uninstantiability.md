@@ -1012,4 +1012,606 @@ the deepest attacks, E degrades to the same trust model as every deployed SNARK 
 (public challenge) to find breaks. I state this plainly in §10 rather than claim more.
 
 ---
-*End of memo. Companion probes (§9.4) not run; recommended before the contract stage lands.*
+*End of round 1. Companion probes (§9.4) not run; recommended before the contract stage lands.*
+*Round 2 below supersedes the recommendation of §0/§9/§10; see R2.0 for exactly which parts.*
+
+---
+
+## Round 2 (after F2-o25-review)
+
+### R2.0 Status after the review: what is superseded, what survives
+
+The independent review (`docs/reviews/F2-o25-review.md`, findings O25-M1…M6, m1…m4, probes
+`rf-core-sc/scratch/o25/P1_interface.lean`, `P2_hatches.lean`) broke Candidate E as written. I
+accept every major finding. The precise status of round 1:
+
+**Survives (confirmed by the probes, O25-m1).** The `D`-half: a `V` polymorphic in the digest type
+with `[DecidableEq D]` only cannot computably recover bytes of an abstract `D` in Lean v4.34.1 — every
+escape hatch of §5.2 (`Classical.dec (D = Digest)`, `Classical.choice`, `toString`, `hash`,
+`default`, `cast`) fails as predicted (noncomputable, no instance, or type mismatch). §3.2, §5.2,
+§6, §7, §8 stand. The literature analysis of §13 stands, with the BHK26 correction of R2.8.
+
+**Superseded.** §0's recommendation, §4.3–§4.5 (the "restricted algebraic interface"), §9 (Candidate
+E's concrete interface E-3/E-4), §10.1's claim that the known mechanism is "excluded by
+construction" beyond the `D`-half, §11.1 (grinding via `leadZeros`), §12's cost estimate, and §14.1's
+degree-cap mitigation. The reasons, in one line each:
+
+- **O25-M1.** `idx : D → ℕ → ℕ → ℕ` with `V`-chosen width is a full byte projection
+  (`idxOf 256 a 0 = natLE a`, kernel-checked). One line reopens the backdoor.
+- **O25-M2.** `[CommRing F] + [DecidableEq F]` over the *one deployed* finite field names every
+  element (any prover `F`-value generates `EF` as an `F₂`-space; minimal-polynomial pinning is degree
+  ≤ 2). Parametricity in `F` is worthless once `F` is a single known field.
+- **O25-M3.** The honest `V` must decode proof bytes into `F` (`readEF`, `ofBytes`), and that map is
+  the backdoor applied to local BLAKE2s bytes.
+- **O25-M4.** `leadZeros : D → ℕ` is a value channel and grinding-by-proof-threshold is vacuous.
+- **O25-M5.** Degree-1 recognition `x − τ` passes any degree cap; the cap separates nothing.
+- **O25-M6.** The liveness smoke covers only behaviours the native prover exercises on tested
+  instances; the ranked set must be sampled post-freeze.
+
+**The lesson, stated as a principle.** Round 1 tried to find an *interface* rich enough for
+Fiat–Shamir and poor enough to forbid recognition. The review shows there is no such interface *for
+submission-authored code*: FS needs the challenge as a field value, and the moment any
+submission-authored check sees a challenge as a value, the submission can compare it with anything
+it can compute — and over a single known finite field it can compute everything. The coordinator's
+**post-hoc challenge verification** attack (R2.1) sharpens this: even a contract-owned transcript
+and contract-owned primitive checks are not enough if the submission composes them. The only
+invariant that closes the mechanism is a *data-flow* one: **nothing the submission authors may be
+applied to a value that depends on the outer proof's challenges.** Candidate T (R2.2) is the design
+that enforces it by construction.
+
+### R2.1 The post-hoc challenge verification attack, and the invariant it forces
+
+**The attack (coordinator, round 2).** Let the protocol squeeze a challenge
+`c₁ = chE(H(absorb(prefix₁)))`. Afterwards the prover sends, as later messages, (i) the bits of
+`prefix₁`, (ii) the wires of a BLAKE2s computation of `H(absorb(prefix₁))`, and (iii) a field element
+`β` pinned by its minimal polynomial over `F₂` (0/1 coefficients only). `V` checks, with low-degree
+identities only: the wires are a correct BLAKE2s run; the input bits equal the earlier messages; and
+`c₁ = Σᵢ outbitᵢ · βⁱ`. Every check is "normal" verifier arithmetic. There is **no fixed point**:
+the data arrives *after* `c₁`, so the prover does not need `c₁` to be a function of something that
+depends on `c₁`. In the ROM the final identity holds with probability `2^-192` (the real `c₁` is a
+uniform `EF` element independent of the wires); in deployment it holds always. The `KState` is
+`Backdoor.lean`'s with the bad event "the squeeze answer's `chE` equals the BLAKE2s-wire output".
+
+**Why it defeats every "interface" fix.** The attack uses only: a challenge appearing as a *value*
+in a check, together with *later* prover data. It does not need `idx`, `ofBytes` or `DecidableEq F`
+against constants — the comparison is a polynomial identity between the challenge and a
+prover-supplied linear form. So it survives: contract-owned transcripts that absorb every message
+(the recognition is in the check, not the transcript), PIOP DSLs, sumcheck-style identity libraries,
+"normal-form" arithmetic circuits, degree caps, and opaque-token positions. Any framework in which a
+*submission-authored* check can mention an earlier challenge as a value is open.
+
+**Why honest recursion is not this attack.** A node circuit also verifies BLAKE2s wires of a
+transcript and checks `c₁' = Σ outbitᵢ βⁱ` — but on the **child's** transcript, entirely inside the
+node's *witness*, which is committed before any of the node's own challenges exist. The node's
+challenges never appear as values in any submission-authored check; they are consumed only by the
+(fixed) sumcheck/PCS protocol over the committed witness. The distinction is exactly *which*
+challenge the data is allowed to depend on.
+
+**The invariant.** Let `Chal(π)` be the set of values derived from the outer proof's own oracle
+answers (challenges, positions, transcript states). Then:
+
+> **(INV)** Every function the submission authors — the constraint system, the public-input map,
+> the parameters, the prover, the extractor — is applied only to inputs that are independent of
+> `Chal(π)`; every value in `Chal(π)` is consumed only by contract-owned (or organiser-library,
+> fixed-template) code whose composition the submission cannot alter.
+
+(INV) is a **data-flow** property, not a typing-of-operations property. It is enforced not by
+parametricity of the submission's code but by the *shape of the composition*: the contract builds
+`Vb` from the submission's data, and the submission's data has first-order types that cannot be
+applied to anything. Under (INV) the post-hoc attack cannot be written — there is no place for the
+submission to put a check mentioning `c₁`. This is the design principle of Candidate T.
+
+**Two refinements the attack forces on (INV).** (a) *"Independent of `Chal(π)`" must cover the proof
+bytes.* The prover writes post-challenge messages into the proof; if a submission-authored map
+(e.g. a public-input decoder) may read the whole proof, it can read the prover's *copy* of `c₁`. That
+alone does not reopen the attack (the map still never sees the *real* `c₁`, so cannot compare), but
+it makes the public input prover-influenced in ways that complicate the soundness theorem. T
+therefore restricts submission-authored maps to the statement and a designated *pre-challenge*
+segment of the proof. (b) *The composition, not only the primitives, must be contract-owned* — see
+R2.3's argument why a "driver `V` invoking contract `checkStep`s" is still broken.
+
+### R2.2 Candidate T: the exact definition
+
+T turns the submission from "a verifier" into "data for a fixed verifier template". The contract
+(trusted) fixes the *types* and the *composition*; an organiser library (untrusted code, but
+kernel-checked KS, and O-25-reviewed **once**) supplies the template verifier.
+
+**(T-1) The constraint-system datatype (trusted, first-order data).**
+```lean
+/-- A uniform R1CS: a block of `s` constraints over `m` block variables, repeated `ℓ = 2^k` times,
+with a fixed chaining pattern (block `j`'s "in" variables are block `j−1`'s "out" variables) and a
+public-input slice. Entries are explicit sparse triples. -/
+structure UniformR1CS where
+  s m k    : ℕ                                   -- block constraints, block vars, log repetitions
+  A B C    : List (ℕ × ℕ × F)                    -- sparse block matrices, indices < s, < m
+  chain    : List (ℕ × ℕ)                        -- (out-var of block j−1) ↦ (in-var of block j)
+  pubSlots : List ℕ                              -- which block-0 variables are public input
+  wf       : Bool                                -- well-formedness (bounds) decided by the contract
+```
+Variants on the menu (each a first-order datatype with its own library evaluator): `SparseR1CS`
+(small, fully explicit), `UniformR1CS` (above; spartan-chain's shape), `CCS`/`AIR` later. **No
+functions, no closures, no images** in the datatype: it is lists of numbers and field elements.
+`F` here is the contract's deployed field (`EF`), appearing as *data the template reads*, never as a
+type the submission computes in. (Lookup tables, if a template supports them, are likewise explicit
+lists.)
+
+**(T-2) The parameter menu (trusted).**
+```lean
+structure Params where
+  pcs      : PCSChoice          -- Ligero | WHIR | Basefold …, each a library template
+  rate     : ℕ                  -- log inverse rate
+  queries  : ℕ                  -- t
+  grind    : ℕ                  -- leading-zero bits required of designated answers (wrapper-enforced)
+def Params.ok (p : Params) (cs : UniformR1CS) : Bool   -- contract table: (pcs, rate, queries, size) ⇒ ε ≤ errorCap
+```
+
+**(T-3) The submission.**
+```lean
+structure TSubmission where
+  cs     : UniformR1CS                                   -- fixed before any challenge
+  params : Params
+  pub    : Digest → ByteArray → Option (List F)          -- public input from the statement and the
+                                                         --   proof's designated pre-challenge segment
+  P      : Digest → Wit → OProg Proof                    -- honest prover (unrestricted)
+  E      : Digest → Proof → Log → Option Wit             -- extractor spec (may reuse the library's)
+  img    : Image ; ε : ℝ≥0 ; qV : ℕ ; fuel : ℕ → ℕ
+```
+`pub` is the only submission-authored *function* the verifier runs. Its inputs are the statement and
+the pre-challenge segment; its type has no `OProg`, no oracle, no challenge. (A submission may also
+choose `pub := library default`.)
+
+**(T-4) The composition (trusted, the whole of O-25's closure).**
+```lean
+def TSubmission.V (S : TSubmission) (c : Digest) (π : Proof) : OProg Bool :=
+  Template.verify S.params S.cs (S.pub c (preSeg π)) c π          -- organiser library
+def TSubmission.Vb (S : TSubmission) (c : Digest) (π : Proof) : Bool :=
+  S.params.ok S.cs && S.cs.wf && π.size ≤ proofCap && (S.V c π).run blake2sOracle
+```
+`Template.verify` seeds its transcript with `H(0x10 ‖ c ‖ csDigest S.cs ‖ paramsDigest ‖ x)` — the
+statement, **the constraint system**, the parameters and the public input `x` — the Fenzi26
+statement-binding rule (R2.8). It then runs the fixed Spartan (or menu) sumchecks, the fixed PCS
+opening, the fixed Merkle checks, with contract/library code only.
+
+**(T-5) The certificate.** `Certificate S` keeps its four clauses with `S.V`/`S.Vb` as above, and
+`KS (Rel S.Vb) S.V S.E S.ε S.qV` is discharged by **one library theorem, generic in `cs`, `params`
+and `pub`**:
+```lean
+theorem Template.ks (cs params pub) (hok : params.ok cs = true) :
+  ∃ k : KState (fun c w => ∃ x, pub c … = some x ∧ CSsat cs x w') (Template.verify …) Template.E ε, …
+```
+composed with the submission's **standard-model** theorem
+```lean
+theorem cs_implies_rel : ∀ c x w', pub c seg = some x → CSsat S.cs x w' → ∃ w, decodeW w' = some w ∧ Rel S.Vb c w
+```
+and `ImageComputes` for the extractor (the library can ship a generic decoder image per PCS, which
+also resolves #7's "extraction is decoding" for every T entry at once).
+
+**What the submission proves, and what it does not.** It proves `cs_implies_rel` (circuit
+correctness: the constraint system with that public-input map really decides `Rel`) and extractor
+computation. It proves **nothing about the random oracle**. The ROM theorem is the library's, once.
+This is the structural reason O-25 closes: there is no submission-authored object in the oracle's
+data path at all.
+
+### R2.3 Does T exclude post-hoc verification and every M-finding? And why a "driver" is not enough
+
+**Post-hoc verification.** The attack needs a submission-authored check in which `c₁` appears as a
+value next to later prover data. Under T the submission authors no check that runs after the
+transcript starts: `cs` is data fixed before submission, `pub` runs on the pre-challenge segment
+only, and every post-seed computation is `Template.verify`'s. The prover may still *send* the
+BLAKE2s wires of `prefix₁` as witness data — but the witness is committed (Merkle root absorbed)
+**before** `c₁` is squeezed, so "`c₁ = Σ outbitᵢ βⁱ` with the wires in the witness" is a fixed-point
+condition on the oracle (the prover must commit to the wires before learning `c₁`), probability
+`2^-192` per attempt under every `H`, BLAKE2s included. The post-hoc data path simply does not exist:
+the template's checks on *post-challenge* prover messages (sumcheck round polynomials, PCS openings,
+Ligero's `ū`) are the fixed protocol's own checks, and their soundness is the library KS theorem,
+generic in `cs`. **Excluded.**
+
+**O25-M1 (`idx` byte projection).** `V` has no `idx`; positions are consumed inside the template.
+Excluded by construction (there is no submission code to call it).
+
+**O25-M2 (`CommRing F` names every element).** The submission has no `[CommRing F]` in scope at
+challenge time; `cs` contains field *constants* as data, but the template applies them only inside
+the fixed sumcheck/MLE evaluator at submission-independent positions. A constant in `A` cannot be
+compared with a challenge by anything the submission wrote. Excluded.
+
+**O25-M3 (`ofBytes` on proof bytes).** The template parses proof bytes into field elements; the
+submission never sees `ofBytes`. `pub` may decode the pre-challenge segment into `List F` — but it
+has nothing oracle-derived to compare with, and its output enters the transcript seed (so it is
+*bound*, not *compared*). Excluded.
+
+**O25-M4 (grinding).** `params.grind` is wrapper-enforced: the template checks leading zeros of the
+designated answers against the contract constant and the honest `P` rejection-samples. No
+submission code sees the statistic. Excluded.
+
+**O25-M5 (degree-1 recognition).** No submission-authored polynomial is evaluated at a challenge.
+Excluded.
+
+**O25-M6 (liveness mirror).** Not addressed by T's typing — T addresses *acceptance* recognition.
+But T shrinks the liveness-mirror surface drastically: the only submission-authored code in `V` is
+`pub` (pre-challenge, oracle-free), so a "reject exactly under BLAKE2s" branch has nowhere to live
+in `V`. It can still live in the **prover** (an honest-looking `P` that emits unverifiable proofs
+only under BLAKE2s, for griefing a shared library) — that is a prover bug, caught by the liveness
+smoke, and R2.8 keeps the review's fix (post-freeze ranked instances, smoke on all of them).
+
+**Why "repaired E as a driver" is not enough (the review's §4 sketch, examined).** The review's
+repair list makes positions opaque tokens, removes `[CommRing F]`, and makes each identity check a
+contract-owned `checkStep : handles → Bool` that a submission-authored `V` *invokes*. Suppose we
+stopped there, with `V` as a driver choosing the order and the *subset* of contract checks it
+requires. Then: the sumcheck-consistency checks pass in deployment on a magic proof whose round
+polynomials were computed from BLAKE2s-predicted challenges, and fail in the ROM (`2^-192`); the
+*final opening* check is what binds the sumcheck to the committed witness. A driver `V` that accepts
+on "all round checks pass" and omits (or `||`s away) the final opening is certified (bad event: the
+challenge equals the predicted one) and accepts magic proofs in deployment. Each `checkStep`'s
+`Bool` is a one-bit observable of a challenge value; composition freedom lets the submission turn
+those bits into recognition. **So the composition — which checks, in what conjunction, with which
+final binding — must itself be contract-owned.** That is the whole difference between "repaired E"
+and T, and it is why the review's own conclusion ("Candidate E in name only … a contract-owned
+protocol template") is right: there is no stable intermediate point.
+
+**One more candidate killed on the way: "submission-authored `V`, but the harness runs it twice,
+under BLAKE2s and under a secret keyed oracle, and compares verdicts."** The recursion needs the
+deployed oracle in the circuit; the keyed run cannot verify nodes. And a backdoor can be made
+dormant on the smoke instances (M6 again). Dropped.
+
+### R2.4 Attacks inside T: can a malicious constraint system, witness, or parameters recognise the deployment?
+
+The adversary now controls `cs`, `params`, `pub`, `P`, `E`. Everything it controls is fixed before
+the transcript seed, except what the prover writes into the proof. I go through each channel.
+
+**(a) A malicious constraint system.** `cs` affects acceptance only through (i) the MLE evaluations
+`Ã(r_x,r_y), B̃, C̃` the template's *evaluator* computes from the data at challenge points, and
+(ii) the relation `CSsat cs x w'` in the library KS theorem and the submission's `cs_implies_rel`.
+For (i): the evaluator is library code, correct by a library theorem (`eval cs r = MLE (expand cs) r`
+for every well-formed `cs`), and it reads `cs` at submission-independent positions — `cs` cannot
+"see" `r`. A satisfiable-for-everything `cs` (e.g. `A = B = C = 0`) makes `cs_implies_rel` unprovable
+(it would have to produce a `Rel` witness from nothing). A `cs` that is *hard* in the ROM but *easy*
+under BLAKE2s would have to make the template accept a `w'` with `¬CSsat` — that is a break of the
+template's KS at the deployment oracle, i.e. the Fenzi26/KRS25 class (R2.8), **not** a free
+backdoor: the adversary gets no code in the oracle path, only a choice of relation. (Fenzi26's attack
+is precisely "a malicious relation generated by a program" — which is why T binds `csDigest` into
+the seed.)
+
+**(b) Structured / uniform descriptions and lookup tables.** The danger is a description format
+rich enough to be *code*: e.g. "matrix entry `(i,j)` is `f(i,j)` for a submitted `f : ℕ → ℕ → F`",
+or a RISC-V image the evaluator runs. T forbids this: descriptions are first-order lists; the
+*only* structure is the contract's fixed repetition/chaining pattern, whose closed-form evaluator is
+library code. A lookup table is an explicit list of tuples, consumed by the template's lookup
+argument (a menu item with its own library KS). With first-order data there is nothing to apply to
+a challenge. The reviewer should check the datatype for any field whose *type* is a function or a
+`Image`; if the menu ever admits a "program-generated" description (for size), that program must
+run at setup, off the oracle path, and its *output list* is what the template reads — never the
+program.
+
+**(c) The witness, and "commit before every challenge".** The prover may put anything in `w'`,
+including BLAKE2s wires of its own transcript prefix. All of `w'` is Merkle-committed and the root
+absorbed before the first squeeze, so any relation between `w'` and a later challenge is a fixed
+point of `H` — `2^-192`-rare for every `H`. Protocols on the menu with *later commitments*
+(multi-round PCS, Ligero's post-`r` message `ū`) send post-challenge data, but those messages are
+consumed only by the template's fixed checks, whose soundness is in the library theorem. The one
+thing to guard: **no menu template may let a post-challenge message influence `x` or `cs`** — `pub`
+reads the pre-challenge segment only (R2.1 refinement (a)).
+
+**(d) `pub`, the public-input map.** Submission code, run before the seed, on `(c, preSeg π)`. It
+cannot see challenges. Could it see the *prover's copy* of a challenge? Only if the prover writes it
+into the pre-challenge segment — i.e. before the challenge exists — a fixed point again. Its output
+`x` is bound into the seed. Residual: `pub` is Lean code the submission authors and the harness
+*executes*; it must be computable and cheap (it is priced in `T_V`), and it must not be an oracle
+program (its type forbids it). It cannot recognise what it cannot observe.
+
+**(e) `params`.** Data from a contract-checked menu. The soundness table `params.ok` is a contract
+function; a parameter choice outside the table is rejected. No channel.
+
+**(f) The prover and grinding.** `P` is unrestricted and knows BLAKE2s. It can grind: try many
+witness encodings until the challenges are favourable. The ROM prices this at `(Q + qV)·ε` with the
+grinding queries in the log — the honest accounting. A prover that *predicts* challenges (it can,
+under BLAKE2s) gains nothing it could not gain by querying, because every predicted value must still
+pass the template's binding checks against committed data. This is the standard ROM-prover model
+and T changes nothing here.
+
+**(g) The extractor.** `E`/`img` are the organiser's tools; a bad extractor fails `ImageComputes`
+or `final`. No channel to acceptance.
+
+**Conclusion.** Under T, every submission-controlled object is either data fixed before the seed
+or a function whose type cannot receive a challenge. The post-hoc attack, the six M-findings, and the
+round-1 disguises all need submission code in the challenge path, which T has none of. The only
+remaining way to be ROM-certified and BLAKE2s-insecure is for the **template itself** to be
+FS-uninstantiable for the chosen `cs` — the literature residual, now confined to a single,
+organiser-written, once-reviewed object with statement-and-`cs` binding (R2.8).
+
+### R2.5 T's trusted-base cost, loss of design freedom, and a template-proposal process
+
+**Trusted base (contract, human-read).** T adds to the 331 lines on the amended branch:
+`UniformR1CS`/`SparseR1CS` (+ `wf`), `Params` and `Params.ok` with its table, `TSubmission`, the
+composition `V`/`Vb`, and the seed format — about 60–90 lines, inside the 500 budget. The template
+verifier's **code** is *not* in the contract: it is library, and its `KS` is a kernel-checked
+theorem against the contract's `KS`, so for *soundness* it is untrusted. What **is** trusted about it
+is the property no ROM theorem can state: **that the template does not itself recognise the
+deployment oracle.** That is a one-time human review of organiser-written code (the Merkle,
+transcript, sumcheck, MLE-evaluator and PCS modules — in spartan-chain's terms the verifier-side
+parts of `SpartanChainMerkle`, `SpartanChainTranscript`, `SpartanChainSumcheck`,
+`SpartanChainLigero`, `SpartanChainSpartanProtocol`, `SpartanChainMLE`, `SpartanChainRS`; REPORT §3.1
+puts Merkle/transcript at 993 and RS/proximity at 696 lines, the sumcheck/Spartan/MLE verifier code is
+of the same order). Call it a few thousand lines of **O-25-reviewed organiser code**, reviewed once
+per template, versus the status quo of reviewing every entry's `V` — and the review target is now a
+known, stable, well-structured codebase, not an adversary's. This is a real trust addition, and the
+design text (§8 of DESIGN-v3) must list "the template's non-recognition of the deployment oracle,
+by review" as a trusted item, exactly as it lists the harness.
+
+**Library effort (not trusted, but must be built).** The library KS theorem must be **generic in
+`cs`**. spartan-chain's KS is proved for its one chain circuit (`chainEvals_ok`, `chainMats_eq`); the
+template needs (i) a correctness theorem for the uniform-R1CS evaluator for every well-formed `cs`,
+(ii) the sumcheck/PCS soundness already proved, re-stated over an arbitrary `cs`, (iii) a generic
+decoder-extractor image per PCS. (i) and (iii) are new work; (ii) is a generalisation of an existing
+proof. This is the single largest cost of T and it is organiser-side and one-off. Its dependency: it
+must land before any T entry can be certified; spartan-chain's existing certificate can serve as the
+first instance (R2.7).
+
+**Loss of design freedom (honest).** Under T a submitter cannot bring a new IOP, a new PCS, a new
+transcript layout, or a new verifier optimisation. The competition becomes: the **constraint system**
+(a cleverer/smaller arithmetisation of the BLAKE2s chain and of the recursion step — where most of the
+honest engineering already is), the **parameters** (within the menu), and the **native prover**
+(unrestricted, measured by whole-tree wall time). This is a substantial narrowing relative to
+DESIGN-v3's "the submitted object is the argument itself; no organiser compiler" (DISCUSSION Q6),
+and it must be presented to the user as such: **T re-introduces an organiser-owned protocol layer,
+which is close to the v2 feature the user rejected in Q6.** The difference from v2 is that T's layer
+is (a) a *menu* of templates rather than one BCS configuration, (b) extensible by core pull request,
+and (c) justified by a concrete, kernel-checked impossibility (the review's M1–M5 plus the post-hoc
+attack) rather than by convenience. If the user's ranking of priorities is "honest recursive SNARKs
+certifiable; CGH avoided at all costs; gaming reported", T is the design that meets the second
+priority mechanically; E-class designs do not.
+
+**A template-proposal process (to preserve competition on proof systems).** New templates enter as
+**core pull requests**: a template is `(datatype, evaluator + correctness theorem, verifier,
+generic KS theorem, extractor image + ImageComputes, non-recognition review, params table entry)`.
+The stage protocol of the core's CLAUDE.md applies (implement, adversarial review, golf, fix,
+commit). A proposer may be a competitor; once merged, every entrant may use the template. This moves
+proof-system innovation to a slower, reviewed cadence, and keeps the fast cadence (per-entry, per
+season) on constraint systems and provers. The incentive to propose a template is first-mover
+advantage on the prover side plus credit. The cost is review bandwidth on the organiser side. It is
+the only way T does not freeze the field at "Spartan + Ligero/WHIR".
+
+**Tiered option (R2.9 compares).** Rank only T entries on board T; keep an **unranked research
+track** for free-form `V` (round-1 E with rule + review + public challenge), listed with its
+measurements but not ranked. Research-track entries that prove out become template proposals. This
+keeps O-25 closed where it has a payoff (ranked records) and keeps the innovation pipeline open where
+a backdoor buys nothing (no ranking). I recommend this tiering.
+
+### R2.6 Recursion in T
+
+A node statement is `c = nodeStmt c₁ c₂`; its witness is two child proofs `Vb` accepts under concrete
+BLAKE2s. Under T the submission's **node constraint system** `cs_node` must encode:
+"`Template.verify params cs_leaf (pub …) cᵢ πᵢ` run under BLAKE2s accepts, for `i = 1, 2`." That is:
+the BLAKE2s compression (for the transcript seed, absorbs, squeezes and Merkle nodes), the fixed
+sumcheck arithmetic, the MLE evaluator of `cs_leaf` at the child's challenge point, and the PCS
+checks — all as R1CS gadgets over the child's transcript, which lives in the node's witness. This is
+exactly what honest recursion does today (REPORT §2.4; BLUEPRINT §2.2–§2.4: a BLAKE2s gadget of about
+`2^14` constraints per compression, a uniform repeated-block circuit, a closed-form MLE evaluator).
+Three consequences:
+
+1. **The post-hoc attack is not reborn.** The node's R1CS mentions the *child's* challenges (as
+   witness values), never the node's own. The node's own challenges are consumed by the template
+   verifying `cs_node`, which is data fixed before the node's seed. (INV) holds level by level.
+2. **The organiser can ship the recursion gadget.** Because the template verifier is organiser
+   code, the organiser can also ship a **verified R1CS gadget of the template verifier** (parametric
+   in the leaf `cs` through its closed-form evaluator), with its circuit-correctness theorem
+   "gadget satisfied ⇒ `Template.verify … = true`". Then a submitter's `cs_node` is "the organiser's
+   verifier gadget, twice, plus `nodeStmt`", and `cs_implies_rel` for the node is a *library* theorem
+   instantiated at the submitter's `cs_leaf`. This removes the single largest proof burden of honest
+   recursion (the `~2,600`-line BLAKE2s circuit and the verifier arithmetisation, REPORT §3.1) from
+   every entrant. It is the strongest practical argument for T beyond O-25.
+3. **The extraction rule (#7) is simplified, not solved.** The node extractor must still decode the
+   committed codeword to recover child proofs; but with a template per PCS the organiser's generic
+   decoder image serves every entry, and the budget decision (`B`) is taken once.
+
+**What recursion in T still cannot do.** Accumulation / hash-based PCD (ARC/WARP) remains
+inexpressible (ADV-M8), since the node clause demands full child verification; that is unchanged
+from v3. The Barbara–Chiesa–Guan impossibility (§13.2) is respected: the recursion is non-black-box
+(BLAKE2s in the circuit) and is the sanctioned heuristic of §5.4, not a theorem — T makes the
+heuristic's *implementation* organiser-owned, which is the right place for it.
+
+**Statement binding across levels.** The node's transcript seed includes `c`, `csDigest cs_node`,
+`paramsDigest` and `x`; the child's seed likewise with `cs_leaf`. A node that lies about which
+`cs_leaf` it verified would have to satisfy the organiser gadget's BLAKE2s-seed constraints with a
+different `csDigest` — a collision — so the binding is inherited by the gadget.
+
+### R2.7 How spartan-chain would migrate to T
+
+spartan-chain is already Spartan over a uniform chain R1CS + ring switching + Ligero + BLAKE2s
+Merkle + a statement-seeded transcript. Mapped onto T:
+
+| spartan-chain today | under T |
+|---|---|
+| `LeafVerifier.prog`, `leafProg`, `V`, `check` (`SpartanChainVerifierTop`) | **replaced** by `Template.verify params cs pub`; the leaf header test (`leafHeaderOK`: `n ≤ chainCap`, exact size, `c = leafStmt h n`) becomes `pub`'s decode of the 80-byte pre-challenge header into `x = (s, n, h)` and a library check `c = leafStmt h n` (or stays in `pub`, which is oracle-free) |
+| chain block R1CS, `chainMats`, `chainMats_eq` (closed-form MLE) | **becomes the first `UniformR1CS` instance** (`s`, `m`, `k = ⌈log₂ n⌉`, the block's sparse `A B C`, `chain`, `pubSlots`); the closed-form evaluator becomes the library's generic uniform evaluator, `chainMats_eq` its first correctness instance |
+| `SpartanChainMerkle`, `Transcript`, `Sumcheck`, `Ligero`, `SpartanProtocol`, `MLE`, `RS` (verifier side) | **move to the organiser library as the template** (the Spartan + Ligero menu item); unchanged in substance; O-25-reviewed once |
+| `SpartanChainSoundnessKS*` (potential, forest, `bad_step_le`, Ligero proximity, sumcheck counting) | **generalised over `cs`** to become `Template.ks`; the chain-specific lemmas (`chainEvals_ok`) become the generic evaluator-correctness obligation |
+| `SpartanChainChainSound` (R1CS satisfied ⇒ `chainEnd s n = h`) | **stays with the entry**: this *is* `cs_implies_rel` for the leaf |
+| BLAKE2s R1CS gadget (`SpartanChainBlake2s*`) | stays (it is the leaf `cs`'s content), and is reusable as the organiser's recursion gadget (R2.6) |
+| Rust prover | unchanged in role; it must emit the template's proof layout (it already does, since the template *is* spartan-chain's protocol) |
+| node branch (`checkNode`, canonical encoding, recursive `check`) | for R1 (no node SNARK) the witness-sending node branch becomes a **library node template** ("concatenation node": children verified by the template directly); for a recursive entry, `cs_node` per R2.6 |
+
+**What is genuinely new work.** (i) Generalising the KS proof over `cs` — the proof already treats
+the matrices through `chainEvals_ok`/`chainMats_eq` as hypotheses, so the shape is right; the
+evaluator-correctness theorem for the generic uniform format is the new theorem. (ii) The library
+packaging and its once-only non-recognition review. (iii) `pub` and `cs_implies_rel` are extracted
+from existing modules rather than written. The migration is a *re-partition* of the existing entry
+between library and entry, not a rewrite: the verifier code moves, the chain-soundness theorem
+stays, the KS proof generalises. That is a much better cost picture than round 1's repaired-E
+migration, which the review (§3) showed pushes Spartan's protocol logic into trusted code *and*
+redesigns the verifier core. Under T the protocol logic moves into the *library*, where it already
+is in all but name, and nothing is redesigned.
+
+**Certification status.** spartan-chain's current certificate (HARNESS: ACCEPT on the amended
+contract) is against `Submission`, not `TSubmission`. It does not carry over automatically; it
+becomes the first instance of `Template.ks`, and its existing proofs are the material. The
+orchestrator's choice of R1's status (REPORT §6 Q5) is unaffected.
+
+**Dependencies.** T needs the amended KS (`v3/ks-potential`) merged first — the template's KS is the
+potential-form proof; and the extraction rule for nodes (#7) decided, since the template's generic
+extractor image fixes it for everyone.
+
+### R2.8 Residual under T
+
+**(1) The template's own FS heuristic — irreducible.** The library KS theorem is in the ROM; the
+deployment is BLAKE2s. If Spartan+Ligero (or any menu template) is FS-uninstantiable for some
+`cs` the adversary may choose, the adversary wins board T with a genuine FS attack. This is
+Goldwasser–Kalai / BBHMR19 (the Kilian/Micali template) / KRS25 / Fenzi26 (Spartan/Aurora with
+program-generated relations) — §13.1. No ROM mechanism removes it; T confines it to (a) one
+organiser-written object, (b) attacks that are *research results* rather than one-liners, and (c) a
+channel (`cs` choice) where the adversary's degrees of freedom are first-order data. This is the
+same residual every deployed FS SNARK carries, and it is the honest floor.
+
+**(2) Statement-and-relation binding (Fenzi26) — a hard rule in T.** Fenzi26's fix is to derive
+challenges from the *generated statement*. T's seed `H(0x10 ‖ c ‖ csDigest ‖ paramsDigest ‖ x)` binds
+the statement digest, the public input *and the constraint system*. The adversary's one remaining
+degree of freedom, a malicious `cs`, is thereby hashed into every challenge. This defeats the
+*known* generated-relation attacks; it is not a proof against unknown ones. The rule costs one
+BLAKE2s of the `cs` description at badge build (cached) and must be stated in the template's spec.
+
+**(3) BHK26 (the review's O25-m2).** Brzuska–Hubáček–Kalsta PKC'26 gives *simpler* counterexamples
+to Fiat–Shamir and its **extended** variants. Round 1 (§13.2) promoted Arnon–Yogev's XFS as the
+most promising lead for a provably stronger challenge channel; BHK26 attacks the extended-FS
+family, so XFS is **not** a clean escape and §13.2 is tempered accordingly: no transform on the menu
+should be assumed to have a white-box soundness proof; the template is justified by the ROM theorem
+plus the binding rule, nothing more. (Not fetched online; flagged from the list's description.)
+
+**(4) The liveness mirror (O25-M6) — process, not typing.** T leaves no place in `V` for a
+"reject under BLAKE2s" branch, but a prover can grief by emitting proofs the template rejects only
+on un-tested instances. Fix as the review states: the ranked instance set is **sampled after entries
+are frozen, from a public beacon, by the harness** (trusted process, to be written into §6.3); the
+liveness smoke runs on **every scored instance** on the native prover's emitted log (ADV-m1
+mandatory). Residual: a prover failing on an instance sub-structure no scored instance exercises —
+the "it worked on the test vectors" assurance every deployed system has.
+
+**(5) The template's non-recognition — a trusted review item.** The ROM cannot prove that the
+organiser's own `Template.verify` does not recognise BLAKE2s. It is organiser code, reviewed once
+under the same adversarial-review protocol as the contract, and listed in §8 as trusted. This is a
+strictly smaller and more stable trust than reviewing every entrant's `V`.
+
+**(6) Grinding and δ-completeness.** Wrapper-enforced leading-zero checks on designated answers,
+honest rejection sampling in `P`, priced by the ROM at `(Q+qV)·ε`. No submission code sees the
+statistic (O25-M4 closed). The δ-completeness statement over a random `H` is the library's; its
+deployment-point coverage is (4).
+
+**(7) The things T does not change.** Composition across tree levels (§5.4), ADV-M8 (accumulation),
+the extraction budget (#7), the succinctness cap (#6), and BLAKE2s collision/cross-tag collisions
+(the ROM heuristic itself).
+
+### R2.9 Comparison: T, the repaired-E variants, and the tiered option
+
+| | O-25 closure for the known mechanism | Post-hoc attack | Trusted base | Honest effort (spartan-chain) | Design freedom | Review load |
+|---|---|---|---|---|---|---|
+| **Status quo** (rule + review) | none (one line, review-invisible, ADV-M5.1) | open | 0 | 0 | full | every entry's `V`, unwinnable |
+| **E as written (round 1)** | `D`-half only; `F`/`ℕ`/bytes reopen it (M1–M3) | open | +30–45 | migration of Merkle/transcript/KS | full | every entry, still unwinnable |
+| **Repaired E, driver style** (review §4: opaque tokens, no `CommRing`, contract `checkStep`s invoked by a submission `V`) | primitives closed; **composition open** (R2.3: accept on round checks, drop the final binding) | **open** (a driver can require a post-hoc identity if the menu of `checkStep`s includes a generic linear-form check; if it does not, FS over prover data is crippled) | +verifier core in trusted code | redesign of the verifier core (review §3) | partial | every entry's driver |
+| **T** (contract-owned composition, data-only submission) | **closed by construction** (no submission code in the challenge path; no meta-theorem needed) | **closed** (R2.3) | +60–90 contract lines; +template code trusted *for non-recognition only*, reviewed once | re-partition, not rewrite (R2.7); one-off generic-KS library work | **narrow**: `cs`, params, prover; templates by core PR | one template per season; entries need **no** O-25 review |
+| **Tiered: T ranked + E/free-form unranked research track** | as T where it matters | as T on the ranked board | as T | as T; research entries free | full on the research track | research track reviewed lightly (no ranking at stake) |
+
+**Why not stop at "repaired E".** The review's repair converges on T because every intermediate
+point leaves the submission a lever on challenge-dependent values: a driver leaves the *composition*;
+a "PIOP DSL" leaves *checks*; opaque handles with a generic identity check leave the *post-hoc
+linear form*. Each is one attack away from the status quo. T is the first point at which the
+submission has **no** lever, and it is reached by the simple criterion (INV).
+
+**Why tiered rather than T-only.** The user's Q6 motivation was expressiveness ("v2 forces every agent
+through one configuration of BCS"). T concedes that *for ranked records*, with the mitigation of a
+template menu grown by core PRs. An unranked research track preserves the place where a new IOP/PCS
+is first built and certified as a free-form `V` (with round-1's rule + review + public challenge,
+which are adequate where no ranking is at stake), and feeds the template process. It costs the
+organiser one more listing column and nothing in trust. I recommend the tiered form.
+
+**What this means for the earlier open items.** ADV-M6 (preprocessing/indexer): under T the
+template can own an indexer for `cs` (computed once at badge build under BLAKE2s), resolving it for
+every entry. ADV-M7/#7 (extraction is decoding): one generic decoder image per PCS. ADV-M1/#6
+(succinctness): the template's verifier is the organiser's, so `T_V` calibration is against known
+code. #8 (`proofCap`, hash menu): unchanged, now a menu-table question. O-25's §6.7 row becomes
+"closed by the contract for ranked entries: a submission authors no code on the oracle path".
+
+### R2.10 Recommendation (supersedes §0), with the epistemic status of every claim
+
+**Adopt Candidate T for ranked entries, tiered with an unranked free-form research track**, as
+specified in R2.2, with the binding rule of R2.8(2) and the process fixes of R2.8(4). In detail:
+
+1. Contract: `UniformR1CS`/`SparseR1CS` (first-order data), `Params` + `Params.ok` table,
+   `TSubmission`, the composition `V := Template.verify params cs (pub c preSeg)`, the seed format
+   `0x10 ‖ c ‖ csDigest ‖ paramsDigest ‖ x`, grinding as a wrapper precondition. ≈60–90 trusted lines.
+2. Library (core stage, before any T entry): the Spartan + Ligero template from spartan-chain's
+   verifier modules; the generic uniform-R1CS evaluator with its correctness theorem; `Template.ks`
+   generic in `cs`; the generic decoder-extractor image; the verified template-verifier R1CS gadget
+   for recursion. One-time adversarial review of the template for non-recognition.
+3. Rulebook: templates enter by core PR under the stage protocol; ranked entries submit data
+   only; research-track entries may submit a free-form `V` under round-1's rule R-O25 + `NOTES.md`
+   disclosure + review + public challenge period, and are listed unranked.
+4. Harness: ranked instances sampled post-freeze from a public beacon; liveness smoke on every
+   scored instance on the native prover's emitted log.
+5. Design text: §5.4's O-25 bullet becomes "closed for ranked entries by construction (INV); the
+   residual is the template's own FS/BLAKE2s heuristic and its non-recognition by review"; §6.7 row
+   updated; §8 lists the template's non-recognition as trusted; §12 O-25 resolved for ranked entries.
+
+**Epistemic status, claim by claim.**
+
+| Claim | Status |
+|---|---|
+| `KS (Rel S.Vb) S.V S.E ε qV` for every T entry | **proved** (kernel): `Template.ks` ∘ `cs_implies_rel` ∘ `ImageComputes` |
+| `Vb` is exactly the template applied to the submission's data; the submission's data has first-order types and `pub` has an oracle-free type | **proved/mechanical**: it is the contract's definition and the gate's type check; no parametricity meta-theorem is needed for the closure |
+| no submission-authored code is applied to a challenge-dependent value (INV) | **a property of the contract's definitions**, checkable by reading `TSubmission.V` (≈5 lines) — not a theorem *about* submissions, but a theorem-free structural fact; the reviewer should confirm `pub`'s argument is the pre-challenge segment only |
+| the `D`-half parametricity (round 1) | no longer load-bearing for ranked entries; **meta-theorem, probe-confirmed**, retained for the research track only |
+| the generic evaluator is correct for every well-formed `cs` | **proved** (library theorem, to be built) |
+| the template does not recognise the deployment oracle | **assumed, by one-time review** of organiser code (cannot be a ROM theorem) |
+| BLAKE2s-instantiated Spartan+Ligero FS is sound for every `cs` on the menu | **assumed** (the ROM heuristic; known to be false for *some* Kilian/Micali-template arguments and *some* generated relations, §13.1); mitigated by **proved-in-the-literature** statement/relation binding (Fenzi26's theorem covers their attack class, not all) |
+| the liveness mirror is covered | **process** (post-freeze sampling + smoke on all scored instances), residual as in every deployed system |
+| the ranked-instance sampling is honest | **trusted process** (beacon + harness), to be written into §6.3 |
+| research-track entries are backdoor-free | **not claimed**; reviewed, unranked, challengeable |
+
+**Can a workaround exist, and of what kind?** For a ranked T entry: a backdoor of the
+`Controls/Backdoor.lean` / ADV-M5 / M1–M5 / post-hoc kind **cannot be written** — there is no
+submission code on the oracle path to write it in; this is a structural fact of the composition,
+not a conjecture. What *can* exist is (i) a genuine FS-uninstantiability attack on the template for
+a malicious `cs` that survives `csDigest`-binding — a research result of the KRS25/Fenzi26 class,
+which I rate *possible in principle* (the literature makes that essentially certain for *some*
+template, not necessarily this one) and *unlikely to be found and deployed for a board win* under
+the public-challenge incentive; (ii) a bug in the organiser's template (a `pub`-visible channel, a
+menu item consuming post-challenge data into `x`, an evaluator that runs submission data as code) —
+which is why R2.11 lists these as the attacks to try; (iii) a prover-side griefing on untested
+instances — process residual. My confidence that no cheap, review-invisible workaround exists
+against T as specified: **~90%**, the 10% being specification slips of kind (ii) a careful reviewer
+can hunt in a few pages of contract text. My confidence that *no* workaround of kind (i) exists:
+**low, and I do not claim it** — it is the FS heuristic.
+
+**What I would not do.** Ship round-1's E for ranked entries (broken, one line); ship "repaired E"
+as a driver (composition attack, R2.3); rely on review alone for ranked entries (ADV-M5.1 shows
+review cannot separate the backdoor from honest code); claim that T proves ROM-secure ⇒
+BLAKE2s-secure (false, §10.2 stands).
+
+### R2.11 The most dangerous attacks on T (for the reviewer to try first)
+
+1. **A hidden submission-code path into the challenge domain (specification slip).** Anything in
+   `TSubmission` whose type is a function or an image, or any template that lets `pub`/`cs` read a
+   post-challenge segment of the proof, or a "program-generated description" evaluated by the
+   template at verification time, reinstates the post-hoc attack. Check: every `TSubmission` field
+   except `pub`/`P`/`E`/`img` is first-order data; `pub : Digest → ByteArray → Option (List F)` is
+   given *only* `preSeg π`; the evaluator reads `cs` only at challenge-independent indices; no menu
+   template feeds post-challenge data into `x` or `cs`.
+2. **The template itself recognises BLAKE2s (organiser code).** The entire O-25 closure rests on the
+   once-reviewed template not containing, e.g., a "consistency fast path" (ADV-M5.3). The review must
+   be adversarial and must cover every module on the oracle path. This is the one trusted human
+   judgement T retains, and it is where a malicious or careless organiser contribution would hide.
+3. **A Fenzi/KRS-class attack with a malicious `cs` that survives `csDigest` binding.** The
+   adversary's only semantic lever. Known attacks need the challenges not to depend on the generated
+   relation; binding closes those. An attack that works *with* binding would be new — the reviewer
+   should look for a `cs` whose satisfiability interacts with the template's sumcheck in a
+   challenge-dependent way that the generic KS theorem's hypotheses (well-formedness, parameter table)
+   do not exclude, and check that `Template.ks` is genuinely universally quantified over `cs` with no
+   hidden "honest-shaped `cs`" assumption smuggled in from spartan-chain's proof.
+4. **Evaluator-correctness gap.** If the generic uniform-R1CS evaluator is correct only for
+   "chain-shaped" structures and the datatype admits others, the template verifies the wrong matrix
+   for an adversarial `cs` — not O-25, but a soundness hole with the same payoff. The correctness
+   theorem must be for every `wf` `cs`.
+5. **Prover-side liveness griefing on un-exercised instances** (O25-M6 residual) and **gaming the
+   post-freeze sampling** (if the beacon or the harness's sampling is predictable or influenceable).
+6. **The research track as a back door to the ranked board** (process): an unranked entry must not be
+   promotable to ranked without becoming a T entry; `records.json` must encode the tier.
+
+---
+*End of round 2. No files edited other than this memo; no probes run in round 2 (the review's
+`P1_interface.lean`/`P2_hatches.lean` are the kernel evidence cited); no commits.*
