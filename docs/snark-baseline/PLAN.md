@@ -129,3 +129,9 @@ review, kernel-checked probes under `logs/adv-probes/`), `notes/E1`–`E4` (expl
   `rf-core-s2a`:** `09668b5` puts CompPoly's `BF64`/`Ext3` closure on the allowlist and in the
   manifest; `4a1a1ed` makes gate rule 4 check the v3 fields `V`, `P`, `E`, `img`, and cites #9.
   With these the gate passes on the entry, axioms clean on 32,932 constants.
+- **[D-12] Status (2026-10-20, 02:20).** The honest entry R1 (`submissions/spartan-chain/`) is
+  certified against the amended contract and `HARNESS: ACCEPT` (commit `0358ec5`).
+  - Close-out, time-boxed: golf (40 min), the final measurement run, a last harness run, the
+    RESULT, the REPORT update.
+  - Not done in this session: R2 (recursion), which is blocked on the node-extraction rule (#7)
+    and by `proofCap` (#8); pushing the core branches, which was not permitted.

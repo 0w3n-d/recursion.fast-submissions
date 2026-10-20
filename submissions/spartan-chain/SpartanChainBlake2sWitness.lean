@@ -81,7 +81,7 @@ private theorem foldl_set {m : ℕ} (z : Pos m → Bool) (L : List (Pos m × Boo
       · subst hpj
         simp [hj, ha, hp]
       · have : (p.1 : ℕ) ≠ j := fun h ↦ hpj (Fin.ext h)
-        simp [hj, Array.getElem?_setIfInBounds, this, hpj, Ne.symm hpj]
+        simp [hj, this, Ne.symm hpj]
 
 /-- The gates of the compression sit in `[1280, 16000)`. -/
 theorem compress_keys {kg : Pos Blake2sCircuit.m × Gate Blake2sCircuit.m}

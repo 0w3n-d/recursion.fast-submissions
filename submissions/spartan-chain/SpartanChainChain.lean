@@ -315,12 +315,10 @@ theorem matVec_chainA (n : ℕ) (z : Ix κ → E) (x : Ix κ) :
     by_cases h1 : x.val - wLen κ < 256
     · rw [ite_eq_right (by omega), ite_eq_left (by omega), ite_eq_right (by omega), ite_eq_left h1]
       simp only [zero_add, add_zero]
-      all_goals (congr 1 <;> omega)
     · rw [ite_eq_right h1]
       by_cases h2 : x.val - wLen κ < 2 ^ (8 + κ)
       · rw [ite_eq_left (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left h2]
         simp only [zero_add, add_zero]
-        all_goals (congr 1 <;> omega)
       · rw [ite_eq_right h2]
         by_cases h3 : x.val - wLen κ < 2 ^ (8 + κ) + 256
         · rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left (by omega), ite_eq_left h3]

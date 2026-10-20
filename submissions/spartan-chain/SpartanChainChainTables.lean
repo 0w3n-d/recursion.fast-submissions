@@ -93,7 +93,7 @@ private theorem foldl_setRows {m : ℕ} (L : List (Pos m × Gate m)) (hL : (L.ma
         exact hL.1 hm
       simp only [hnone, beq_self_eq_true]
       simp [Array.getD_eq_getD_getElem?, Array.set!_eq_setIfInBounds,
-        Array.getElem?_setIfInBounds, ht, k.isLt]
+        ht, k.isLt]
     · have hb : (k == k') = false := by simpa using hk
       rw [hb]
       cases rest.lookup k with
@@ -101,7 +101,7 @@ private theorem foldl_setRows {m : ℕ} (L : List (Pos m × Gate m)) (hL : (L.ma
       | none =>
         have : (k'.val ≠ k.val) := fun h ↦ hk (Fin.ext h.symm)
         simp [Array.getD_eq_getD_getElem?, Array.set!_eq_setIfInBounds,
-          Array.getElem?_setIfInBounds, this]
+          this]
 
 theorem rowTable_get {m : ℕ} (c : ProductCircuit m) (hc : c.Bounded) (k : Pos m) :
     (rowTable c).getD k.val default = c.rowOf k := by
@@ -111,7 +111,7 @@ theorem rowTable_get {m : ℕ} (c : ProductCircuit m) (hc : c.Bounded) (k : Pos 
   cases c.gates.toList.lookup k with
   | some g => rfl
   | none =>
-    simp [Array.getD_eq_getD_getElem?, Array.getElem?_ofFn, k.isLt, rowOfList]
+    simp [Array.getD_eq_getD_getElem?, k.isLt]
 
 /-- The rows of the chain block (`rowOf`), as an array. -/
 def rowArray (base : ℕ) : Array (Gate Blake2sCircuit.m) := rowTable (chainBlockAt base)

@@ -428,8 +428,8 @@ theorem queries_spartan (κ : ℕ) (ev : Spartan.Evals) (m : Spartan.Msgs) (st :
     (Spartan.verify κ ev m st).queries H = (spBlock H κ m st).map Prod.fst := by
   simp only [Spartan.verify, squeezeE, absorb, squeeze, OProg.queries_bind, OProg.queries_ask,
     OProg.run_ask, OProg.run_bind, queries_squeezeN', run_squeezeN', queries_absorbRounds,
-    run_absorbRounds, OProg.queries_pure, OProg.queries_map, OProg.run_pure, OProg.run_map,
-    List.append_nil, spBlock, List.map_append, List.map_cons, List.map_nil, List.append_assoc,
+    run_absorbRounds, OProg.queries_pure, OProg.run_pure,
+    List.append_nil, spBlock, List.map_append, List.map_cons, List.append_assoc,
     List.cons_append, List.nil_append, spS1, spS2, spA4, spRho, spS5, spA6, spS6]
   rfl
 
@@ -457,7 +457,7 @@ theorem queries_verify2 (κ : ℕ) (st : Digest) (root : Label) (r a ubar : Arra
     (Ligero.verify2 κ st root r a ubar vB opens).queries H = (v2Block H κ st vB).map Prod.fst ++ rest := by
   simp only [Ligero.verify2, absorb, squeezeIdx, OProg.queries_bind, OProg.queries_ask,
     OProg.run_ask, OProg.run_bind, queries_squeezeN', OProg.queries_pure, List.append_nil,
-    v2Block, List.map_append, List.map_cons, List.map_nil, List.append_assoc, List.singleton_append,
+    v2Block, List.map_cons,
     List.cons_append, List.nil_append]
   exact ⟨_, rfl⟩
 
@@ -544,7 +544,7 @@ theorem snark_accept (ev : EvalsFor) (s : Digest) (n : ℕ) (h : Digest) (π : B
             (π.extract (off₂ (Leaf.kap n)) (off₃ (Leaf.kap n)))
             (π.extract (off₃ (Leaf.kap n)) π.size)).queries H := by
         simp only [snarkProg, seed, OProg.queries_bind, OProg.queries_ask, OProg.run_ask,
-          OProg.run_bind, queries_verify1, run_verify1, queries_spartan, run_spartan]
+          queries_verify1, run_verify1, queries_spartan, run_spartan]
         rw [hc]
         simp only [Option.map_some, tail, hf, ↓reduceIte, List.append_assoc]
         rfl

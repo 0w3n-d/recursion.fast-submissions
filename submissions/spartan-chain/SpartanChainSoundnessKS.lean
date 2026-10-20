@@ -55,7 +55,7 @@ theorem ptOf_split (a b : ℕ) (r : List R) :
   funext l
   refine Fin.addCases (fun i => ?_) (fun j => ?_) l
   · rw [Fin.append_left]
-    simp [ptOf, List.getD_eq_getElem?_getD, List.getElem?_take, i.isLt]
+    simp [ptOf, List.getD_eq_getElem?_getD, i.isLt]
   · rw [Fin.append_right]
     simp [ptOf, List.getD_eq_getElem?_getD, List.getElem?_drop]
 
@@ -127,7 +127,7 @@ theorem mle_top (m : ℕ) (w : Fin (2 ^ m) → R) (p : ℕ → R) (r : List R) :
   have h0 : (join u (0 : Fin (2 ^ 1))).val = u.val := by simp [join]
   have h1 : (join u (1 : Fin (2 ^ 1))).val = 2 ^ m + u.val := by simp [join]
   have hu := u.isLt
-  simp only [h0, h1, dif_pos hu, dif_neg (show ¬ 2 ^ m + u.val < 2 ^ m by omega),
+  simp only [h0, h1, hu, (show ¬ 2 ^ m + u.val < 2 ^ m by omega), ↓reduceDIte,
     Nat.add_sub_cancel_left]
   have e0 : eq (ptOf 1 (r.drop m)) (cube (0 : Fin (2 ^ 1))) = 1 - r.getD m 0 := by
     simp [eq, cube, ptOf, List.getD_eq_getElem?_getD, List.getElem?_drop]
@@ -236,7 +236,7 @@ theorem zV_eq_of_delta {ev : ℕ → ℕ → Digest → Digest → Spartan.Evals
   simp only [zV]
   rw [hlu, hev.pub _ _ _ _ _ hru,
     mle_split_cast 6 (8 + κ) (14 + κ) (by omega) (fun u => EF.ofF (wDec κ U u)),
-    dot_eqTable (R := EF) (ℓ := 6) _ (by simp only [ru, List.length_take, hry]; omega)]
+    dot_eqTable (R := EF) (ℓ := 6) _ (by simp only [List.length_take, hry]; omega)]
   have hsl : ∀ i : Fin (2 ^ 6), (slicesOf κ es).getD i 0 =
       mle (fun u₂ : Fin (2 ^ (8 + κ)) =>
         EF.ofF (wDec κ U (Fin.cast (pack_eq κ) (join i u₂)))) (ptOf (8 + κ) (ru.drop 6)) := by
@@ -305,7 +305,7 @@ theorem absorb_gR0 {es : Log} {κ : ℕ} (U : Fin (rows κ) → Fin (cols κ) �
     (fun (i : Fin (2 ^ 6)) u => wDec κ U (Fin.cast (pack_eq κ) (join i u)))
     (fun i u => wDec_bool κ U _) (ptOf (8 + κ) (rhiOf κ es))
     (fun i => (slicesOf κ es).getD i 0) 5 (fsOf κ es) (length_fsOf κ es) (by
-      convert hd using 2 <;> first | rfl | (funext i; rw [CharTwo.sub_eq_add]; rfl))
+      convert hd using 2 <;> rfl)
   simp only [clRs, List.take_zero, bindAll, Nat.sub_zero, wTbls]
   rw [prod_trueSum, target_eq, size_slicesOf]
   intro heq
@@ -542,7 +542,7 @@ theorem esc_tau0 {es : Log} (hm : Matches es) {κ : ℕ} (hk : kapOf es = κ)
     have htk : (tauOf κ (ext1 es a)).take (0 + 1) = (tauOf κ es).take 0 ++ [chE a] :=
       take_snoc_ch es a (15 + κ) 0 (pTau κ) (by omega) hlen.symm (by omega)
     rw [htk] at hnew
-    simp only [List.take_zero, List.nil_append, bindT_snoc, SpartanChain.bindT] at hnew
+    simp only [List.take_zero, List.nil_append, SpartanChain.bindT] at hnew
     obtain ⟨-, hor⟩ := hold
     by_contra hc
     apply hnew

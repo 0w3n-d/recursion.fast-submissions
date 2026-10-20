@@ -152,7 +152,7 @@ theorem shift_sum (κ : ℕ) : ∀ a b : ℕ → R,
     simp only [c1, c2, c3, c4, ↓reduceIte]
     by_cases h1 : u'.val = u.val
     · have h2 : ¬ (u'.val + 1 = u.val) := by omega
-      simp only [h1, h2, ↓reduceIte]; ring
+      simp only [h1, ↓reduceIte]; ring
     · by_cases h2 : u'.val + 1 = u.val
       · simp only [h1, h2, ↓reduceIte]; ring
       · simp only [h1, h2, ↓reduceIte]; ring

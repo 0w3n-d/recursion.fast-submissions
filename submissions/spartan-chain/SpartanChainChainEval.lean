@@ -87,7 +87,7 @@ theorem eqTable_take_getD (r : List EF) (p : ℕ) (hr : p ≤ r.length) {L : ℕ
   congr 1
   funext l
   have := l.isLt
-  simp [ptOf, ptN, List.getD_eq_getElem?_getD, List.getElem?_take, show (l : ℕ) < L by omega, l.isLt]
+  simp [ptOf, ptN, List.getD_eq_getElem?_getD, show (l : ℕ) < L by omega, l.isLt]
 
 /-- **`matrix_mle_eq`, as the verifier computes it**: the evaluator is the extension of the
 chain matrices, for points of `ℓ_y` coordinates. -/

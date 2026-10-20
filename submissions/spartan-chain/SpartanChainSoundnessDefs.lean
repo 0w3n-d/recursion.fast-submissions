@@ -74,12 +74,13 @@ abbrev nJ (κ : ℕ) : ℕ := nAns (lN κ) tQ
 
 /-- The steps of the leaf transcript through `absorb(v)` (before the `J` index squeezes). -/
 def pre8 (κ : ℕ) : List Step :=
-  [.seed, .absorb 0x01 31] ++ List.replicate (rows κ) .squeeze ++
-    [.absorb 0x02 (24 * msgLen κ)] ++ List.replicate (15 + κ) .squeeze ++
-    (List.replicate (15 + κ) [.absorb 0x03 96, .squeeze]).flatten ++ [.absorb 0x04 72, .squeeze] ++
-    (List.replicate (15 + κ) [.absorb 0x05 72, .squeeze]).flatten ++ [.absorb 0x06 1536] ++
-    List.replicate 6 .squeeze ++ (List.replicate (8 + κ) [.absorb 0x07 72, .squeeze]).flatten ++
-    [.absorb 0x08 (24 * msgLen κ)]
+  [.seed, .absorb 0x01 31] ++ List.replicate (rows κ) Step.squeeze ++
+    [Step.absorb 0x02 (24 * msgLen κ)] ++ List.replicate (15 + κ) Step.squeeze ++
+    (List.replicate (15 + κ) [Step.absorb 0x03 96, .squeeze]).flatten ++
+    [Step.absorb 0x04 72, .squeeze] ++
+    (List.replicate (15 + κ) [Step.absorb 0x05 72, .squeeze]).flatten ++ [Step.absorb 0x06 1536] ++
+    List.replicate 6 Step.squeeze ++ (List.replicate (8 + κ) [Step.absorb 0x07 72, .squeeze]).flatten ++
+    [Step.absorb 0x08 (24 * msgLen κ)]
 
 theorem shape_eq_pre8 (κ : ℕ) : shape κ = pre8 κ ++ List.replicate (nJ κ) .squeeze := rfl
 

@@ -249,7 +249,7 @@ theorem QT_eq : (fun t ↦ (eqTable ((rx.drop 14).take κ)).getD (t % 2 ^ κ) 0)
   congr 1
   funext l
   have := l.isLt
-  simp [ptOf, ptN, shiftPt, List.getD_eq_getElem?_getD, List.getElem?_take, List.getElem?_drop,
+  simp [ptOf, ptN, shiftPt, List.getD_eq_getElem?_getD, List.getElem?_drop,
     l.isLt, show 14 + (l : ℕ) < 14 + κ + 1 by omega]
 
 theorem transpose_eq (sel : Gate Blake2sCircuit.m → Form Blake2sCircuit.m)

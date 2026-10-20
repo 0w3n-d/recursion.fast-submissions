@@ -597,7 +597,7 @@ theorem matches_append_iff {es : Log} (hm : Matches es) (x : ByteArray × Digest
   have hlast : es[es.length - 1]? = some (es.getLast hne) := by
     rw [List.getLast_eq_getElem]; exact List.getElem?_eq_getElem _
   have hla : lastAns es = (es.getLast hne).2 := by
-    simp [lastAns, List.getLast?_eq_getLast hne]
+    simp [lastAns, List.getLast?_eq_some_getLast hne]
   rw [matches_iff', hk, hla]
   constructor
   · rintro ⟨s', n', h', h0', -, -, hl', H'⟩
@@ -674,7 +674,7 @@ theorem ext_take {es : Log} (hm : Matches es) {s0 : ℕ} (hs : s0 < es.length)
     rw [show s0 + 1 + (k + 1) = s0 + 1 + k + 1 by omega, List.take_add_one,
       List.getElem?_eq_getElem hn, Option.toList_some, List.drop_append_of_le_length
         (by simp; omega), List.map_append, List.map_cons, List.map_nil, ext_append, ← ih (by omega)]
-    simp only [List.map_cons, List.map_nil, ext1]
+    simp only [ext1]
     congr 1
     have hprev : es[s0 + k]? = some es[s0 + k] := List.getElem?_eq_getElem (by omega)
     have hcur : es[s0 + k + 1]? = some es[s0 + 1 + k] := by
@@ -943,142 +943,139 @@ theorem length_flatten_rep2 {α : Type} (a b : α) (n : ℕ) :
 
 theorem posClass_seed (κ : ℕ) : posClass κ (0) = .seed := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [↓reduceIte]
 
 theorem shape_seed (κ : ℕ) : (shape κ)[0]? = some (.seed) := by
   simp [shape, List.append_assoc]
 
 theorem posClass_root (κ : ℕ) : posClass κ (1) = .root := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ↓reduceIte]
 
 theorem shape_root (κ : ℕ) : (shape κ)[1]? = some (.absorb 0x01 31) := by
   simp [shape, List.append_assoc]
 
 theorem posClass_r0 (κ : ℕ) (j : ℕ) (h1 : 1 ≤ j) (h2 : j ≤ rows κ) : posClass κ (1 + j) = .r0 j := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; omega
 
 theorem shape_r0 (κ : ℕ) (j : ℕ) (h1 : 1 ≤ j) (h2 : j ≤ rows κ) : (shape κ)[1 + j]? = some (.squeeze) := by
   exact shape_R0 κ (1 + j) (by omega) (by omega)
 
 theorem posClass_ubar (κ : ℕ) : posClass κ (pU κ) = .ubar := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ↓reduceIte]
 
 theorem shape_ubar (κ : ℕ) : (shape κ)[pU κ]? = some (.absorb 0x02 (24 * msgLen κ)) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pU]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_tau (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : posClass κ (pTau κ l) = .tau l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pTau]); omega
 
 theorem shape_tau (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : (shape κ)[pTau κ l]? = some (.squeeze) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTau]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate,
+    List.getElem?_replicate]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_gOut (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : posClass κ (pG κ l) = .gOut l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pG]); omega
 
 theorem shape_gOut (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : (shape κ)[pG κ l]? = some (.absorb 0x03 96) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pG]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_rx (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : posClass κ (pG κ l + 1) = .rx l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pG]); omega
 
 theorem shape_rx (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : (shape κ)[pG κ l + 1]? = some (.squeeze) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pG]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_tri (κ : ℕ) : posClass κ (pTri κ) = .tri := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ↓reduceIte]
 
 theorem shape_tri (κ : ℕ) : (shape κ)[pTri κ]? = some (.absorb 0x04 72) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate,
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_rho (κ : ℕ) : posClass κ (pTri κ + 1) = .rho := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ↓reduceIte]
 
 theorem shape_rho (κ : ℕ) : (shape κ)[pTri κ + 1]? = some (.squeeze) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate,
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_gIn (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : posClass κ (pGi κ l) = .gIn l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pTri, pGi]); omega
 
 theorem shape_gIn (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : (shape κ)[pGi κ l]? = some (.absorb 0x05 72) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pGi]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
   try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_ry (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : posClass κ (pGi κ l + 1) = .ry l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pTri, pGi]); omega
 
 theorem shape_ry (κ : ℕ) (l : ℕ) (h : l < 15 + κ) : (shape κ)[pGi κ l + 1]? = some (.squeeze) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pGi]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
   try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_sl (κ : ℕ) : posClass κ (pS κ) = .sl := by
   unfold posClass
@@ -1086,77 +1083,77 @@ theorem posClass_sl (κ : ℕ) : posClass κ (pS κ) = .sl := by
 
 theorem shape_sl (κ : ℕ) : (shape κ)[pS κ]? = some (.absorb 0x06 1536) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pS]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate,
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_f (κ : ℕ) (q : ℕ) (h : q < 6) : posClass κ (pF κ q) = .f q := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pTri, pS, pF]); omega
 
 theorem shape_f (κ : ℕ) (q : ℕ) (h : q < 6) : (shape κ)[pF κ q]? = some (.squeeze) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pS, pF]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
+  try simp only [List.length_cons, List.length_nil, List.length_replicate,
     List.getElem?_replicate, length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_gRs (κ : ℕ) (l : ℕ) (h : l < 8 + κ) : posClass κ (pGr κ l) = .gRs l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pTri, pS, pGr]); omega
 
 theorem shape_gRs (κ : ℕ) (l : ℕ) (h : l < 8 + κ) : (shape κ)[pGr κ l]? = some (.absorb 0x07 72) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pS, pGr]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
   try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_rr (κ : ℕ) (l : ℕ) (h : l < 8 + κ) : posClass κ (pGr κ l + 1) = .rr l := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left]
+  congr 1; (try simp only [pTri, pS, pGr]); omega
 
 theorem shape_rr (κ : ℕ) (l : ℕ) (h : l < 8 + κ) : (shape κ)[pGr κ l + 1]? = some (.squeeze) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pS, pGr]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
   try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_vabs (κ : ℕ) : posClass κ (pV κ) = .vabs := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ↓reduceIte]
 
 theorem shape_vabs (κ : ℕ) : (shape κ)[pV κ]? = some (.absorb 0x08 (24 * msgLen κ)) := by
   simp only [shape, List.append_assoc]
-  try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]
+  try simp only [pTri, pS, pV]
   simp (disch := first | (simp [length_flatten_rep2]; done) | (simp [length_flatten_rep2]; omega)) only [List.getElem?_append_right,
     List.getElem?_append_left]
-  try simp only [List.length_cons, List.length_nil, List.length_replicate, getElem?_flatten_rep2,
-    List.getElem?_replicate, length_flatten_rep2]
+  try simp only [List.length_cons, List.length_nil, List.length_replicate,
+    length_flatten_rep2]
   try simp only [List.getElem?_cons, List.getElem?_nil]
-  first | rfl | (split_ifs <;> first | rfl | omega) | simp
+  first | rfl | (split_ifs <;> first | rfl | omega)
 
 theorem posClass_r7 (κ : ℕ) (j : ℕ) (h1 : 1 ≤ j) (h2 : j ≤ nJ κ) : posClass κ (pV κ + j) = .r7 j := by
   unfold posClass
-  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right, ite_eq_left, ↓reduceIte]
-  congr 1; (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega
+  simp (disch := (try simp only [pU, pTau, pG, pTri, pGi, pS, pF, pGr, pV]); omega) only [ite_eq_right]
+  congr 1; (try simp only [pTri, pS, pV]); omega
 
 theorem shape_r7 (κ : ℕ) (j : ℕ) (h1 : 1 ≤ j) (h2 : j ≤ nJ κ) : (shape κ)[pV κ + j]? = some (.squeeze) := by
   have := pre8_length κ; have := len_eq κ

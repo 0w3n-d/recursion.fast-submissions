@@ -623,11 +623,11 @@ theorem blake2s_complete {R : Type*} [CommRing R] [CharP R 2] [Nontrivial R] (in
   have e : ∀ b, (b + 32 ≤ 256 ∨ (640 ≤ b ∧ b + 32 ≤ 1280)) →
       readWord (blake2sCircuit.traceF inp) b = readWord inp b := fun b hb ↦
     hin b (hi b hb) (by show b + 32 ≤ 16384; omega)
-  congr 1
+  refine congrArg (fun v : Vector UInt32 8 ↦ v[k]) ?_
   rw [e counterLo (by simp only [counterLo]; omega), e counterHi (by simp only [counterHi]; omega),
     e finalFlag (by simp only [finalFlag]; omega),
     e lastNodeFlag (by simp only [lastNodeFlag]; omega)]
-  congr 1
+  refine congrArg₂ (fun a b ↦ compress a b _ _ _) ?_ ?_
   · exact Vector.ext fun j hj ↦ by simp only [Vector.getElem_ofFn]; exact e _ (by omega)
   · exact Vector.ext fun j hj ↦ by
       simp only [Vector.getElem_ofFn]; exact e _ (by simp only [msgBase]; omega)

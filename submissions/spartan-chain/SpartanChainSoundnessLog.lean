@@ -408,12 +408,13 @@ open PCS in
 /-- **The transcript of a leaf of shape `κ`**, §6.2 step by step (`m = rows κ`, `k = msgLen κ`,
 `ℓ_x = ℓ_y = 15 + κ`, `J = nAns (lN κ) tQ`). -/
 def shape (κ : ℕ) : List Step :=
-  [.seed, .absorb 0x01 31] ++ List.replicate (rows κ) .squeeze ++
-    [.absorb 0x02 (24 * msgLen κ)] ++ List.replicate (15 + κ) .squeeze ++
-    (List.replicate (15 + κ) [.absorb 0x03 96, .squeeze]).flatten ++ [.absorb 0x04 72, .squeeze] ++
-    (List.replicate (15 + κ) [.absorb 0x05 72, .squeeze]).flatten ++ [.absorb 0x06 1536] ++
-    List.replicate 6 .squeeze ++ (List.replicate (8 + κ) [.absorb 0x07 72, .squeeze]).flatten ++
-    [.absorb 0x08 (24 * msgLen κ)] ++ List.replicate (nAns (lN κ) tQ) .squeeze
+  [.seed, .absorb 0x01 31] ++ List.replicate (rows κ) Step.squeeze ++
+    [Step.absorb 0x02 (24 * msgLen κ)] ++ List.replicate (15 + κ) Step.squeeze ++
+    (List.replicate (15 + κ) [Step.absorb 0x03 96, .squeeze]).flatten ++
+    [Step.absorb 0x04 72, .squeeze] ++
+    (List.replicate (15 + κ) [Step.absorb 0x05 72, .squeeze]).flatten ++ [Step.absorb 0x06 1536] ++
+    List.replicate 6 Step.squeeze ++ (List.replicate (8 + κ) [Step.absorb 0x07 72, .squeeze]).flatten ++
+    [Step.absorb 0x08 (24 * msgLen κ)] ++ List.replicate (nAns (lN κ) tQ) Step.squeeze
 
 /-- The number of steps of the transcript of shape `κ`. -/
 def len (κ : ℕ) : ℕ := (shape κ).length

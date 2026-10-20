@@ -77,7 +77,7 @@ theorem mkLog_getElem (sts : List Step) :
       cases k with
       | zero => simp
       | succ k =>
-        simp only [Nat.add_one_ne_zero, ↓reduceIte, List.getElem_cons_succ]
+        simp only [Nat.add_one_ne_zero, ↓reduceIte]
         rw [show j + 1 + (k + 1) - 1 = j + (k + 1 + 1) - 1 by omega,
           show j + 1 + (k + 1) = j + (k + 1 + 1) by omega]
 

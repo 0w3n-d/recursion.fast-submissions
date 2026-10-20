@@ -141,7 +141,6 @@ theorem colT5A (n : ℕ) :
   refine sum_congr rfl fun j _ ↦ ?_
   by_cases h : v = 256 + j.val + 16384 * (n - 1)
   · rw [ite_eq_left h, ite_eq_left (by omega)]
-    all_goals (congr 2 <;> omega)
   · rw [ite_eq_right h, ite_eq_right (by omega)]
 
 theorem colT2C :
