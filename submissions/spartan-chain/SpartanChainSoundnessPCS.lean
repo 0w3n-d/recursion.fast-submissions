@@ -505,8 +505,8 @@ theorem F_add_val (x y : F) : (x + y).val = x.val ^^^ y.val := rfl
 theorem F_zero_val : (0 : F).val = 0 := rfl
 
 /-- The word `2^i` (`i < 64`) is `x^i` (bit `i` of the word is the coefficient of `x^i`). -/
-theorem x_pow_word : ∀ i : Fin 64, F.x ^ (i : ℕ) = ⟨(1 : UInt64) <<< (i.val.toUInt64)⟩ := by
-  decide +kernel
+theorem x_pow_word : ∀ i : Fin 64, F.x ^ (i : ℕ) = ⟨(1 : UInt64) <<< (i.val.toUInt64)⟩ :=
+  fun i => F.x_pow_word i
 
 /-- The term of bit `i` of `a`: the word `2^i` if the bit is set, else `0`. -/
 def bitTerm (a : F) (i : ℕ) : F := if a.val.toNat.testBit i then ⟨(1 : UInt64) <<< i.toUInt64⟩ else 0

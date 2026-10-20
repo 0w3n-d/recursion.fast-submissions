@@ -87,6 +87,17 @@ def inv (x : EF) : EF :=
 
 instance : Inv EF := ⟨inv⟩
 
+/-- Square-and-multiply: `powGo k b e acc = acc * b ^ e` whenever `e ≤ k`. The fuel `k` makes the
+recursion structural on a natural number, so the kernel evaluates powers by peeling literals
+(Mathlib's `npowBinRec` recurses through `Nat.binaryRec`, which the kernel unfolds slowly). -/
+def powGo : Nat → EF → Nat → EF → EF
+  | 0, _, _, acc => acc
+  | k + 1, b, e, acc =>
+    if e = 0 then acc else powGo k (sq b) (e / 2) (if e % 2 = 1 then acc * b else acc)
+
+/-- Powers by repeated squaring. -/
+instance : Pow EF ℕ := ⟨fun a n => powGo n a n 1⟩
+
 /-- The generator `y` of `EF` over `F`, a root of `y^3 + y + 1`. -/
 def y : EF := ⟨0, 1, 0⟩
 

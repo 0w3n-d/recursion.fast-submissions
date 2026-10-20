@@ -131,6 +131,17 @@ def inv (a : F) : F :=
 
 instance : Inv F := ⟨inv⟩
 
+/-- Square-and-multiply: `powGo k b e acc = acc * b ^ e` whenever `e ≤ k`. The fuel `k` makes the
+recursion structural on a natural number, so the kernel evaluates powers by peeling literals
+(Mathlib's `npowBinRec` recurses through `Nat.binaryRec`, which the kernel unfolds slowly). -/
+def powGo : Nat → F → Nat → F → F
+  | 0, _, _, acc => acc
+  | k + 1, b, e, acc =>
+    if e = 0 then acc else powGo k (sq b) (e / 2) (if e % 2 = 1 then acc * b else acc)
+
+/-- Powers by repeated squaring. -/
+instance : Pow F ℕ := ⟨fun a n => powGo n a n 1⟩
+
 /-- The element with the given polynomial-basis word. -/
 @[inline] def ofUInt64 (w : UInt64) : F := ⟨w⟩
 

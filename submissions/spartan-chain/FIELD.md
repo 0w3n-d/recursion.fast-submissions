@@ -86,6 +86,17 @@ below).
   `sq` on the top bit; `x·x⁻¹ = 1`, `x⁻¹ ≠ x`; `y^3 = y + 1`, `≠ y^2 + 1`; `y·y⁻¹ = 1`;
   little-endian bytes and not big-endian.
 
+## Kernel cost (nanoda)
+
+`logs/field/nanoda.log`. Every field module's closure checks under the second kernel (nanoda)
+in about 71 s and 2.4 GB. That is CompPoly's own floor: `BF64.Impl` alone takes 75 s and
+2.3 GB. The field-specific decided facts take seconds or less: the decided part of
+`conj_distinct` 1.6 s, the three values of `ybasis` 0.5 s, the controls 3.4 s. `spread_getLsbD`
+is proved by five mask-and-shift stage lemmas (linear index arithmetic, `omega`), not a 64-way
+case split. `^` on `F` and `EF` is `powGo` (square-and-multiply with structural fuel), not
+Mathlib's `npowBinRec`. `F.x_pow_word` proves `x ^ i = 1 <<< i` (`i < 64`) through the polynomial
+instead of by evaluation.
+
 ## Measurements
 
 Log: `logs/field/bench-20261019-185727.log` (machine, toolchain, source hashes, three runs); axioms:

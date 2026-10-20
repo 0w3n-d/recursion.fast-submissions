@@ -114,3 +114,18 @@ review, kernel-checked probes under `logs/adv-probes/`), `notes/E1`–`E4` (expl
   and `BLUEPRINT-R1-S9-review.md` together found 7 majors, all in the definitions of the
   security argument. None touched the protocol, bytes or parameters, and ε = 2^-129 holds
   throughout. §9 now names the implemented definitions verbatim.
+- **[D-11] The harness's second kernel is a feasibility risk.** In the full harness run on the
+  certified honest entry, the Lean kernel accepts. nanoda, the comparator's second kernel, runs
+  out of memory: killed at 52 GB after 23 min on a quiet machine. The export is 236 MB:
+  22,745 theorems, 7,978 definitions, 4.27M expressions. Bisection found the cause: one
+  field lemma, `F.spread_getLsbD`, proved by a 64-way `interval_cases j <;> simp`. Its closure
+  alone was killed at 41.9 GB, and every closure without it checks in 8 s or less.
+  - Decision: rewrite that proof structurally, with the statement unchanged (field agent).
+  - Implication for the rules: an ordinary tactic proof that the Lean kernel checks in seconds
+    can make the second kernel exceed the harness's memory. Agents need a "nanoda budget" check
+    before submission, and the harness caps should be stated for each kernel. This goes to the
+    synthesis report and to core issue #9.
+- **Interim harness fixes for S2/S3, on the scratch branch `v3/ks-interim-harness` of
+  `rf-core-s2a`:** `09668b5` puts CompPoly's `BF64`/`Ext3` closure on the allowlist and in the
+  manifest; `4a1a1ed` makes gate rule 4 check the v3 fields `V`, `P`, `E`, `img`, and cites #9.
+  With these the gate passes on the entry, axioms clean on 32,932 constants.

@@ -238,9 +238,6 @@ instance : SMul ℤ EF := ⟨zsmulRec nsmulRec⟩
 instance : NatCast EF := ⟨fun n => ofF (n : F)⟩
 instance : IntCast EF := ⟨fun n => ofF (n : F)⟩
 
-/-- Powers by repeated squaring. -/
-instance : Pow EF ℕ := ⟨fun x n => npowBinRec n x⟩
-
 @[simp] theorem toExt3_natCast (n : ℕ) : toExt3 (n : EF) = (n : BF64.Ext3) := by
   change toExt3 (ofF (n : F)) = _
   rw [toExt3_ofF, toBF64_natCast, map_natCast]
@@ -262,18 +259,24 @@ theorem toExt3_zsmul (n : ℤ) (x : EF) : toExt3 (n • x) = n • toExt3 x := b
     rw [toExt3_neg, negSucc_zsmul]
     exact congrArg _ (toExt3_nsmul (n + 1) x)
 
+theorem toExt3_powGo (k : ℕ) (b : EF) (e : ℕ) (acc : EF) (he : e ≤ k) :
+    toExt3 (powGo k b e acc) = toExt3 acc * toExt3 b ^ e := by
+  induction k generalizing b e acc with
+  | zero => obtain rfl : e = 0 := by omega
+            simp [powGo]
+  | succ k ih =>
+    rw [powGo]
+    split_ifs with h0 ho
+    · simp [h0]
+    · rw [ih _ _ _ (by omega)]; simp only [toExt3_mul, toExt3_sq]
+      conv_rhs => rw [show e = 2 * (e / 2) + 1 by omega, pow_succ, pow_mul, _root_.sq]
+      ring
+    · rw [ih _ _ _ (by omega), toExt3_sq]
+      conv_rhs => rw [show e = 2 * (e / 2) by omega, pow_mul, _root_.sq]
+
 theorem toExt3_npow (x : EF) (n : ℕ) : toExt3 (x ^ n) = toExt3 x ^ n := by
-  have hassoc : ∀ a b c : EF, a * b * c = a * (b * c) := fun a b c =>
-    toExt3_injective (by simp only [toExt3_mul, mul_assoc])
-  let _ : Semigroup EF := { mul := (· * ·), mul_assoc := hassoc }
-  have h : x ^ n = npowRec n x := by
-    change npowBinRec n x = _
-    rw [← npowBinRecAuto, ← npowRec_eq_npowBinRec]
-  rw [h]
-  clear h
-  induction n with
-  | zero => simp [npowRec]
-  | succ n ih => rw [npowRec, toExt3_mul, ih, pow_succ]
+  change toExt3 (powGo n x n 1) = _
+  rw [toExt3_powGo n x n 1 le_rfl, toExt3_one, one_mul]
 
 instance instCommRing : CommRing EF where
   add_assoc a b c := toExt3_injective (by simp only [toExt3_add, add_assoc])

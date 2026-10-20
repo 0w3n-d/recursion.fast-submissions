@@ -261,3 +261,87 @@ All runs are `CHECK OK` in PREVIEW mode.
 - **Prover KAT at `n = 16`** (`harness-final/prove-kat-n16.log`). The Lean
   `Run.proveLeafBytes chainWf`, which is the submission's `P` by `rfl`, gives 143 711 bytes,
   **identical** to the Rust proof. It took 34.9 s of process wall and 224 MB.
+
+## Harness decisions applied, and the nanoda OOM (logs `logs/spartan-chain/infra/harness-final2/`)
+
+1. **Allowlist and manifest with CompPoly's BF64/Ext3 closure.** On the scratch branch
+   `v3/ks-interim-harness` of `rf-core-s2a`, commit `09668b5` adds `scripts/org-closure.sh`.
+   - Its roots are v2's plus `CompPoly.Fields.Binary.BF64` and its submodules `Basic`, `Bytes`,
+     `Ext3`, `Impl`, `Reduce` and `BaseCertificate`.
+   - The commit also adds the generated files: `import-allowlist.txt` (10 808 modules) and
+     `olean-manifest.sha256` (34 392 entries).
+   - `check.sh` now calls the script.
+   - CompPoly's 28 modules are pinned, and its `@[csimp]` lemma is only reported.
+2. **Gate rule 4 checks v3's fields.** Commit `4a1a1ed` (core issue #9; it stands in for S3) sets
+   `badgeFields` for `Submission` to `[V, P, E, img]`. Fixtures (`gate-fixtures/gate-fixtures.log`),
+   each a v3 submission that is noncomputable as a whole:
+   - with every field computable: PASS;
+   - with a noncomputable `V`: REJECT on `fixSub.V`;
+   - with a noncomputable `E`: REJECT on `fixSub.E`.
+   **The gate on the entry's comparator-verified tree** (`gate-on-final-tree.log`) gives
+   **PASS**: rule 4 checks `V`, `P`, `E` and `img`, and all have compiled code. The closure of
+   `certified` has 32 932 constants, with only the three axioms. There are 28 pinned modules.
+3. **nanoda alone** (`nanoda/nanoda-run.log`). The machine was quiet (load 1.4), the run was
+   capped at 56 G, and the input was the comparator's solution export:
+   - 236 MB: 22 745 theorems, 7 978 definitions, 662 inductives, 4.27 M expression nodes;
+   - lean4export took 25 s and 3.0 GB.
+
+   Memory grew about 2 GB per minute. After 23 min the kernel's global OOM killer stopped it at
+   **52.0 GB** of anonymous memory. It does not fit this 62 GB machine, nor the 48 GB build cap.
+4. **The culprit, by bisection** (`nanoda/bisect/`: `modules.log`, `compoly.log`,
+   `suspects.log`, `spread-nanoda.log`).
+   - **Method.** For each entry module, nanoda ran on the export closure of the module's
+     constants (4 GB cap, 300 s timeout). Every closure that contains
+     `SpartanChainFieldBaseCorrect` fails. Every closure without it passes in at most 8 s. The
+     CompPoly `BF64` closures pass, at about 70 s and 2.3 GB.
+   - **Narrowed inside the module.** `frob_eq_pow`, `sq_eq_mul`, `toBF64_sq`, `toBF64_inv` and
+     `instField` fail. `toBF64_mul`, `instCommRing`, `mk_reduce` and `P_shiftLeft` pass. The
+     chain of failures ends at the private lemma
+     **`SpartanChain.F.spread_getLsbD`** (`SpartanChainFieldBaseCorrect.lean:251`, proved by
+     `interval_cases j <;> simp` over 64 bit positions).
+   - **Alone, it reproduces the blow-up.** Its closure has 3 441 declarations and is 20.5 MB of
+     export, against 2.8 MB for `spread` and the lemmas its `simp` uses. Nanoda on that closure
+     alone grew about 2 GB per minute and was killed by the cgroup at **41.9 GB** after 20 min.
+   - **It is load-bearing.** It feeds `P_spread`, `toBF64_sq`, `sq_eq_mul`, `frob_eq_pow` and
+     `toBF64_inv`, hence `instField` and `F`'s field structure.
+   - **What it needs.** Its owner should rewrite it as a proof without `interval_cases` over 64
+     concrete `BitVec` cases, for example a general bit-arithmetic argument.
+   - **Two other checks.** `EF.ybasis` (`interval_cases j <;> decide +kernel`) cannot be tested
+     in isolation: its closure contains `spread_getLsbD`. Test it after the rewrite.
+     `SoundnessPCS.x_pow_word` (`decide +kernel` over 64 cases) passes, but costs 23 s and
+     614 MB for a closure of 1 032 declarations.
+5. **`HARNESS=1 check.sh` re-run** (`check-run.log`, `check/`), inside a 50 G scope:
+   - hygiene 0 findings; source rule 61 files, 0 findings;
+   - the solution equals the rendering;
+   - axiom audit 111 declarations OK;
+   - the three negative claims are rejected;
+   - `SMOKE: OK`, with the Lean root check at 1.14 s;
+   - organiser manifest OK, with 34 392 files.
+
+   In comparator stage 1, nanoda reached the scope's cap and the cgroup OOM killer stopped it at
+   51.3 GB (kernel log 01:05:58). Systemd then stopped the whole scope, so no `HARNESS:` line was
+   written. **The verdict is REJECT, at the comparator's nanoda step.** The Lean kernel accepted
+   the same solution in `harness-final/` (comparator.log), and the gate passes (item 2).
+
+## `HARNESS: ACCEPT` (after the `spread_getLsbD` rewrite; `logs/spartan-chain/infra/harness-final3/`)
+
+`HARNESS=1 check.sh` ran inside a 56 G scope and took 1105 s wall (`check-run.log`, `check/`). It
+printed **`CHECK OK`**. The verdicts:
+
+- Hygiene: 0 findings. Source rule: 61 files, 0 findings.
+- The solution equals the rendering.
+- Axiom audit: 111 declarations, OK.
+- The three negative claims are rejected.
+- `SMOKE: OK`. The Lean root check takes 1.24 s.
+- **Comparator:** "nanoda kernel accepts the solution", "Lean default kernel accepts the
+  solution", "Your solution is okay!". It took 465 s wall in all, with 3.7 GB peak in the
+  comparator's own processes.
+- **nanoda:** about 70 s wall and a **peak RSS of 2.41 GB**, sampled every 2 s
+  (`nanoda-rss.log`). The OOM run before the rewrite was killed at 52 GB.
+- The build is byte-identical to the comparator-verified build.
+- **Gate PASS:**
+  - rule 4 finds compiled code for `V`, `P`, `E` and `img`;
+  - 28 modules are pinned (CompPoly) and 3 727 are trusted;
+  - the closure of `certified` has 33 003 constants, with axioms `propext`, `Classical.choice`
+    and `Quot.sound`.
+- **`HARNESS: ACCEPT`**.

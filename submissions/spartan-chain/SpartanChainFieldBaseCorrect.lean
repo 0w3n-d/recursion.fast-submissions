@@ -247,12 +247,173 @@ theorem Q_mul (a b : F) : Q (a * b).val = Q a.val * Q b.val := by
 
 /-! ## Squaring -/
 
+/-! ### `spread`, one mask-and-shift step at a time
+
+After the steps down to chunk size `c`, bit `j` of the word is bit `j / (2c) * c + j % (2c)` of
+the input when `j % (2c) < c`, and `0` otherwise (`c = 32` after the first mask, `c = 1` at the
+end). Each step is one lemma whose index arithmetic is linear, closed by `omega`; the masks are
+read off by `decide` over the 64 bit positions. -/
+
+private theorem mask32 : ∀ j < 64,
+    (0x00000000FFFFFFFF : UInt64).toBitVec.getLsbD j = decide (j % 64 < 32) := by
+  decide +kernel
+
+private theorem spread_stage32 (x : UInt64) : ∀ j < 64,
+    (x &&& 0x00000000FFFFFFFF).toBitVec.getLsbD j =
+      (decide (j % 64 < 32) && x.toBitVec.getLsbD (j / 64 * 32 + j % 64)) := by
+  intro j hj
+  simp only [UInt64.toBitVec_and, BitVec.getLsbD_and, mask32 j hj, Nat.mod_eq_of_lt hj,
+    Nat.div_eq_of_lt hj, Nat.zero_mul, Nat.zero_add]
+  exact Bool.and_comm _ _
+
+private theorem mask16 : ∀ j < 64, (0x0000FFFF0000FFFF : UInt64).toBitVec.getLsbD j = decide (j % 32 < 16) := by
+  decide +kernel
+
+private theorem spread_stage16 (x y : UInt64)
+    (hy : ∀ j < 64, y.toBitVec.getLsbD j =
+      (decide (j % 64 < 32) && x.toBitVec.getLsbD (j / 64 * 32 + j % 64))) :
+    ∀ j < 64, ((y ||| (y <<< 16)) &&& 0x0000FFFF0000FFFF).toBitVec.getLsbD j =
+      (decide (j % 32 < 16) && x.toBitVec.getLsbD (j / 32 * 16 + j % 32)) := by
+  intro j hj
+  have hs : (y <<< 16).toBitVec = y.toBitVec <<< 16 := by simp
+  simp only [UInt64.toBitVec_and, UInt64.toBitVec_or, hs, BitVec.getLsbD_and, BitVec.getLsbD_or,
+    BitVec.getLsbD_shiftLeft, mask16 j hj, hy j hj]
+  by_cases hm : j % 32 < 16
+  · by_cases ht : j % 64 < 32
+    · have e : j / 64 * 32 + j % 64 = j / 32 * 16 + j % 32 := by omega
+      by_cases hh : j < 16
+      · simp [hm, ht, e, hh, hj]
+      · rw [hy (j - 16) (by omega)]
+        have : ¬ (j - 16) % 64 < 32 := by omega
+        simp [hm, ht, e, hh, hj, this]
+    · have hh : ¬ j < 16 := by omega
+      rw [hy (j - 16) (by omega)]
+      have e : (j - 16) / 64 * 32 + (j - 16) % 64 = j / 32 * 16 + j % 32 := by omega
+      have : (j - 16) % 64 < 32 := by omega
+      simp [hm, ht, e, hh, hj, this]
+  · simp [hm]
+
+private theorem mask8 : ∀ j < 64, (0x00FF00FF00FF00FF : UInt64).toBitVec.getLsbD j = decide (j % 16 < 8) := by
+  decide +kernel
+
+private theorem spread_stage8 (x y : UInt64)
+    (hy : ∀ j < 64, y.toBitVec.getLsbD j =
+      (decide (j % 32 < 16) && x.toBitVec.getLsbD (j / 32 * 16 + j % 32))) :
+    ∀ j < 64, ((y ||| (y <<< 8)) &&& 0x00FF00FF00FF00FF).toBitVec.getLsbD j =
+      (decide (j % 16 < 8) && x.toBitVec.getLsbD (j / 16 * 8 + j % 16)) := by
+  intro j hj
+  have hs : (y <<< 8).toBitVec = y.toBitVec <<< 8 := by simp
+  simp only [UInt64.toBitVec_and, UInt64.toBitVec_or, hs, BitVec.getLsbD_and, BitVec.getLsbD_or,
+    BitVec.getLsbD_shiftLeft, mask8 j hj, hy j hj]
+  by_cases hm : j % 16 < 8
+  · by_cases ht : j % 32 < 16
+    · have e : j / 32 * 16 + j % 32 = j / 16 * 8 + j % 16 := by omega
+      by_cases hh : j < 8
+      · simp [hm, ht, e, hh, hj]
+      · rw [hy (j - 8) (by omega)]
+        have : ¬ (j - 8) % 32 < 16 := by omega
+        simp [hm, ht, e, hh, hj, this]
+    · have hh : ¬ j < 8 := by omega
+      rw [hy (j - 8) (by omega)]
+      have e : (j - 8) / 32 * 16 + (j - 8) % 32 = j / 16 * 8 + j % 16 := by omega
+      have : (j - 8) % 32 < 16 := by omega
+      simp [hm, ht, e, hh, hj, this]
+  · simp [hm]
+
+private theorem mask4 : ∀ j < 64, (0x0F0F0F0F0F0F0F0F : UInt64).toBitVec.getLsbD j = decide (j % 8 < 4) := by
+  decide +kernel
+
+private theorem spread_stage4 (x y : UInt64)
+    (hy : ∀ j < 64, y.toBitVec.getLsbD j =
+      (decide (j % 16 < 8) && x.toBitVec.getLsbD (j / 16 * 8 + j % 16))) :
+    ∀ j < 64, ((y ||| (y <<< 4)) &&& 0x0F0F0F0F0F0F0F0F).toBitVec.getLsbD j =
+      (decide (j % 8 < 4) && x.toBitVec.getLsbD (j / 8 * 4 + j % 8)) := by
+  intro j hj
+  have hs : (y <<< 4).toBitVec = y.toBitVec <<< 4 := by simp
+  simp only [UInt64.toBitVec_and, UInt64.toBitVec_or, hs, BitVec.getLsbD_and, BitVec.getLsbD_or,
+    BitVec.getLsbD_shiftLeft, mask4 j hj, hy j hj]
+  by_cases hm : j % 8 < 4
+  · by_cases ht : j % 16 < 8
+    · have e : j / 16 * 8 + j % 16 = j / 8 * 4 + j % 8 := by omega
+      by_cases hh : j < 4
+      · simp [hm, ht, e, hh, hj]
+      · rw [hy (j - 4) (by omega)]
+        have : ¬ (j - 4) % 16 < 8 := by omega
+        simp [hm, ht, e, hh, hj, this]
+    · have hh : ¬ j < 4 := by omega
+      rw [hy (j - 4) (by omega)]
+      have e : (j - 4) / 16 * 8 + (j - 4) % 16 = j / 8 * 4 + j % 8 := by omega
+      have : (j - 4) % 16 < 8 := by omega
+      simp [hm, ht, e, hh, hj, this]
+  · simp [hm]
+
+private theorem mask2 : ∀ j < 64, (0x3333333333333333 : UInt64).toBitVec.getLsbD j = decide (j % 4 < 2) := by
+  decide +kernel
+
+private theorem spread_stage2 (x y : UInt64)
+    (hy : ∀ j < 64, y.toBitVec.getLsbD j =
+      (decide (j % 8 < 4) && x.toBitVec.getLsbD (j / 8 * 4 + j % 8))) :
+    ∀ j < 64, ((y ||| (y <<< 2)) &&& 0x3333333333333333).toBitVec.getLsbD j =
+      (decide (j % 4 < 2) && x.toBitVec.getLsbD (j / 4 * 2 + j % 4)) := by
+  intro j hj
+  have hs : (y <<< 2).toBitVec = y.toBitVec <<< 2 := by simp
+  simp only [UInt64.toBitVec_and, UInt64.toBitVec_or, hs, BitVec.getLsbD_and, BitVec.getLsbD_or,
+    BitVec.getLsbD_shiftLeft, mask2 j hj, hy j hj]
+  by_cases hm : j % 4 < 2
+  · by_cases ht : j % 8 < 4
+    · have e : j / 8 * 4 + j % 8 = j / 4 * 2 + j % 4 := by omega
+      by_cases hh : j < 2
+      · simp [hm, ht, e, hh, hj]
+      · rw [hy (j - 2) (by omega)]
+        have : ¬ (j - 2) % 8 < 4 := by omega
+        simp [hm, ht, e, hh, hj, this]
+    · have hh : ¬ j < 2 := by omega
+      rw [hy (j - 2) (by omega)]
+      have e : (j - 2) / 8 * 4 + (j - 2) % 8 = j / 4 * 2 + j % 4 := by omega
+      have : (j - 2) % 8 < 4 := by omega
+      simp [hm, ht, e, hh, hj, this]
+  · simp [hm]
+
+private theorem mask1 : ∀ j < 64, (0x5555555555555555 : UInt64).toBitVec.getLsbD j = decide (j % 2 < 1) := by
+  decide +kernel
+
+private theorem spread_stage1 (x y : UInt64)
+    (hy : ∀ j < 64, y.toBitVec.getLsbD j =
+      (decide (j % 4 < 2) && x.toBitVec.getLsbD (j / 4 * 2 + j % 4))) :
+    ∀ j < 64, ((y ||| (y <<< 1)) &&& 0x5555555555555555).toBitVec.getLsbD j =
+      (decide (j % 2 < 1) && x.toBitVec.getLsbD (j / 2 * 1 + j % 2)) := by
+  intro j hj
+  have hs : (y <<< 1).toBitVec = y.toBitVec <<< 1 := by simp
+  simp only [UInt64.toBitVec_and, UInt64.toBitVec_or, hs, BitVec.getLsbD_and, BitVec.getLsbD_or,
+    BitVec.getLsbD_shiftLeft, mask1 j hj, hy j hj]
+  by_cases hm : j % 2 < 1
+  · by_cases ht : j % 4 < 2
+    · have e : j / 4 * 2 + j % 4 = j / 2 * 1 + j % 2 := by omega
+      by_cases hh : j < 1
+      · simp [hm, ht, e, hh, hj]
+      · rw [hy (j - 1) (by omega)]
+        have : ¬ (j - 1) % 4 < 2 := by omega
+        simp [hm, ht, e, hh, hj, this]
+    · have hh : ¬ j < 1 := by omega
+      rw [hy (j - 1) (by omega)]
+      have e : (j - 1) / 4 * 2 + (j - 1) % 4 = j / 2 * 1 + j % 2 := by omega
+      have : (j - 1) % 4 < 2 := by omega
+      simp [hm, ht, e, hh, hj, this]
+  · simp [hm]
+
 /-- `spread` moves bit `i` of the low half to bit `2 i` and clears the odd bits. -/
 private theorem spread_getLsbD (x : UInt64) (j : ℕ) (hj : j < 64) :
     (spread x).toBitVec.getLsbD j = (decide (j % 2 = 0) && x.toBitVec.getLsbD (j / 2)) := by
-  simp only [spread, UInt64.toBitVec_and, UInt64.toBitVec_or, UInt64.toBitVec_shiftLeft,
-    BitVec.getLsbD_and, BitVec.getLsbD_or]
-  interval_cases j <;> simp
+  have h := spread_stage1 x _ (spread_stage2 x _ (spread_stage4 x _ (spread_stage8 x _
+    (spread_stage16 x _ (spread_stage32 x))))) j hj
+  have e : j / 2 * 1 + j % 2 = j / 2 + j % 2 := by omega
+  rw [e] at h
+  change _ = _ at h
+  unfold spread
+  rw [h]
+  by_cases h2 : j % 2 = 0
+  · simp [h2]
+  · simp [show ¬ j % 2 < 1 by omega, h2]
 
 /-- In characteristic two the square of a word's polynomial spreads its bits. -/
 private theorem P_spread (a : UInt64) :
@@ -336,9 +497,6 @@ instance : SMul ℤ F := ⟨zsmulRec nsmulRec⟩
 instance : NatCast F := ⟨natCast⟩
 instance : IntCast F := ⟨Int.castDef⟩
 
-/-- Powers by repeated squaring. -/
-instance : Pow F ℕ := ⟨fun a n => npowBinRec n a⟩
-
 @[simp] theorem toBF64_natCast (n : ℕ) : toBF64 (n : F) = (n : BF64) := by
   change toBF64 (natCast n) = BF64.natCast n
   unfold natCast BF64.natCast
@@ -363,18 +521,24 @@ theorem toBF64_zsmul (n : ℤ) (a : F) : toBF64 (n • a) = n • toBF64 a := by
     rw [toBF64_neg]
     exact congrArg _ (toBF64_nsmul (n + 1) a)
 
+theorem toBF64_powGo (k : ℕ) (b : F) (e : ℕ) (acc : F) (he : e ≤ k) :
+    toBF64 (powGo k b e acc) = toBF64 acc * toBF64 b ^ e := by
+  induction k generalizing b e acc with
+  | zero => obtain rfl : e = 0 := by omega
+            simp [powGo]
+  | succ k ih =>
+    rw [powGo]
+    split_ifs with h0 ho
+    · simp [h0]
+    · rw [ih _ _ _ (by omega)]; simp only [toBF64_mul, toBF64_sq]
+      conv_rhs => rw [show e = 2 * (e / 2) + 1 by omega, pow_succ, pow_mul, _root_.sq]
+      ring
+    · rw [ih _ _ _ (by omega), toBF64_sq]
+      conv_rhs => rw [show e = 2 * (e / 2) by omega, pow_mul, _root_.sq]
+
 theorem toBF64_npow (a : F) (n : ℕ) : toBF64 (a ^ n) = toBF64 a ^ n := by
-  have hassoc : ∀ x y z : F, x * y * z = x * (y * z) := fun x y z =>
-    toBF64_injective (by simp only [toBF64_mul, mul_assoc])
-  let _ : Semigroup F := { mul := (· * ·), mul_assoc := hassoc }
-  have h : a ^ n = npowRec n a := by
-    change npowBinRec n a = _
-    rw [← npowBinRecAuto, ← npowRec_eq_npowBinRec]
-  rw [h, BF64.npow_eq_npowRec]
-  clear h
-  induction n with
-  | zero => rfl
-  | succ n ih => simp only [npowRec, toBF64_mul, ih]
+  change toBF64 (powGo n a n 1) = _
+  rw [toBF64_powGo n a n 1 le_rfl, toBF64_one, one_mul]
 
 instance instCommRing : CommRing F where
   add_assoc a b c := toBF64_injective (by simp only [toBF64_add, add_assoc])
@@ -480,6 +644,22 @@ theorem conj_distinct : ((List.range 64).map (fun k => x ^ (2 ^ k))).Nodup := by
   have h : (fun k => x ^ (2 ^ k)) = (fun k => frob k x) := funext fun k => (frob_eq_pow k x).symm
   rw [h]
   decide +kernel
+
+/-- The power `x ^ i`, `i < 64`, is the word with only bit `i` set (no reduction below degree
+64). Proved through the polynomial, not by evaluation, so its kernel check is cheap. -/
+theorem x_pow_word (i : Fin 64) : x ^ (i : ℕ) = ⟨(1 : UInt64) <<< i.val.toUInt64⟩ := by
+  apply toBF64_injective
+  apply BF64.toQuot_injective
+  rw [toBF64_npow, BF64.toQuot_npow, toQuot_toBF64, toQuot_toBF64]
+  have h1 : ((1 : UInt64) <<< i.val.toUInt64).toBitVec = ((1 <<< i.val : ℕ) : BitVec 64) := by
+    have := i.isLt
+    apply BitVec.eq_of_toNat_eq
+    simp [Nat.mod_eq_of_lt i.isLt, Nat.toUInt64, Nat.shiftLeft_eq]
+  have h2 : x.val.toBitVec = ((1 <<< 1 : ℕ) : BitVec 64) := by decide
+  show AdjoinRoot.mk BF64.basePoly (toPoly x.val.toBitVec) ^ (i : ℕ) =
+    AdjoinRoot.mk BF64.basePoly (toPoly ((1 : UInt64) <<< i.val.toUInt64).toBitVec)
+  rw [h1, h2, toPoly_one_shiftLeft (w := 64) _ i.isLt,
+    toPoly_one_shiftLeft (w := 64) 1 (by norm_num), pow_one, map_pow]
 
 /-! ## Bytes -/
 
