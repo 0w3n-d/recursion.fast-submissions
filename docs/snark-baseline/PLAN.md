@@ -105,6 +105,10 @@ review, kernel-checked probes under `logs/adv-probes/`), `notes/E1`–`E4` (expl
   the user: push the branch, open a pull request that references #5, and after the merge move
   this repository's pin in its own commit. Until then the honest entry builds against the shared
   development clone `/home/devops/Verified-zkEVM/rf-core-sc`, which tracks that branch.
+  **Update (2026-10-20, 09:09 UTC):** the branch is on the core's remote at `05fde28`, and pull
+  request #11 "V3/ks potential", opened by `scaraven`, is open and mergeable. The core's `main` is
+  still `15e4ae5`, so the pin does not move yet. `REPORT.md` §5–§6 and the stage RESULTs predate
+  this.
 - **[D-9] Start-up bug in the amendment, fixed.** The amendment's `instance : Fintype Digest` was
   computable, so every compiled binary that imports the contract enumerated `256^32` digests at
   start-up and never started. The Merkle/transcript agent found it. Fix: `noncomputable instance`,

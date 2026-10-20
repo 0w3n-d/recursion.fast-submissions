@@ -1,11 +1,11 @@
 # The honest baseline: synthesis report for the recursion.fast designers
 
-Status: 2026-10-20, after the honest entry's certificate, final review, fix pass, golf pass and
-`HARNESS: ACCEPT`. The only figures still marked `TBD (final run)` wait for the final
-`measure.sh` run on the committed tree (`docs/snark-baseline/reports/measurements.md`); where a
-preliminary number stands in, it is labelled as such. Every other number is a measurement with
-its log under `logs/` (gitignored, local to the development VM) or a kernel-checked theorem, and
-says which. Nothing in this report is an estimate of future human work.
+Status: final, 2026-10-20, after the honest entry's certificate, final review, fix pass, golf
+pass, two `HARNESS: ACCEPT` runs and the final `measure.sh` run on the committed tree
+(`docs/snark-baseline/reports/measurements.md`, `logs/spartan-chain/measure/20261020-025203/`,
+commit `1f59b38`). Every number is a measurement with its log under `logs/` (gitignored, local to
+the development VM) or a kernel-checked theorem, and says which. Nothing in this report is an
+estimate of future human work.
 
 Audience: the competition's designers (cryptographers and zkVM engineers) and formal-methods
 readers. Lean terms are explained in one line where they first matter. Section 1 is the summary;
@@ -18,7 +18,7 @@ Sources (paths relative to this repository unless stated): `docs/snark-baseline/
 scaraven/recursion.fast #5 … #10 and a comment on #4), `BLUEPRINT-R1.md` (§0, §12, §13, §14),
 `reports/*.md`, `docs/reviews/*.md`, `docs/stages/V3-S2a-RESULT.md`,
 `docs/stages/V3-S2b-RESULT.md`, the git log (`91b3a56` S2a … `3171790` certified, `0358ec5`
-`HARNESS: ACCEPT`, `781d98c` golf), and the amended contract on branch `v3/ks-potential` of
+`HARNESS: ACCEPT`, `781d98c` golf, `1f59b38` final runs), and the amended contract on branch `v3/ks-potential` of
 `/home/devops/Verified-zkEVM/rf-core-ks` (its `docs/stages/V3-S2-KS-RESULT.md`).
 
 ---
@@ -44,8 +44,9 @@ Three things were built, against the core pinned at `15e4ae5` (the v3 contract, 
    `SpartanChain.KS.ks` at error `2^-129` and `qV = 2^14`, perfect completeness for every oracle;
    the final adversarial review found no weakening and no vacuity; the proof-half harness printed
    `HARNESS: ACCEPT` (comparator under nanoda and the Lean kernel, gate PASS, byte-identical
-   rebuild; `logs/spartan-chain/infra/harness-final3/`). 61 Lean modules, 16,766 code lines
-   (1,687 copied from leanerVM and S2a), 1,561 theorems; 3,315 lines of Rust.
+   rebuild; `logs/spartan-chain/infra/harness-final3/`, repeated in `harness-final4/`). 61 Lean
+   modules, 16,766 code lines (1,880 of them copied, from leanerVM and S2a), 1,561 theorems; a
+   cold build of the entry in 130.4 s; 3,315 lines of Rust.
 
 Headline findings about the rules, each filed on the core: the S1 knowledge-soundness
 definition is unsatisfiable for every Merkle/BCS verifier (#5); the succinctness cap `T_V` does
@@ -329,34 +330,39 @@ All Lean figures are from `.contract/scripts/loc.py` (code lines exclude blanks 
 for this entry. Times were measured on a shared 32-vCPU QEMU VM (load average 2–9 during the
 runs, so every time is an upper bound); peak RSS is the largest single process.
 
-### 3.1 Lean, by component (post-golf, `docs/stages/V3-S2b-RESULT.md` §1, commit `781d98c`)
+### 3.1 Lean, by component (final `measure.sh` run on the committed tree, `reports/measurements.md`, `logs/spartan-chain/measure/20261020-025203/`; theorem counts from `V3-S2b-RESULT.md` §1)
 
-| component | modules | code lines | theorems | of which copied |
-|---|---:|---:|---:|---:|
-| field: word-level `F = GF(2^64)`, `EF = GF(2^192)`, proved equal to CompPoly's `BF64`/`Ext3` | 6 | 1,076 | 128 | 0 |
-| BLAKE2s circuit, chain R1CS, matrix-MLE closed form, prover tables | 15 | 4,625 | 390 | 1,543 |
-| algebra: MLE, sumcheck, ring switching | 3 | 891 | 95 | 90 |
-| RS code, proximity (AHIV22-style), PCS parameters | 3 | 696 | 66 | 0 |
-| oracle, Merkle, transcript | 3 | 993 | 98 | 0 |
-| protocol: Ligero, Spartan, leaf verifier, prover | 4 | 1,284 | 102 | 0 |
-| top level: decoder, node branch, submission, final instantiation, runner | 7 | 917 | 89 | 54 |
-| knowledge soundness: log forest, PCS, Spartan rounds, chain, potential, `step`, `final`, `KState` | 11 | 5,482 | 468 | 0 |
-| controls and known-answer tests | 9 | 806 | 125 | 0 |
-| **total** | **61** | **16,766** | **1,561** | **1,687** |
+| component | modules | code lines | theorems | of which copied | check time, sum (s) | peak RSS, max (MiB) |
+|---|---:|---:|---:|---:|---:|---:|
+| field: word-level `F = GF(2^64)`, `EF = GF(2^192)`, proved equal to CompPoly's `BF64`/`Ext3` | 5 | 1,031 | 128 | 0 | 43.6 | 2,790 |
+| BLAKE2s circuit, chain R1CS, matrix-MLE closed form, prover tables | 15 | 4,622 | 390 | 1,543 | 131.5 | 2,714 |
+| algebra: MLE, sumcheck, ring switching, `F ⊂ EF` facts | 4 | 936 | 95 | 90 | 26.8 | 2,569 |
+| RS code, proximity (AHIV22-style), PCS parameters | 3 | 696 | 66 | 0 | 21.8 | 2,657 |
+| oracle, Merkle, transcript | 3 | 993 | 98 | 0 | 19.6 | 2,607 |
+| protocol: Ligero, Spartan, leaf verifier, prover, decoder, node branch | 6 | 1,917 | 102 | 247 | 47.2 | 2,724 |
+| knowledge soundness: log forest, PCS, Spartan rounds, chain, potential, `step`, `final`, `KState` | 11 | 5,481 | 468 | 0 | 115.8 | 3,048 |
+| submission, final instantiation, solution, runner, controls, known-answer tests | 14 | 1,090 | 214 | 0 | 156.0 | 4,068 |
+| **total** | **61** | **16,766** | **1,561** | **1,880** | **562.3** | **4,068** |
 
-Build and check times, all measured on the committed tree unless stated:
+(The copied count is `loc.py`'s rule on provenance headers: three whole leanerVM files, the
+`RingSwitch` sections and the whole of `Decode`, whose S2a-derived part the RESULT counts as 54
+lines; 14,886 lines are written fresh.)
+
+Build and check times, all measured on the committed tree (load average 1.6–7.1 during the
+measurement run):
 
 | what | time | memory | log |
 |---|---|---|---|
+| **cold full build of the entry** (`lake build SpartanChain`, default `-j`, core libraries prebuilt), 61 modules, complete | **130.4 s** | 4,061 MiB (largest process) | `measure/20261020-025203/full.time` |
+| warm-up of the core libraries the entry imports (not the entry) | 93.2 s | | `core.time` |
+| sum of per-module check times, 61 modules (`lake env lean`, imports prebuilt; floor 5.3 s of `.olean` loading per module) | **562.3 s** (golf pass: 682.5 → 621.5 s on a busier machine) | | `modules/`; `logs/spartan-chain/golf/{before,after}/times.txt` |
+| slowest module, `TranscriptControls` (the kernel's BLAKE2s known-answer tests) | 68.6 s | **4,068 MiB** | `measure/…/modules` |
+| next: `SoundnessKSBase` 35.1 s / 3,048 MiB; `FieldBaseCorrect` 14.4 s; `Blake2sCompress` 12.4 s; `SoundnessChain` 11.1 s; `SoundnessKS` 10.8 s; every other module under 12 s; every module under 2 min | | | same |
 | warm `lake build SpartanChain` (2,288 jobs) | 1 min 58 s | | `reports/fix-pass.md` |
 | `check.sh` build of the entry, `gate`, `axiomaudit` and the runner in a fresh scratch core | 189.3 s | 3.2 GB | `harness-final3/check/build.log` |
-| sum of per-module check times, 61 modules (`lake env lean`, imports prebuilt) | 682.5 s before golf → **621.5 s** after | | `logs/spartan-chain/golf/{before,after}/times.txt` |
-| slowest module, `TranscriptControls` (the kernel's BLAKE2s known-answer tests) | 70.98 s | **4.16 GB** | `logs/s2b-final-review-probes/module-times.log` |
-| next: `SoundnessKSBase` 35.4 s / 3.11 GB; `SoundnessKS` 12.1 s; `SoundnessChain` 10.9 s; `Chain` 8.8 s; every module under 2 min | | | same |
-| comparator, both kernels (nanoda 70 s / 2.41 GB) | 465 s | 3.67 GB | `harness-final3/check/harness-work/` |
+| comparator, both kernels (nanoda 70 s / 2.41–2.47 GB) | 465 s; 401.7 s in the second run | 3.67 GB | `harness-final3/`, `harness-final4/check/harness-work/` |
 | `harness-local.sh` (render, manifest, source rule, comparator, rebuild, gate) | 720 s | | `harness-final3/check-run.log` |
-| `HARNESS=1 check.sh`, end to end | 1,105 s | | same |
-| cold full build of the entry on the committed tree, and the per-module table | `TBD (final run)` (preliminary, mid-edit run of 20:46: 261.4 s incomplete; `reports/measurements.md`) | | `logs/spartan-chain/measure/` |
+| `HARNESS=1 check.sh`, end to end, `HARNESS: ACCEPT` both times | 1,105 s; 794.6 s | 6.3 GB max | `harness-final3/check-run.log`, `harness-final4/check-run.log` |
 
 Three build-time traps cost hours before they were found, and each is a rule-relevant lesson:
 deciding a 117-entry honest transcript with `decide +kernel` (the kernel evaluating a decision
@@ -405,7 +411,7 @@ Compiled Lean `Vb` on the Rust proofs (`Run.verifyProof`, `rfl`-equal to `Challe
 | leaf `n = 1` | 95,719 | 138–153 ms | 62.5 ms |
 | leaf `n = 16` | 143,711 | 0.21–0.30 s | 92.1 ms |
 | level-1 node (two leaves) | 287,512 | 0.47 s (1.01–1.06 s before the codec fix) | |
-| smoke root (four leaves) | 575,112 | **1.06–1.45 s** through `Run.verifyProof` (0.99–1.71 s over the `fix-m2` runs; 1.235 s in the final harness smoke run); 2.25–2.8 s before the byte-offset node parser | 0.20 s |
+| smoke root (four leaves) | 575,112 | **1.06–1.45 s** through `Run.verifyProof` (0.99–1.71 s over the `fix-m2` runs; 1.235 s and 1.262 s in the two final harness smoke runs); 2.25–2.8 s before the byte-offset node parser | 0.20 s |
 
 So the smoke root is under `T_V = 2 s` with a margin of 0.3–1.0 s on this loaded VM. Every
 canary (appended byte, removed byte, flipped byte, flipped statement bit, swapped children) is
@@ -527,8 +533,9 @@ Each with what it costs in trust (lines of the 500-line contract, or none) and w
    supermartingale); the AHIV22 proximity lemma; the MLE/sumcheck counting lemmas; the linear
    codec twins (#10). Trust cost: none (library modules are untrusted, kernel-checked); the
    allowlist gains the library's closure, which is Mathlib and CompPoly only. This is the single
-   largest reduction of a submitter's work: of the 16,766 lines, roughly 11,000 are in these
-   layers.
+   largest reduction of a submitter's work: of the 16,766 lines, about 10,500 are in these
+   layers (field 1,031, BLAKE2s circuit 4,622, algebra 936, RS/proximity 696, Merkle/transcript
+   993, the generic potential and log forest 2,250; §3.1).
 3. **Extraction rule for nodes** (#7): raise `B` to `2^48 + 2^16·t` now (no trust cost); then
    choose the organiser decoder image or the Lean-level cost model (60–100 trusted lines). Without
    a decision no recursive entry can be certified.
