@@ -1,0 +1,151 @@
+# The evaluation of the next queued submission (TRUSTED). One run at a time (the `rf-eval`
+# concurrency group; a pending run is never cancelled by a running one, and since every run picks
+# from the queue a replaced pending run loses nothing).
+#
+#   select    picks the next entry (.github/bot/rfqueue.py: a due port of the record to a new pin,
+#             then confirmation duels, then the fair order), marks it running on `data`, reaps any
+#             entry a previous run left running, and names the standing record at the pin as the
+#             duel's incumbent; no entry code
+#   evaluate  the core's reusable workflow at the PIN, with the entry fetched from its retention tag
+#   publish   no entry code: verifies the attestation (.github/bot/attest.py, the checks of the
+#             core's harness/verify-record.sh, which it also runs for an ACCEPT), decides the status
+#             and the record (.github/bot/decide.py), updates `data`, comments, sets the commit
+#             status, copies a new record's root to `main`, and dispatches the next run
+#
+# THE PIN: the `uses: …@<PIN>` and `core_ref: <PIN>` below and the `.contract` gitlink are one
+# value, set only with .github/bot/pin-core.sh; pin-check.yml and the bot (pin.py) refuse a
+# disagreement.
+name: evaluate-next
+on:
+  workflow_dispatch:
+    inputs:
+      pr: { description: "force this pull request's waiting or errored entry, or re-evaluate its record of an earlier pin (a due port runs first)", required: false, default: "" }
+      retire: { description: "retire this record id first (the owner's)", required: false, default: "" }
+  schedule:
+    - cron: "17,47 * * * *"   # fallback: a lost dispatch delays the queue by at most 30 minutes
+permissions: {}
+concurrency:
+  group: rf-eval
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  select:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write        # branch `data`; main (a record a failed publish left off it)
+      pull-requests: read
+      statuses: write
+    outputs:
+      id: ${{ steps.sel.outputs.id }}
+      sha: ${{ steps.sel.outputs.sha }}
+      path: ${{ steps.sel.outputs.path }}
+      ref: ${{ steps.sel.outputs.ref }}
+      incumbent_sha: ${{ steps.sel.outputs.incumbent_sha }}
+      incumbent_path: ${{ steps.sel.outputs.incumbent_path }}
+      incumbent_ref: ${{ steps.sel.outputs.incumbent_ref }}
+      record_cache: ${{ steps.sel.outputs.record_cache }}
+      record_manifest_sha256: ${{ steps.sel.outputs.record_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ github.sha }}", path: bot-src, persist-credentials: false, sparse-checkout: .github }
+      - id: sel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RF_CHECKOUT: ${{ github.workspace }}/bot-src
+          PR: ${{ inputs.pr }}
+          RETIRE: ${{ inputs.retire }}
+        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR" --retire "$RETIRE"
+
+  evaluate:
+    needs: select
+    if: needs.select.outputs.id != ''
+    # the core's evaluation, pinned by commit (THE PIN)
+    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@df1f3448f9ec181ce1fcae43964fd11301f653bf
+    permissions: { contents: read, id-token: write, attestations: write }
+    with:
+      entry_repo: ${{ github.repository }}
+      entry_sha: ${{ needs.select.outputs.sha }}
+      entry_path: ${{ needs.select.outputs.path }}
+      pr_ref: ${{ needs.select.outputs.ref }}
+      core_ref: df1f3448f9ec181ce1fcae43964fd11301f653bf
+      # the duel: the standing record at the pin, re-run in the same benchmark job (all three empty
+      # when there is none); the record build cache (false after a failure that used it)
+      incumbent_sha: ${{ needs.select.outputs.incumbent_sha }}
+      incumbent_path: ${{ needs.select.outputs.incumbent_path }}
+      incumbent_ref: ${{ needs.select.outputs.incumbent_ref }}
+      record_cache: ${{ needs.select.outputs.record_cache != 'false' }}
+      # the standing record's attested entry_build.manifest_sha256 ("" if none): the core refuses a
+      # record cache whose manifest differs
+      record_manifest_sha256: ${{ needs.select.outputs.record_manifest_sha256 }}
+
+  publish:
+    needs: [select, evaluate]
+    if: always() && needs.select.result == 'success' && needs.select.outputs.id != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write        # branch `data`; main for a record
+      pull-requests: write   # the comment
+      statuses: write
+      actions: write         # dispatch the next run; the record's build cache
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ github.sha }}", path: bot-src, persist-credentials: false, sparse-checkout: .github }
+      - name: the pin (one value in three places, or nothing is published)
+        id: pin
+        run: |
+          out=$(python3 -I bot-src/.github/bot/pin.py bot-src)
+          echo "pin=${out##*$'\n'}" >> "$GITHUB_OUTPUT"
+      - name: the core at the pin (for harness/verify-record.sh; no entry code)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: scaraven/recursion.fast
+          ref: ${{ steps.pin.outputs.pin }}
+          path: core
+          persist-credentials: false
+          sparse-checkout: harness
+      - name: the attested result (data)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with: { name: result, path: "${{ runner.temp }}/result" }
+      - name: publish
+        id: pub
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          RF_CHECKOUT: ${{ github.workspace }}/bot-src
+          ID: ${{ needs.select.outputs.id }}
+          RESULT: ${{ runner.temp }}/result/result.json
+        run: python3 -I bot-src/.github/bot/bot.py publish --id "$ID" --result "$RESULT" --core core
+      # the record build cache (the core's `record_cache` input): on a new record only, the `entry-build`
+      # artifact (untrusted entry output: saved, never run here) is cached if its manifest.json has
+      # the attested `entry_build.manifest_sha256`; the pin's older record builds are deleted
+      - name: the record's build, if the evaluation produced one
+        id: build
+        if: steps.pub.outputs.record == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with: { name: entry-build, path: "${{ runner.temp }}/record-build" }
+      - name: the build is the attested one
+        id: buildok
+        if: steps.pub.outputs.record == 'true' && steps.build.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RF_CHECKOUT: ${{ github.workspace }}/bot-src
+          ID: ${{ needs.select.outputs.id }}
+          RESULT: ${{ runner.temp }}/result/result.json
+          DIR: ${{ runner.temp }}/record-build
+        run: python3 -I bot-src/.github/bot/bot.py record-build --id "$ID" --result "$RESULT" --dir "$DIR"
+      - name: cache the record's build
+        if: steps.buildok.outputs.key != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/record-build
+          key: ${{ steps.buildok.outputs.key }}

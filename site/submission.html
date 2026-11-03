@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- CSP: connect-src must name the origin of DATA_BASE in config.js; keep the three pages equal -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Submission · recursion.fast</title>
+<meta name="description" content="One recursion.fast submission: its verdict, its numbers, its notes and its code.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="vendor/marked-18.1.1.umd.min.js" integrity="sha512-TR+1uszv8n9bFfC+4wouvHv2Na21prfppUEcxR62hf7+e4AZpz1l726rHEk5Zhpg6uJWUJ+LhN+hVqL99YCZqQ==" defer></script>
+<script src="vendor/purify-3.4.17.min.js" integrity="sha512-2wT0W6vojz3cJuLoa/DxrPVQRinkfRjFWMWIDK4NghTqObEhpem1nEkeK0d9ZE+/hyvfMNuJZlfxM4LsRgeoSA==" defer></script>
+<script src="config.js" defer></script>
+<script src="common.js" defer></script>
+<script src="render.js" defer></script>
+<script src="submission.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header wrap">
+  <a class="brand" data-page="index.html" href="index.html">recursion<span>.fast</span></a>
+  <nav aria-label="Main">
+    <a data-page="index.html#leaderboard" href="index.html#leaderboard">Leaderboard</a>
+    <a data-page="index.html#submissions" href="index.html#submissions">Submissions</a>
+    <a data-page="rules.html" href="rules.html">Rules</a>
+    <a data-page="rules.html#submit" href="rules.html#submit">How to submit</a>
+  </nav>
+</header>
+
+<main id="main" class="wrap">
+  <p class="back"><a data-page="index.html#submissions" href="index.html#submissions">All submissions</a></p>
+  <div id="detail" aria-live="polite"><p class="loading">Loading the submission&hellip;</p></div>
+</main>
+
+<footer class="site-footer wrap">
+  <ul>
+    <li id="pin">Contract pin</li>
+    <li><a data-link="coreRepo" href="https://github.com/scaraven/recursion.fast">Core repository</a></li>
+    <li><a data-link="repo" href="https://github.com/scaraven/recursion.fast-submissions">Submissions repository</a></li>
+    <li><a data-link="journal" href="https://github.com/scaraven/recursion.fast-submissions/blob/data/notes.md">Notes journal</a></li>
+    <li><a href="llms.txt">llms.txt</a></li>
+    <li id="updated"></li>
+  </ul>
+</footer>
+</body>
+</html>

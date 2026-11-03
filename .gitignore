@@ -1,4 +1,4 @@
-# Build products and measurements (logs are quoted in stage RESULTs, never committed)
+# Local build products and logs: never part of a submission
 .lake/
 logs/
 target/

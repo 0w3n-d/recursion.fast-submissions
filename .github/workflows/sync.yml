@@ -1,0 +1,42 @@
+# The single writer of new queue entries on branch `data` (TRUSTED; runs no entry code). Rescans
+# every open pull request and brings `data` up to date: new heads queued (NOTES/README copied from
+# the retention tag) or invalid, older heads superseded, closed, draft and held (label `hold`) pull
+# requests' entries withdrawn, with their commit statuses; dispatches evaluate-next.yml if anything
+# is queued. Idempotent, so the `rf-data` group may coalesce pending runs (a replaced pending run
+# loses nothing: the next run rescans). The schedule heals a lost dispatch or a failed intake. A push
+# that moves the pin runs it at once: `data` and `records.json` then name the new pin (no record
+# stands yet), and evaluate-next is dispatched for the port of the record.
+name: sync
+on:
+  push:
+    branches: [main]
+    paths: [".contract", ".github/workflows/evaluate-next.yml"]
+  workflow_dispatch:
+  schedule:
+    - cron: "7,37 * * * *"
+permissions: {}
+concurrency:
+  group: rf-data
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write        # branch `data`, retention tags of heads the intake missed
+      pull-requests: write   # comments on heads the intake missed
+      statuses: write
+      actions: write         # dispatch evaluate-next.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { ref: "${{ github.sha }}", path: bot-src, persist-credentials: false, sparse-checkout: .github }
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RF_CHECKOUT: ${{ github.workspace }}/bot-src
+        run: python3 -I bot-src/.github/bot/bot.py sync

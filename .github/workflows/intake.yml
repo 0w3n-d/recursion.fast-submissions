@@ -1,0 +1,53 @@
+# The intake of submission pull requests (TRUSTED). Reads a pull request as data, never runs it:
+# the API's JSON and a bare `git fetch` of refs/pull/N/head, read with `git ls-tree` and
+# `git cat-file` (.github/bot/precheck.py). The workflow file and the bot code come from `main`
+# (pull_request_target and workflow_dispatch run the default branch's copy); the checkout below
+# is `main` at the event's commit, never the pull request.
+#
+# It writes nothing on branch `data` (one writer of the queue: sync.yml). On a valid head: the
+# creation-only tag rf-source/<id>, the commit status `recursion.fast/evaluation` = pending "queued"
+# (its time is the queue timestamp), one comment. On an invalid head: the failure status and a
+# comment with the reasons. Then it dispatches sync.yml, which records the head (or withdraws a
+# closed, draft or held pull request's entry). Organiser pull requests (files outside
+# submissions/, author with write access) are ignored. An intake that fails sets the status
+# "intake failed"; sync (dispatched, or on its schedule) admits the head itself.
+name: intake
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr: { description: "pull request number (the owner's re-intake)", required: true }
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  intake:
+    # the default branch's code only (an event of a pull request into another branch is read,
+    # and ignored, by the same code)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write        # the rf-source/<id> tag (and reading `data`)
+      pull-requests: write   # the comment
+      statuses: write        # recursion.fast/evaluation
+      actions: write         # dispatch sync.yml
+    steps:
+      - name: the bot (main at the event's commit; no pull-request content)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: bot-src
+          persist-credentials: false
+          sparse-checkout: .github
+      - name: intake (the pull request as data)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RF_CHECKOUT: ${{ github.workspace }}/bot-src
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && 'yes' || '' }}
+        run: python3 -I bot-src/.github/bot/bot.py intake --pr "$PR" ${FORCE:+--force}

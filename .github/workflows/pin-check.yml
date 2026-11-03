@@ -1,0 +1,57 @@
+# The one core pin (TRUSTED check; runs no pull-request code): the `.contract` gitlink and the
+# `uses: …/evaluate.yml@<PIN>` and `core_ref: <PIN>` of evaluate-next.yml must be the same full SHA
+# (.github/bot/pin.py), and the core's evaluate.yml at the pin must take every input the bot passes
+# and pin every action by full commit SHA, with the season's [entry] caps equal to the intake's.
+# Warns if the pin is not the core's `main` head. On a pull request, the checker is `main`'s copy (the base commit) and the pull request's
+# head is read as data (git show / ls-tree of a bare fetch): its own code is never run. The bot's
+# tests run on pushes to `main` only. Set the pin with .github/bot/pin-core.sh <sha>.
+name: pin-check
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: [".contract", ".gitmodules", ".github/**"]
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: { contents: read }
+    steps:
+      - name: the checker (main's code; the base commit for a pull request)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: base
+          persist-credentials: false
+      - name: a pull request's pins, read as data, and the core at its pin
+        if: github.event_name == 'pull_request'
+        env:
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ ! -f base/.github/bot/pin.py ]]; then
+            echo "::notice title=pin check::the base branch has no bot yet (the launch PR itself); nothing to check against"
+            exit 0
+          fi
+          git init -q --bare pr.git
+          git --git-dir pr.git fetch -q --depth=1 --no-tags "https://github.com/$REPO.git" "refs/pull/$NUM/head"
+          python3 -I base/.github/bot/pin.py --core --git pr.git FETCH_HEAD
+      - name: main's pins, the core's inputs and caps at the pin
+        if: github.event_name == 'push'
+        run: |
+          out=$(python3 -I base/.github/bot/pin.py --core base)
+          pin=${out##*$'\n'}
+          echo "pin: $pin"
+          head=$(git ls-remote https://github.com/scaraven/recursion.fast.git refs/heads/main | cut -f1)
+          if [[ "$head" != "$pin" ]]; then
+            echo "::warning title=pin::the pin $pin is not the core's main head ($head)"
+          fi
+      - name: the bot's tests
+        if: github.event_name == 'push'
+        run: python3 -I -m unittest discover -s base/.github/bot/tests -t base/.github/bot
