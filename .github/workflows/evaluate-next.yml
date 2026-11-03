@@ -2,9 +2,10 @@
 # concurrency group; a pending run is never cancelled by a running one, and since every run picks
 # from the queue a replaced pending run loses nothing).
 #
-#   select    picks the next entry (fair order: .github/bot/rfqueue.py), marks it running on `data`,
-#             reaps any entry a previous run left running, and names the standing record at the pin
-#             as the duel's incumbent; no entry code
+#   select    picks the next entry (.github/bot/rfqueue.py: a due port of the record to a new pin,
+#             then confirmation duels, then the fair order), marks it running on `data`, reaps any
+#             entry a previous run left running, and names the standing record at the pin as the
+#             duel's incumbent; no entry code
 #   evaluate  the core's reusable workflow at the PIN, with the entry fetched from its retention tag
 #   publish   no entry code: verifies the attestation (.github/bot/attest.py, the checks of the
 #             core's harness/verify-record.sh, which it also runs for an ACCEPT), decides the status
@@ -18,7 +19,7 @@ name: evaluate-next
 on:
   workflow_dispatch:
     inputs:
-      pr: { description: "force this pull request's queued or errored entry, or re-evaluate its record of an earlier pin", required: false, default: "" }
+      pr: { description: "force this pull request's waiting or errored entry, or re-evaluate its record of an earlier pin (a due port runs first)", required: false, default: "" }
       retire: { description: "retire this record id first (the owner's)", required: false, default: "" }
   schedule:
     - cron: "17,47 * * * *"   # fallback: a lost dispatch delays the queue by at most 30 minutes
@@ -73,8 +74,8 @@ jobs:
       entry_path: ${{ needs.select.outputs.path }}
       pr_ref: ${{ needs.select.outputs.ref }}
       core_ref: 9eb4ace62922296e9f29dfebb5a6089c184f6086
-      # the duel (brief §2a): the standing record at the pin, re-run in the same benchmark job (all
-      # three empty when there is none); the record build cache (false after a failure that used it)
+      # the duel: the standing record at the pin, re-run in the same benchmark job (all three empty
+      # when there is none); the record build cache (false after a failure that used it)
       incumbent_sha: ${{ needs.select.outputs.incumbent_sha }}
       incumbent_path: ${{ needs.select.outputs.incumbent_path }}
       incumbent_ref: ${{ needs.select.outputs.incumbent_ref }}
@@ -123,7 +124,7 @@ jobs:
           ID: ${{ needs.select.outputs.id }}
           RESULT: ${{ runner.temp }}/result/result.json
         run: python3 -I bot-src/.github/bot/bot.py publish --id "$ID" --result "$RESULT" --core core
-      # the record build cache (stage S5's interface): on a new record only, the `entry-build`
+      # the record build cache (the core's `record_cache` input): on a new record only, the `entry-build`
       # artifact (untrusted entry output: saved, never run here) is cached if its manifest.json has
       # the attested `entry_build.manifest_sha256`; the pin's older record builds are deleted
       - name: the record's build, if the evaluation produced one

@@ -8,6 +8,7 @@ import unittest
 import tests  # noqa: F401  (puts the bot on sys.path)
 import flows
 import gitdata
+import render
 from simulate import PIN, World, duel_of, git, good_root, make_result
 
 
@@ -47,7 +48,16 @@ class E2E(unittest.TestCase):
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.8, prover="2" * 64, incumbent=duel_of(e, 10.0)))
         self.assertEqual((e["incumbent"]["id"], p["status"], e["record_manifest"]), (rec["id"], "accepted", "f" * 64))
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.5, prover="3" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual((p["status"], p["record_of"]), ("record", rec["id"]))
+        self.assertEqual((p["status"], p["record_of"], p["duels"][0]["won"]), ("confirming", None, True))
+        self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["id"], rec["id"])   # not yet
+        self.assertEqual(self.head_status(3)["state"], "pending")
+        self.g.open_pr(4, "dora", good_root("r4", "4"))                   # queued now, but the confirmation goes first
+        self.w.intake(4)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.6, prover="3" * 64, incumbent=duel_of(e, 10.0)))
+        self.assertEqual((e["pr"], e["incumbent"]["id"], p["status"], p["record_of"]), (3, rec["id"], "record", rec["id"]))
+        self.assertAlmostEqual(p["duel"]["gain"], 0.04)                  # the smaller of 5 % and 4 %
+        self.assertEqual([d["won"] for d in p["duels"]], [True, True])
+        self.assertIsNotNone(self.w.show(f"data:{p['duels'][0]['result']}"))
         r2 = json.loads(self.w.show("main:records.json"))
         self.assertEqual(([r2["record"]["pr"]] + [h["pr"] for h in r2["history"]], r2["margin"]), ([3, 1], 0.03))
         self.assertEqual(git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split(),
@@ -58,6 +68,16 @@ class E2E(unittest.TestCase):
         self.assertLess(md.index("pr3-"), md.index("pr1-"))
         self.assertEqual(self.entry(3)["builds_on"], [1, 2])
         self.assertTrue(all(c[1].count("`") % 2 == 0 for c in self.g.comments))
+
+    def test_launch_with_no_pull_requests(self):
+        self.assertEqual(flows.sync(self.w.ctx()), 0)
+        st = json.loads(self.w.show("data:submissions.json"))
+        self.assertEqual((st["submissions"], st["core"], st["record"]), ([], PIN, None))
+        self.assertIsNone(flows.select(self.w.ctx()))
+        self.assertEqual(self.w.show("main:records.json"), render.records_json(self.w.state(), PIN))
+        main0 = git(self.w.bare, "rev-parse", "main")
+        self.assertIsNone(flows.select(self.w.ctx()))                     # no churn
+        self.assertEqual(git(self.w.bare, "rev-parse", "main"), main0)
 
     def test_sync_heals_a_missed_intake(self):
         self.g.open_pr(1, "alice", good_root("alpha"))                    # no intake ran at all
@@ -77,7 +97,7 @@ class E2E(unittest.TestCase):
         self.assertEqual(self.w.intake(1), "organiser")
         self.g.open_pr(2, "dave", good_root("delta"), draft=True)
         self.assertEqual(self.w.intake(2), "draft")
-        self.assertEqual(self.w.show("data:submissions.json"), None)
+        self.assertEqual(json.loads(self.w.show("data:submissions.json"))["submissions"], [])   # created empty
         self.g.prs[2]["draft"] = False
         self.assertEqual(self.w.intake(2), "valid")
         self.g.prs[2]["labels"] = [{"name": "hold"}]
@@ -169,7 +189,7 @@ class E2E(unittest.TestCase):
         self.w.intake(2)
         fail = lambda e, run: make_result(run, S=99.0, prover="2" * 64, incumbent=duel_of(e, entry_failed=True))  # noqa: E731
         e, p = self.w.evaluate(fail)
-        self.assertEqual((p["status"], p["record_of"]), ("queued", None))   # never a crown (M4)
+        self.assertEqual((p["status"], p["record_of"]), ("queued", None))   # never a crown
         e, p = self.w.evaluate(fail)
         self.assertEqual(p["status"], "queued")
         st = self.w.state()
@@ -181,15 +201,68 @@ class E2E(unittest.TestCase):
         e, p2 = self.w.evaluate(lambda e, run: None, retire=p["id"])
         self.assertIsNone(e)
         self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == p["id"])["status"], "retired")
-        # a pin move: no standing record at the new pin; the owner re-queues the old record's PR first
+        # a pin move after a retirement: nothing is ported automatically; the owner's forced port remains
         self.w.pin = "c" * 40
+        self.assertIsNone(self.w.evaluate(lambda e, run: None)[0])
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=80.0, harness=self.w.pin, prover="2" * 64), force=2)
         self.assertEqual((e["port_of"], p["status"], "incumbent" in e), (self.entry(2)["id"], "record", False))
         self.g.open_pr(3, "carol", good_root("gamma", "3"))
         self.w.intake(3)
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=70.0, harness=self.w.pin, prover="3" * 64,
-                                                          incumbent=duel_of(e, 80.0)))
-        self.assertEqual((e["incumbent"]["tag"], p["status"]), (self.entry(2)["tag"], "record"))
+        win = lambda e, run: make_result(run, S=70.0, harness=self.w.pin, prover="3" * 64, incumbent=duel_of(e, 80.0))  # noqa: E731
+        e, p = self.w.evaluate(win)
+        self.assertEqual((e["incumbent"]["tag"], p["status"]), (self.entry(2)["tag"], "confirming"))
+        e, p = self.w.evaluate(win)
+        self.assertEqual(p["status"], "record")
+
+    def test_pin_move_ports_the_record_first(self):
+        self.g.open_pr(1, "alice", good_root("alpha", "1"))
+        self.w.intake(1)
+        _, rec = self.w.evaluate(lambda e, run: make_result(run, S=10.0, prover="1" * 64))
+        self.g.open_pr(2, "mallory", good_root("beta", "2"))            # queued before the pin moves
+        self.w.intake(2)
+        self.w.pin = "c" * 40
+        # even a forced run of #2 evaluates the record's port first, unpaired
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=11.0, harness=self.w.pin, prover="1" * 64), force=2)
+        self.assertEqual((e["id"], e["port_of"], "incumbent" in e, p["status"]), (rec["id"] + "-cccccccc", rec["id"], False, "record"))
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=50.0, harness=self.w.pin, prover="2" * 64,
+                                                          incumbent=duel_of(e, 11.0)))
+        self.assertEqual((e["pr"], e["incumbent"]["id"], p["status"]), (2, rec["id"] + "-cccccccc", "accepted"))
+        # the next pin: the port fails, so no record stands; main says so, and the queue proceeds
+        self.w.pin = "d" * 40
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT", harness=self.w.pin))
+        self.assertEqual((e["port_of"], p["status"]), (rec["id"] + "-cccccccc", "rejected"))
+        r = json.loads(self.w.show("main:records.json"))
+        self.assertEqual((r["core"], r["record"]), ("d" * 40, None))
+        self.assertIn("submissions/alpha", git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
+        self.g.open_pr(3, "carol", good_root("gamma", "3"))
+        self.w.intake(3)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=40.0, harness=self.w.pin, prover="3" * 64))
+        self.assertEqual((e["pr"], p["status"], "incumbent" in e), (3, "record", False))
+
+    def test_confirmation_lost_and_pushes_meanwhile(self):
+        self.g.open_pr(1, "alice", good_root("alpha", "1"))
+        self.w.intake(1)
+        _, rec = self.w.evaluate(lambda e, run: make_result(run, S=10.0, prover="1" * 64))
+        self.g.open_pr(2, "bob", good_root("beta", "2"))
+        self.w.intake(2)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="2" * 64, incumbent=duel_of(e, 10.0)))
+        self.assertEqual(p["status"], "confirming")
+        first = p["id"]
+        # the author pushes an empty commit (refused: being evaluated), then a real change (queued
+        # behind); neither touches the confirmation, nor does a run that dies
+        self.g.push(2, {})
+        self.assertEqual(self.w.intake(2), "invalid")
+        self.assertIn("being evaluated", self.entry(2)["reasons"][0])
+        self.g.push(2, {"submissions/beta/lean/Solution.lean": b"-- v2\n"})
+        self.assertEqual(self.w.intake(2), "valid")
+        self.w.run += 1
+        dead = flows.select(self.w.ctx(self.w.run))
+        self.assertEqual(dead["id"], first)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.9, prover="2" * 64, incumbent=duel_of(e, 10.0)))
+        self.assertEqual((e["id"], p["status"], [d["won"] for d in p["duels"]]), (first, "accepted", [True, False]))
+        self.assertEqual(json.loads(self.w.show("data:submissions.json"))["record"], rec["id"])
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="4" * 64, incumbent=duel_of(e, 10.0)))
+        self.assertEqual((e["pr"], e["id"] != first, p["status"]), (2, True, "confirming"))
 
     def test_record_cache_retry_and_build(self):
         self.g.open_pr(1, "alice", good_root("alpha"))
@@ -213,8 +286,8 @@ class E2E(unittest.TestCase):
         self.assertIsNone(flows.record_build(ctx, {}, d, PIN, "pr1-x"))
 
     def test_unreadable_data_fails_closed(self):
-        """Review M1 (probe_bigstate): an oversized or foreign submissions.json stops every step and
-        changes neither `data` nor `main`."""
+        """An oversized or foreign submissions.json stops every step and changes neither `data` nor
+        `main`."""
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
         self.w.intake(1)
         self.w.evaluate(lambda e, run: make_result(run, S=10.0))
@@ -232,7 +305,7 @@ class E2E(unittest.TestCase):
             self.assertEqual((git(self.w.bare, "rev-parse", "data"), git(self.w.bare, "rev-parse", "main")), (data0, main0))
 
     def test_contention(self):
-        """Review M3 (probe_contention): 16 concurrent writers, jittered backoff: none loses."""
+        """16 concurrent writers, jittered backoff: none loses."""
         res = {}
 
         def writer(i):

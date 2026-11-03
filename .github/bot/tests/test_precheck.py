@@ -67,7 +67,7 @@ class Tree(unittest.TestCase):
         f = good_root("alpha")
         reasons, _ = self.check({**f, "submissions/alpha/lean/link": b"/etc/passwd"}, modes={"submissions/alpha/lean/link": "120000"})
         self.assertTrue(any("symbolic link" in r for r in reasons))
-        reasons, _ = self.check({**f, "submissions/alpha/dep": b"9eb4ace62922296e9f29dfebb5a6089c184f6086"},
+        reasons, _ = self.check({**f, "submissions/alpha/dep": b"c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de"},
                                 modes={"submissions/alpha/dep": "160000"})
         self.assertTrue(any("gitlink" in r for r in reasons))
         for name in (".gitattributes", "a b.txt", "x/.GITmodules", "naïve.md", "a`b"):
@@ -92,7 +92,7 @@ class Tree(unittest.TestCase):
             for k in ("lean_files", "lean_bytes", "prover_files", "prover_bytes", "claim_bytes"):
                 self.assertTrue(any(f"cap {k} =" in r for r in reasons), k)
         self.assertEqual(precheck.ENTRY_CAPS, caps)
-        # the season's values (core harness/season.toml [entry], launch S6)
+        # the season's values (core harness/season.toml [entry])
         self.assertEqual(caps, {"files": 2048, "bytes": 536870912, "file_bytes": 134217728, "lean_files": 1024,
                                 "lean_bytes": 33554432, "prover_files": 256, "prover_bytes": 268435456,
                                 "claim_bytes": 65536})

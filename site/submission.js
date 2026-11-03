@@ -55,21 +55,37 @@
         m('Score S', sc.S, 'per 2¹⁸ compressions'),
         m('Prover P̄', sc.P_bar, 'calibrated time'),
         m('Verifier V̄', sc.V_bar, 'check time and proof size')));
-      const d = e.duel;
-      if (d) {
-        const inc = rel.byId.get(d.incumbent);
-        const incName = inc ? subLink(inc) : el('code', null, d.incumbent);
+      const duels = e.duels.length ? e.duels : e.duel ? [e.duel] : [];
+      const incOf = d => { const inc = rel.byId.get(d.incumbent); return inc ? subLink(inc) : el('code', null, d.incumbent); };
+      const need = `A win needs ${pct(-data.margin * 100)} or better; a record must win ${data.wins === 1 ? 'one duel' : data.wins + ' duels'} against the same record.`;
+      if (duels.length === 1 && e.status !== 'confirming') {
+        const d = duels[0];
         if (d.incumbent_failed) {
           parts.push(el('p', { class: 'duel' }, el('strong', null, 'Head-to-head: the record failed on this runner.'), ' ',
-            'The incumbent record (', incName, ') was run in the same job and failed for a reason of its own. That does not crown a challenger: this entry stays accepted and is queued once more for another duel. A record that fails two duels is retired.'));
+            'The incumbent record (', incOf(d), ') was run in the same job and failed for a reason of its own. That does not crown a challenger: this entry is evaluated once more for another duel. A record that fails two duels is retired.'));
         } else {
-          const g = duelGain(e);
+          const g = duelGain(e, d);
           parts.push(el('p', { class: 'duel' }, el('strong', null, 'Head-to-head: ' + (g !== null ? pct(g) : '\u2013') + '.'), ' ',
-            `This entry scored ${fmtS(sc.S)} s and the incumbent record (`, incName,
-            `) ${fmtS(d.S_inc)} s, on the same runner in the same job, with the same chain lengths. A new record needs ${pct(-data.margin * 100)} or better.`));
+            `This entry scored ${fmtS(d.S !== null ? d.S : sc.S)} s and the incumbent record (`, incOf(d),
+            `) ${fmtS(d.S_inc)} s, on the same runner in the same job, with the same chain lengths. ${need}`));
         }
+      } else if (duels.length) {
+        const won = duels.filter(d => d.won).length;
+        const g = duelGain(e);
+        const head = e.status === 'confirming'
+          ? [el('strong', null, 'Won its duel; the confirmation duel is next.'), ` One more duel of this same commit against the same record runs before any other entry, on whatever runner it gets. ${need}`]
+          : (e.status === 'record' || e.status === 'retired') && e.record_of
+            ? [el('strong', null, `Head-to-head: ${g !== null ? pct(g) : '\u2013'}`), won > 1 ? `, the smaller of the ${won} duels it won. ${need}` : `. ${need}`]
+            : e.status === 'record' || e.status === 'retired'
+              ? [el('strong', null, 'No duel decided it.'), ' The record it faced was retired, so it took the record when it was evaluated again with no standing record. Its duels:']
+              : [el('strong', null, won ? 'Won a duel, but not its confirmation.' : 'Head-to-head.'), ' ', need];
+        const item = (d, i) => el('li', null, `Duel ${i + 1} against `, incOf(d), ': ',
+          d.incumbent_failed ? 'the record failed on this runner (no comparison)'
+            : [`${fmtS(d.S)} s against ${fmtS(d.S_inc)} s, ${pct(duelGain(e, d))}, `, el('strong', null, d.won ? 'won' : 'lost')],
+          d.run_url ? [' (', ext(d.run_url, 'run'), d.result ? [', ', el('a', { href: link.resultAt(d.result), rel: 'noopener noreferrer' }, 'result')] : null, ')'] : null);
+        parts.push(el('div', { class: 'duel' }, el('p', null, head), el('ol', { class: 'duels' }, duels.map(item))));
       } else if ((e.status === 'record' || e.status === 'retired') && !e.record_of) {
-        parts.push(el('p', { class: 'duel' }, e.port_of ? 'A record ported to a new contract pin by the owner: no duel.'
+        parts.push(el('p', { class: 'duel' }, e.port_of ? 'The previous pin\'s record, re-run at a new contract pin before any other entry: no duel.'
           : 'No record stood at its contract pin when it was evaluated, so it took the record without a duel.'));
       }
     }
@@ -120,7 +136,12 @@
         : el('li', null, ext(link.prNum(n), '#' + n));
     };
     const cites = (rel.citedBy.get(e.pr) || []).slice().sort((a, b) => a.pr - b.pr);
-    const citeRef = c => { const li = prRef(c.pr); if (c.self) li.append(el('span', { class: 'muted' }, ' same author, not counted')); return li; };
+    const citeRef = c => {
+      const li = prRef(c.pr);
+      if (c.self) li.append(el('span', { class: 'muted' }, ' same author, not counted'));
+      else if (c.pending) li.append(el('span', { class: 'muted' }, ' no verdict yet, not counted'));
+      return li;
+    };
     parts.push(el('section', { class: 'panel', 'aria-labelledby': 'h-credit' },
       el('h2', { id: 'h-credit' }, 'Builds on and cited by'),
       el('dl', { class: 'kv' },

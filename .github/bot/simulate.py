@@ -18,7 +18,7 @@ import flows  # noqa: E402
 import rfqueue  # noqa: E402
 
 REPO = "scaraven/recursion.fast-submissions"
-PIN = "9eb4ace62922296e9f29dfebb5a6089c184f6086"
+PIN = "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de"   # fictional
 GENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "GIT_AUTHOR_DATE": "2026-11-03T00:00:00Z",
         "GIT_COMMITTER_DATE": "2026-11-03T00:00:00Z"}
@@ -238,10 +238,21 @@ def main():
         print("sync: changed", flows.sync(w.ctx()))
         e, p = w.evaluate(lambda e, run: make_result(run, S=10.0))
         print("evaluated", e["id"], "->", p["status"], "(no record: unpaired)")
+        # a duel won is confirmed by a second duel of the same commit, first in the queue
         e, p = w.evaluate(lambda e, run: make_result(run, S=9.5, prover="b" * 64, incumbent=duel_of(e, 10.2)))
         print("evaluated", e["id"], "->", p["status"], "|", p["reasons"][-1])
+        g.open_pr(6, "erin", good_root("zeta", "6"))
+        w.intake(6)
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.6, prover="b" * 64, incumbent=duel_of(e, 10.1)))
+        print("confirmation of", e["id"], "->", p["status"], "| credited gain", f"{p['duel']['gain']:+.1%}",
+              "of", [f"{d['gain']:+.1%}" for d in p["duels"]])
         print("main records.json:", json.loads(w.show("main:records.json"))["record"]["id"],
               "main roots:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
+        # a near-copy wins its first duel by noise and loses the confirmation
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, prover="f" * 64, incumbent=duel_of(e, 9.5)))
+        print("evaluated", e["id"], "->", p["status"])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.6, prover="f" * 64, incumbent=duel_of(e, 9.5)))
+        print("confirmation of", e["id"], "->", p["status"], "|", [d["won"] for d in p["duels"]])
         # the record fails on two runners: no crown, a retry, then retirement
         g.open_pr(4, "carol", good_root("delta", "4"))
         w.intake(4)
@@ -251,16 +262,19 @@ def main():
         print("duel, the record failed again:", p["status"], "|", p["reasons"][-1])
         e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64))
         print("unpaired after the retirement:", e["id"], "->", p["status"], "incumbent" in e)
-        # the pin moves: no record at the new pin; the old record's PR is re-queued first by the owner
-        w.pin = "c" * 40
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, harness=w.pin, prover="b" * 64), force=2)
-        print("pin moved; the owner re-queues #2 first:", e["id"], "->", p["status"], "incumbent" in e)
+        # the pin moves while #5 waits: the record's port runs first, unpaired, and keeps the crown
         g.open_pr(5, "dave", good_root("eps", "5"))
         w.intake(5)
-        e, p = w.evaluate(lambda e, run: make_result(run, S=8.0, harness=w.pin, prover="e" * 64, incumbent=duel_of(e, 9.0)))
+        w.pin = "c" * 40
+        e, p = w.evaluate(lambda e, run: make_result(run, S=90.0, harness=w.pin, prover="c" * 64))
+        print("pin moved; the record is ported first:", e["id"], "->", p["status"], "incumbent" in e)
+        win = lambda e, run: make_result(run, S=80.0, harness=w.pin, prover="e" * 64, incumbent=duel_of(e, 90.0))  # noqa: E731
+        e, p = w.evaluate(win)
         print("then a duel at the new pin:", e["id"], "->", p["status"], "|", p["reasons"][-1])
+        e, p = w.evaluate(win)
+        print("and its confirmation:", e["id"], "->", p["status"])
         rec = json.loads(w.show("main:records.json"))
-        print("records.json:", rec["record"]["id"], "history:", [h["id"] + ":" + h["status"] for h in rec["history"]])
+        print("records.json:", rec["core"][:8], rec["record"]["id"], "history:", [h["id"] + ":" + h["status"] for h in rec["history"]])
         print("comments:", len(g.comments), "statuses:", len(g.status_log), "dispatches:", len(g.dispatches))
         print("queue:", [(x["id"], x["status"]) for x in w.state()["submissions"]])
     finally:

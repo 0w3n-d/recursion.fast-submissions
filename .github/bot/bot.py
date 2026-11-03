@@ -93,7 +93,7 @@ def main():
                    record_cache="true" if e.get("record_cache", True) else "false",
                    record_manifest_sha256=e.get("record_manifest") or "")
             inc = e.get("incumbent")
-            if inc:   # the standing record, re-run in the same job (brief §2a)
+            if inc:   # the standing record, re-run in the same benchmark job (the duel)
                 output(incumbent_id=inc["id"], incumbent_sha=inc["sha"], incumbent_path=f"submissions/{inc['root']}",
                        incumbent_ref=f"refs/tags/{inc['tag']}")
     elif a.cmd == "publish":

@@ -10,7 +10,7 @@ import render
 import rfqueue
 from decide import decide
 
-PIN = "9eb4ace62922296e9f29dfebb5a6089c184f6086"
+PIN = "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de"   # fictional
 OK = {"attested": True, "record_ok": True, "reason": ""}
 
 
@@ -43,6 +43,14 @@ class Queue(unittest.TestCase):
         # bob never evaluated first; then spam (last start 2025-12) before carol (2026-01); then round robin
         self.assertEqual([e["pr"] for e in rfqueue.order(s)], [4, 1, 5, 2, 3])
 
+    def test_confirmations_and_ports_first(self):
+        s = self.st(E(1, 1, "a", queued="2026-01-01T00:00:01Z"),
+                    E(2, 2, "b", status="confirming", queued="2026-01-01T00:00:05Z"),
+                    E(3, 3, "c", queued="2026-01-01T00:00:02Z", port_of="pr3-000000000009"),
+                    E(4, 4, "d", status="confirming", queued="2026-01-01T00:00:03Z"))
+        self.assertEqual([e["pr"] for e in rfqueue.order(s)], [3, 4, 2, 1])
+        self.assertTrue(rfqueue.any_queued(self.st(E(5, 5, "e", status="confirming"))))
+
     def test_never_evaluated_first_in_queue_order(self):
         s = self.st(E(1, 1, "b", queued="2026-01-01T00:00:02Z"), E(2, 2, "a", queued="2026-01-01T00:00:03Z"))
         self.assertEqual([e["pr"] for e in rfqueue.order(s)], [1, 2])
@@ -68,9 +76,10 @@ class Queue(unittest.TestCase):
         self.assertFalse(rfqueue.add_invalid(s, E(3, 7, "x"), ["bad"], "t8")[1])
 
     def test_reap_and_attempts(self):
-        s = self.st(E(1, 1, "x", status="running", attempts=1), E(2, 2, "y", status="running", attempts=2))
-        self.assertEqual(len(rfqueue.reap(s, "t")), 2)
-        self.assertEqual([e["status"] for e in s["submissions"]], ["queued", "error"])
+        s = self.st(E(1, 1, "x", status="running", attempts=1), E(2, 2, "y", status="running", attempts=2),
+                    E(3, 3, "z", status="running", attempts=1, duels=[{"incumbent": "pr9-000000000009", "won": True}]))
+        self.assertEqual(len(rfqueue.reap(s, "t")), 3)
+        self.assertEqual([e["status"] for e in s["submissions"]], ["queued", "error", "confirming"])
 
     def test_duplicates(self):
         s = self.st(E(1, 1, "alice", tree="T", status="withdrawn"), E(2, 2, "bob", tree="U", status="accepted"),
@@ -83,6 +92,10 @@ class Queue(unittest.TestCase):
         self.assertIsNone(rfqueue.duplicate_of(s, "new", 3, "bob", "V"))     # the same PR: superseded instead
         self.assertIsNone(rfqueue.duplicate_of(s, "new", 9, "mallory", "W"))
         self.assertIsNone(rfqueue.duplicate_of(s, "new", 5, "bob", "X"))     # an organiser ERROR may be retried
+        self.assertIn("another author", rfqueue.duplicate_of(s, "new", 9, "mallory", "X"))   # by its author only
+        s["submissions"] += [E(6, 6, "bob", tree="Y", status="running"), E(7, 7, "bob", tree="Z", status="confirming")]
+        self.assertIn("being evaluated", rfqueue.duplicate_of(s, "new", 6, "bob", "Y"))    # an empty push meanwhile
+        self.assertIn("being evaluated", rfqueue.duplicate_of(s, "new", 7, "bob", "Z"))
 
     def test_records_per_pin_and_retirement(self):
         s = self.st(E(1, 1, "a", status="record", finished="2026-01-01", harness_commit=PIN),
@@ -112,8 +125,21 @@ class Queue(unittest.TestCase):
         self.assertIsNone(rfqueue.port(s, 1, "c" * 40, "now"))     # once
         self.assertIsNone(rfqueue.port(s, 1, PIN, "now"))          # the same pin: nothing to port
 
+    def test_due_port(self):
+        rec = E(1, 1, "a", status="record", finished="2026-01-01", harness_commit=PIN, tag="rf-source/x")
+        s = self.st(rec, E(2, 2, "b", status="accepted", finished="2026-01-02", harness_commit=PIN))
+        self.assertIsNone(rfqueue.due_port(s, PIN))                 # it stands at its own pin
+        self.assertIs(rfqueue.due_port(s, "c" * 40), rec)
+        p = rfqueue.port(s, 1, "c" * 40, "now", o=rec)
+        self.assertIsNone(rfqueue.due_port(s, "c" * 40))            # once, whatever its verdict
+        p["status"] = "rejected"
+        self.assertIsNone(rfqueue.due_port(s, "c" * 40))
+        self.assertIs(rfqueue.due_port(s, "d" * 40), rec)           # the next pin: the last standing record
+        rfqueue.retire(rec, "t", "x")
+        self.assertIsNone(rfqueue.due_port(s, "d" * 40))            # a retired record is not ported
+
     def test_compaction_and_large_state(self):
-        """Review M1: a flood of pushes keeps the state bounded; a large state loads and orders fast."""
+        """A flood of pushes keeps the state bounded; a large state loads and orders fast."""
         es = []
         for k in range(3000):
             es.append(E(k + 1, 7, "spam", status="superseded", queued=f"2026-01-01T00:{k // 60:02d}:{k % 60:02d}Z",
@@ -173,15 +199,18 @@ class Decide(unittest.TestCase):
         self.assertEqual(decide(R(), bad, PIN, None, 1)["status"], "queued")
         self.assertEqual(decide(R(), dict(OK, record_ok=False), PIN, None, 2)["status"], "error")
         self.assertEqual(decide(R(harness="b" * 40), OK, PIN, None, 2)["status"], "error")
-        for v in ("REJECT", "PROVISIONAL"):       # review m11: an unattested result is never published as such
+        for v in ("REJECT", "PROVISIONAL"):       # an unattested result is never published as such
             d = decide(R(v), bad, PIN, None, 1)
             self.assertEqual((d["status"], d["verified"]), ("queued", False))
             self.assertTrue(any("not verified" in r for r in d["reasons"]))
 
     def test_duel(self):
         d = decide(R(S=9.7, **self.duel(10.0)), OK, PIN, self.rec, 1)
-        self.assertEqual((d["status"], d["record_of"]), ("record", self.rec["id"]))     # exactly 0.97: a record
+        self.assertEqual((d["status"], d["record_of"]), ("confirming", None))     # exactly 0.97: a win
         self.assertAlmostEqual(d["duel"]["gain"], 0.03)
+        self.assertTrue(d["duel"]["won"])
+        d = decide(R(S=9.7, **self.duel(10.0)), OK, PIN, self.rec, 1, record_wins=1)
+        self.assertEqual((d["status"], d["record_of"]), ("record", self.rec["id"]))
         self.assertEqual(decide(R(S=9.71, **self.duel(10.0)), OK, PIN, self.rec, 1)["status"], "accepted")
         # only the same-job measurement counts, not the record's stored S
         self.assertEqual(decide(R(S=5.0, **self.duel(5.1)), OK, PIN, self.rec, 1)["status"], "accepted")
@@ -194,8 +223,31 @@ class Decide(unittest.TestCase):
         d = decide(R(S=1.0, prover_sha256="p" * 64, **self.duel(10.0)), OK, PIN, self.rec, 1, {"p" * 64: "pr0-000000000000"})
         self.assertEqual(d["status"], "accepted")
 
+    def test_confirmation(self):
+        first = {"incumbent": self.rec["id"], "S": 9.0, "S_inc": 10.0, "gain": 0.10, "incumbent_failed": False, "won": True}
+        d = decide(R(S=9.5, **self.duel(10.0)), OK, PIN, self.rec, 1, wins=[first])
+        self.assertEqual((d["status"], d["record_of"]), ("record", self.rec["id"]))
+        self.assertAlmostEqual(d["duel"]["gain"], 0.05)                 # credited: the smaller of the two gains
+        self.assertAlmostEqual(d["duel_now"]["gain"], 0.05)
+        d = decide(R(S=8.0, **self.duel(10.0)), OK, PIN, self.rec, 1, wins=[first])
+        self.assertAlmostEqual(d["duel"]["gain"], 0.10)
+        d = decide(R(S=9.9, **self.duel(10.0)), OK, PIN, self.rec, 1, wins=[first])
+        self.assertEqual((d["status"], d["record_of"]), ("accepted", None))     # the confirmation lost
+        self.assertTrue(any("confirmation" in r for r in d["reasons"]))
+        # an organiser error or the record's failure keeps the win and the place at the front
+        self.assertEqual(decide(R("ERROR"), OK, PIN, self.rec, 1, wins=[first])["status"], "confirming")
+        failed = self.duel(None, verdict="REJECT", comparable=False, entry_failed=True)
+        d = decide(R(S=9.0, **failed), OK, PIN, self.rec, 1, wins=[first])
+        self.assertEqual((d["status"], d["requeue"], d["record_failed"]), ("confirming", True, True))
+        d = decide(R(S=9.0, **failed), OK, PIN, self.rec, 1, wins=[first], duel_retries=1)
+        self.assertEqual(d["status"], "accepted")
+        d = decide(R(S=9.0, **failed), OK, PIN, self.rec, 1, wins=[first], record_failures=1)
+        self.assertEqual((d["status"], d["retire_record"]), ("queued", True))       # retired: evaluated unpaired
+        self.assertEqual(decide(R("REJECT"), OK, PIN, self.rec, 1, wins=[first])["status"], "rejected")
+        self.assertEqual(decide(R(), OK, PIN, None, 1, wins=[first])["status"], "record")   # no record: unpaired
+
     def test_incumbent_failed_never_crowns(self):
-        """Review M4: the record failing on the duel's runner gives no crown; a retry; two failures retire it."""
+        """The record failing on the duel's runner gives no crown; a retry; two failures retire it."""
         failed = self.duel(None, verdict="ACCEPT", truncated=True, comparable=False, entry_failed=True, reasons=["cap"])
         d = decide(R(S=50.0, **failed), OK, PIN, self.rec, 1)
         self.assertEqual((d["status"], d["requeue"], d["duel_retry"], d["record_failed"], d["retire_record"]),
@@ -235,6 +287,8 @@ class Render(unittest.TestCase):
     def test_status_description(self):
         e = {"status": "rejected", "verdict": "REJECT", "score": None}
         self.assertEqual(render.status_for(e), ("failure", "REJECT: rejected"))
+        e = {"status": "confirming", "verdict": "ACCEPT", "score": {"S": 2.0}}
+        self.assertEqual(render.status_for(e), ("pending", "ACCEPT: won a duel, confirmation duel queued, S = 2.0000 s"))
         e = {"status": "record", "verdict": "ACCEPT", "score": {"S": 1.23456}}
         self.assertEqual(render.status_for(e)[0], "success")
         self.assertLessEqual(len(render.status_for({"status": "x" * 500})[1]), 140)
@@ -269,7 +323,8 @@ class Render(unittest.TestCase):
                              E(2, 2, "b", status="record", finished="2026-01-02", harness_commit=PIN),
                              E(3, 3, "c", status="accepted", harness_commit=PIN)]
         r = json.loads(render.records_json(st, PIN))
-        self.assertEqual((r["record"]["pr"], [h["pr"] for h in r["history"]], r["margin"], r["core"]), (2, [1], 0.03, PIN))
+        self.assertEqual((r["record"]["pr"], [h["pr"] for h in r["history"]], r["margin"], r["record_wins"], r["core"]),
+                         (2, [1], 0.03, 2, PIN))
         self.assertIsNone(json.loads(render.records_json(rfqueue.empty("o/r", PIN), PIN))["record"])
         r = json.loads(render.records_json(st, "c" * 40))       # another pin: no standing record, the history kept
         self.assertEqual((r["record"], [h["pr"] for h in r["history"]]), (None, [2, 1]))
@@ -287,6 +342,23 @@ class Pin(unittest.TestCase):
         two = self.W.format(a=PIN, b=PIN) + "  x:\n    uses: scaraven/recursion.fast/.github/workflows/other.yml@main\n"
         self.assertIsNone(pin.pins_of(two, PIN)[0])
         self.assertIsNone(pin.pins_of(self.W.format(a=PIN, b=PIN) + "      core_ref: " + PIN + "\n", PIN)[0])
+
+    def test_core_actions_pinned_by_sha(self):
+        core = ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@" + "1" * 40 + "  # v4\n"
+                "      - uses: ./local\n        with: {x: 1}\n")
+        self.assertEqual(pin.tag_problems(core), [])
+        bad = core + "      - uses: actions/cache/save@v4\n      -   uses: 'actions/x@main'\n      - uses: actions/cache/save@v4\n"
+        self.assertEqual(len(pin.tag_problems(bad)), 2)
+        self.assertIn("actions/cache/save at v4", pin.tag_problems(bad)[0])
+
+    def test_repin_records(self):
+        old = {"version": 1, "core": PIN, "margin": 0.03, "record_wins": 2, "record": {"id": "pr1-000000000001"},
+               "history": [{"id": "pr0-000000000000"}]}
+        r = json.loads(pin.repin_records(json.dumps(old).encode(), "c" * 40))
+        self.assertEqual((r["core"], r["record"], [h["id"] for h in r["history"]]),
+                         ("c" * 40, None, ["pr1-000000000001", "pr0-000000000000"]))
+        launch = render.records_json(rfqueue.empty("o/r", PIN), PIN)
+        self.assertEqual(pin.repin_records(launch, "c" * 40), render.records_json(rfqueue.empty("o/r", "c" * 40), "c" * 40))
 
     def test_repository_files(self):
         import os
@@ -326,10 +398,10 @@ class Attest(unittest.TestCase):
         self.assertEqual((v["attested"], v["record_ok"]), (True, False))
         v = attest.verify("p", self.res(verdict="REJECT"), self.repo, self.rid, "core", run=self.fake())
         self.assertEqual((v["attested"], v["record_ok"]), (True, False))
-        # S3 (a): a non-comparable ACCEPT is attested and never asked of verify-record.sh
+        # a non-comparable ACCEPT is attested and never asked of verify-record.sh
         v = attest.verify("p", self.res(comparable=False), self.repo, self.rid, "core", run=self.fake(vr_rc=1))
         self.assertEqual((v["attested"], v["record_ok"]), (True, False))
-        # review m2: an earlier attempt than the one that selected the entry is refused
+        # an earlier attempt than the one that selected the entry is refused
         self.assertFalse(attest.verify("p", self.res(), self.repo, self.rid, "core", run=self.fake(), min_attempt=2)["attested"])
         v = attest.verify("p", self.res(job="o/r/actions/runs/77/attempts/2"), self.repo, self.rid, "core",
                           run=self.fake(uri="https://github.com/o/r/actions/runs/77/attempts/2"), min_attempt=2)

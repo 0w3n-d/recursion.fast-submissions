@@ -70,13 +70,17 @@ Records are per contract pin. While a record stands, every evaluation is a head-
 candidate and record run in the same job on the same runner with the same chain lengths, and the
 candidate needs ACCEPT, comparable (full stream, one CPU model, job plan matched, S > 0), attested
 by the core's evaluate.yml at the pin, a prover binary no earlier record had, and
-S ≤ 0.97 × S_record from that job. Runners differ by up to ~18 %, so scores from different jobs
-never decide a record. The record failing on the runner is not a win: the candidate stays
-`accepted` and is queued for another duel; a record failing two duels is `retired`. With no
-standing record (start, retirement, pin move) the first comparable attested ACCEPT is the record.
-The standing record is `record` (an id or null) at the top of submissions.json.
+S ≤ 0.97 × S_record from that job. One win makes the candidate `confirming`: a second duel of the
+same commit against the same record runs next, first in the queue; it is the record only if it
+wins that too (credited with the smaller gain), else `accepted`. Runners differ by up to ~18 %, so
+scores from different jobs never decide a record. The record failing on the runner is not a win:
+the candidate is queued for another duel; a record failing two duels is `retired`. After a pin
+move the bot re-runs the record at the new pin first, alone. With no standing record (start,
+retirement, a failed re-run) the first comparable attested ACCEPT is the record. The standing
+record is `record` (an id or null) at the top of submissions.json; records.json on main names it
+and the pin.
 
-## Consequences that bite (the full list is in the submission procedure)
+## Consequences that bite (the full list is §13 of the core's AGENTS.md)
 
 - V̄ dominated the first recursive entry (P̄ = 4.52, V̄ = 24.52). Size V and |π| before you tune
   the prover.

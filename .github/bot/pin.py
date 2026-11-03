@@ -3,9 +3,13 @@
 
   python3 -I .github/bot/pin.py [REPO_DIR]          the checkout (its index); prints the pin or exits 1
   python3 -I .github/bot/pin.py --git GIT_DIR REV   a commit read as data (a pull request's head)
-  python3 -I .github/bot/pin.py --core [REPO_DIR]   also: the core's evaluate.yml at the pin takes every
-                                                    input the bot passes, and its season's [entry]
-                                                    caps are the bot's (fetches the pin, read-only)"""
+  --core (with either)                              also: the core's evaluate.yml at the pin takes every
+                                                    input the bot passes and pins every action by full
+                                                    commit SHA, and its season's [entry] caps are the
+                                                    bot's (fetches the pin, read-only)
+  python3 -I .github/bot/pin.py --records FILE PIN  prints records.json re-pinned to PIN (no record stands
+                                                    at a new pin: the record moves to the history)"""
+import json
 import os
 import re
 import subprocess
@@ -76,6 +80,23 @@ def inputs_problems(ours, core):
     return [f"the core's evaluate.yml at the pin has no input {k}" for k in missing]
 
 
+ACTION_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"'#]+)", re.M)
+
+
+def tag_problems(core_wf):
+    """Actions of the core's evaluate.yml not pinned by a full commit SHA. The submissions repository
+    requires SHA pins (`sha_pinning_required`), and that reaches into a called reusable workflow, so
+    one tag there fails every evaluation before it starts."""
+    out = []
+    for ref in ACTION_RE.findall(core_wf):
+        if ref.startswith(("./", "docker://")):
+            continue
+        name, _, at = ref.partition("@")
+        if not SHA.match(at):
+            out.append(f"the core's evaluate.yml at the pin uses {name} at {at or 'no ref'}, not a full commit SHA")
+    return list(dict.fromkeys(out))
+
+
 def caps_problems(season_text):
     """Differences between the season's [entry] caps and the bot's (common.ENTRY_CAPS)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -86,31 +107,62 @@ def caps_problems(season_text):
             if vals.get(k) != v] + [f"[entry] {k} is new in the season" for k in sorted(set(vals) - set(ENTRY_CAPS))]
 
 
-def core_problems(repo_dir, pin):
+def core_problems(ours, pin):
+    """What the core at `pin` lacks for our workflow text `ours`: inputs, SHA pins, the caps."""
+    import shutil
     import tempfile
     d = tempfile.mkdtemp(prefix="rf-core-")
-    g = lambda *a: subprocess.run(["git", "--git-dir", d, *a], capture_output=True)  # noqa: E731
-    g("init", "-q", "--bare")
-    if g("fetch", "-q", "--depth=1", "--no-tags", "https://github.com/scaraven/recursion.fast.git", pin).returncode:
-        return [f"cannot fetch the core at {pin}"]
-    core_wf = g("show", f"{pin}:.github/workflows/evaluate.yml").stdout.decode("utf-8", "replace")
-    season = g("show", f"{pin}:harness/season.toml").stdout.decode("utf-8", "replace")
+    try:
+        g = lambda *a: subprocess.run(["git", "--git-dir", d, *a], capture_output=True)  # noqa: E731
+        g("init", "-q", "--bare")
+        if g("fetch", "-q", "--depth=1", "--no-tags", "https://github.com/scaraven/recursion.fast.git", pin).returncode:
+            return [f"cannot fetch the core at {pin}"]
+        core_wf = g("show", f"{pin}:.github/workflows/evaluate.yml").stdout.decode("utf-8", "replace")
+        season = g("show", f"{pin}:harness/season.toml").stdout.decode("utf-8", "replace")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return inputs_problems(ours, core_wf) + tag_problems(core_wf) + caps_problems(season)
+
+
+def repin_records(raw, pin):
+    """records.json at a new pin, as the bot writes it there before any evaluation: `core` is the
+    pin, no record stands (`record: null`), and the old record heads the history."""
+    j = json.loads(raw)
+    if not isinstance(j, dict) or j.get("version") != 1:
+        raise ValueError("records.json is not version 1 of the bot's format")
+    rec, hist = j.get("record"), [h for h in j.get("history") or [] if isinstance(h, dict)]
+    if isinstance(rec, dict) and j.get("core") != pin:
+        hist = [rec] + [h for h in hist if h.get("id") != rec.get("id")]
+        rec = None
+    j.update(core=pin, record=rec, history=hist)
+    return (json.dumps(j, indent=1, ensure_ascii=False) + "\n").encode()
+
+
+def workflow_text(repo_dir=None, git_dir=None, rev=None):
+    if git_dir:
+        r = subprocess.run(["git", "--git-dir", git_dir, "show", f"{rev}:{WORKFLOW}"], capture_output=True)
+        return r.stdout.decode("utf-8", "replace")
     with open(os.path.join(repo_dir, WORKFLOW), encoding="utf-8") as f:
-        ours = f.read()
-    return inputs_problems(ours, core_wf) + caps_problems(season)
+        return f.read()
 
 
 def main():
     a = sys.argv[1:]
+    if a[:1] == ["--records"]:
+        with open(a[1], "rb") as f:
+            sys.stdout.buffer.write(repin_records(f.read(), a[2]))
+        return 0
     core = "--core" in a
     a = [x for x in a if x != "--core"]
     if a[:1] == ["--git"]:
         pin, problems = read_git(a[1], a[2])
+        text = (lambda: workflow_text(git_dir=a[1], rev=a[2]))
     else:
         pin, problems = read(a[0] if a else ".")
-        if pin and core:
-            problems += core_problems(a[0] if a else ".", pin)
-            pin = None if problems else pin
+        text = (lambda: workflow_text(a[0] if a else "."))
+    if pin and core:
+        problems += core_problems(text(), pin)
+        pin = None if problems else pin
     for p in problems:
         print(f"pin-check: {p}")
     if pin:

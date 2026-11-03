@@ -9,7 +9,9 @@ import re
 CORE_REPO = "scaraven/recursion.fast"
 SIGNER_WORKFLOW = "scaraven/recursion.fast/.github/workflows/evaluate.yml"
 STATUS_CONTEXT = "recursion.fast/evaluation"
-MARGIN = 0.03             # a record needs S_cand <= (1 - MARGIN) * S_inc, measured in one job (the duel)
+# The record rule's two parameters (the owner may tune them after calibrating with self-duels):
+MARGIN = 0.03             # a duel is won iff S_cand <= (1 - MARGIN) * S_inc, both measured in one job
+RECORD_WINS = 2           # duels a candidate must win against the same standing record to take it
 MAX_ATTEMPTS = 2          # an organiser-side ERROR is evaluated once more, then left for the owner
 
 ROOT_RE = re.compile(r"[a-z][a-z0-9-]{0,39}\Z")
@@ -17,10 +19,12 @@ SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 ID_RE = re.compile(r"pr[1-9][0-9]{0,8}-[0-9a-f]{12}(?:-[0-9a-f]{8})?\Z")   # -<pin8>: a port to a new pin
 LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?\Z")
 
-QUEUED, RUNNING = "queued", "running"
+# confirming: won a duel, waiting at the front of the queue for the next one against the same record
+QUEUED, RUNNING, CONFIRMING = "queued", "running", "confirming"
+WAITING = (QUEUED, CONFIRMING)
 FINAL = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error", "invalid",
          "superseded", "withdrawn")
-STATUSES = (QUEUED, RUNNING) + FINAL
+STATUSES = (QUEUED, RUNNING, CONFIRMING) + FINAL
 VERDICTS = ("ACCEPT", "PROVISIONAL", "REJECT", "ERROR")
 
 # The entry caps: exactly the `[entry]` section of the core's harness/season.toml at the pin (the
@@ -30,7 +34,7 @@ ENTRY_CAPS = {"files": 2048, "bytes": 512 << 20, "file_bytes": 128 << 20, "lean_
 MAX_PR_FILES = 3000       # the pull-request files API lists at most 3000
 MAX_TEXT_BYTES = 64 << 10   # NOTES.md, README.md (the bot's own cap)
 MAX_HEADS_PER_PR = 50       # compact entries kept per pull request (older ones are dropped)
-MAX_PATH = 512
+MAX_PATH = 512            # bytes of the whole path, `submissions/<root>/` included
 
 
 def entry_id(pr, sha):

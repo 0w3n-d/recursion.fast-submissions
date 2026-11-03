@@ -2,7 +2,7 @@
 Each reads GitHub through `ctx.gh` and git through `gitdata.Repo(ctx.git_url)`, so the tests and
 `simulate.py` drive them against a local bare repository and a fake API.
 
-Writers of `data` (review M3): `sync` (workflow sync.yml, concurrency `rf-data`) is the only writer
+Writers of `data` (two, so that racing intakes cannot lose entries): `sync` (workflow sync.yml, concurrency `rf-data`) is the only writer
 of new queue entries; `select` and `publish` (evaluate-next.yml, `rf-eval`) mark entries running and
 evaluated. The intake writes nothing on `data`: it prechecks, creates the retention tag, and sets
 the commit status `recursion.fast/evaluation` to pending "queued", whose `created_at` is the queue
@@ -11,7 +11,7 @@ every open pull request and is idempotent, so coalesced runs lose nothing.
 
 No step runs entry code or checks an entry out: a pull request is read as git objects and API
 JSON. Every write to `data` and `main` is an optimistic transaction (`gitdata.Repo.transact`), and a
-`data` that cannot be read aborts the step (review M1)."""
+`data` that cannot be read aborts the step (nothing is reset)."""
 import copy
 import json
 import time
@@ -19,7 +19,7 @@ import time
 import precheck
 import render
 import rfqueue
-from common import (ID_RE, LOGIN_RE, MAX_TEXT_BYTES, ROOT_RE, SHA_RE, STATUS_CONTEXT, clean, entry_id, now_iso)
+from common import CONFIRMING, ID_RE, LOGIN_RE, MAX_TEXT_BYTES, ROOT_RE, SHA_RE, STATUS_CONTEXT, clean, entry_id, now_iso
 from decide import build_manifest_sha, cache_retry, decide
 from gitdata import Changes, Repo
 
@@ -63,8 +63,8 @@ def _labels(pr):
 
 
 def _try(ctx, what, fn, *a):
-    """One side effect (a status, a comment, a dispatch): logged, never stopping the others
-    (review m2). Returns False on failure."""
+    """One side effect (a status, a comment, a dispatch): logged, never stopping the others.
+    Returns False on failure."""
     try:
         fn(*a)
         return True
@@ -306,8 +306,8 @@ def sync(ctx):
                 changed.append(e["id"])
                 if e["status"] in ("superseded", "withdrawn") and before.get(e["id"]) is not None:
                     effects.append(("status", copy.deepcopy(e)))
-        if not changed and ch.empty():
-            return None
+        if not changed and ch.empty() and snap.head:
+            return None                    # (an absent `data` is created, with an empty state)
         _write_state(ctx, ch, snap, st, extra)
         effects.append(("queued?", rfqueue.any_queued(st)))
         return ch
@@ -327,10 +327,13 @@ def sync(ctx):
 
 # ---- select -------------------------------------------------------------------------------------
 def select(ctx, force_pr=None, retire_id=None):
-    """Picks the next entry (brief §4; `force_pr`: that pull request's queued or errored entry),
-    marks it running, and returns a copy of it with the standing record as `incumbent` (None:
-    nothing to evaluate). Entries a previous run left running are reaped first (runs are serialised
-    by `rf-eval`). `retire_id`: the owner retires that record first."""
+    """Picks the next entry (`rfqueue.order`; `force_pr`: that pull request's waiting or errored
+    entry), marks it running, and returns a copy of it with the standing record as `incumbent`
+    (None: nothing to evaluate). Entries a previous run left running are reaped first (runs are
+    serialised by `rf-eval`). `retire_id`: the owner retires that record first. When no record
+    stands at the pin and the last record is of an earlier pin, its port to this pin is created
+    and evaluated before anything else, forced runs included, so no other entry can take the
+    record unpaired before it."""
     live, picked, notify, final = {}, {}, {}, {}
 
     def live_pr(n):
@@ -357,38 +360,48 @@ def select(ctx, force_pr=None, retire_id=None):
         notify.update({i: copy.deepcopy(rfqueue.find(st, i)) for i in reaped})
         changed = changed or bool(reaped)
         cands = rfqueue.order(st)
-        if force_pr is not None:
+        due = rfqueue.due_port(st, ctx.pin)
+        if due is not None:
+            cands, changed = [rfqueue.port(st, due["pr"], ctx.pin, now, o=due)], True
+        elif force_pr is not None:
             cands = [e for e in cands if e["pr"] == force_pr]
             if not cands:
                 errs = [e for e in rfqueue.of_pr(st, force_pr) if e["status"] == "error"]
-                port = rfqueue.port(st, force_pr, ctx.pin, now)
                 if errs:
                     e = max(errs, key=lambda e: e.get("finished") or "")
-                    e.update(status="queued", finished=None, attempts=0)
+                    e.update(status=rfqueue.waiting(e), finished=None, attempts=0)
                     cands, changed = [e], True
-                elif port:
-                    cands, changed = [port], True
-        for e in cands:                      # every candidate (review m1)
+                else:
+                    port = rfqueue.port(st, force_pr, ctx.pin, now)
+                    if port:
+                        cands, changed = [port], True
+        for e in cands:                      # every candidate, so one unreadable PR blocks nothing
             p = live_pr(e["pr"]) if not e.get("port_of") else {"state": "open", "head": {"sha": e["sha"]}}
             if p is None:
                 continue
-            if p.get("state") != "open":
-                e.update(status="withdrawn", finished=now, reasons=["the pull request was closed before its evaluation"])
-                notify[e["id"]] = copy.deepcopy(e)
-                changed = True
-                continue
-            if (p.get("head") or {}).get("sha") != e["sha"]:
-                e.update(status="superseded", finished=now,
-                         reasons=["the pull request moved before this commit was evaluated"])
-                notify[e["id"]] = copy.deepcopy(e)
-                changed = True
-                continue
-            if force_pr is None and (p.get("draft") or "hold" in _labels(p)):
-                continue
+            if e["status"] == CONFIRMING:
+                # mid-evaluation: its retained commit is confirmed whatever the PR did since; only
+                # the owner's `hold` keeps it waiting
+                if force_pr is None and "hold" in _labels(p):
+                    continue
+            else:
+                if p.get("state") != "open":
+                    e.update(status="withdrawn", finished=now, reasons=["the pull request was closed before its evaluation"])
+                    notify[e["id"]] = copy.deepcopy(e)
+                    changed = True
+                    continue
+                if (p.get("head") or {}).get("sha") != e["sha"]:
+                    e.update(status="superseded", finished=now,
+                             reasons=["the pull request moved before this commit was evaluated"])
+                    notify[e["id"]] = copy.deepcopy(e)
+                    changed = True
+                    continue
+                if force_pr is None and (p.get("draft") or "hold" in _labels(p)):
+                    continue
             rfqueue.mark_running(e, now, ctx.run_url)
             e["run_attempt"] = ctx.run_attempt
             rec = rfqueue.current_record(st, ctx.pin)
-            e["duel_with"] = rec["id"] if rec else None      # the incumbent this run measures (brief §2a)
+            e["duel_with"] = rec["id"] if rec else None      # the incumbent this run measures
             picked.update(copy.deepcopy(e))
             picked["record_cache"] = e.get("record_cache") is not False
             if rec:
@@ -465,7 +478,8 @@ def publish(ctx, eid, result_path):
         if isinstance(result, dict) and (rec or {}).get("id") != e.get("duel_with"):
             res = dict(result, duel=None, incumbent=None)     # measured against another record
         d = decide(res, ver, ctx.pin, rec, e.get("attempts", 1), provers, duel_retries=e.get("duel_retries", 0),
-                   record_failures=(rec or {}).get("duel_failures", 0))
+                   record_failures=(rec or {}).get("duel_failures", 0),
+                   wins=rfqueue.won_duels(e, rec["id"]) if rec else ())
         now = ctx.now()
         ps = result.get("prover_sha256") if isinstance(result, dict) else None
         e["build_manifest"] = build_manifest_sha(result) if d["verified"] else None
@@ -478,17 +492,25 @@ def publish(ctx, eid, result_path):
                 rfqueue.retire(rec, now, f"its own run failed in {rec['duel_failures']} duels")
         if d["duel_retry"]:
             e["duel_retries"] = e.get("duel_retries", 0) + 1
-        if d["status"] != "queued" and cache_retry(result, e):
+        ch = Changes()
+        keep_raw = raw is not None and len(raw) <= 4 << 20
+        if d["duel_now"]:                      # every duel is kept, with its own copy of the result
+            e["duels"] = (e.get("duels") or [])[-9:] + [dict(d["duel_now"], run_url=ctx.run_url)]
+            if keep_raw:
+                e["duels"][-1]["result"] = f"results/{eid}.duel{len(e['duels'])}.json"
+                ch.put(e["duels"][-1]["result"], raw)
+            if d["duel_now"].get("won") and d["status"] == CONFIRMING:
+                e["attempts"] = 0              # the confirmation has its own organiser-error retry
+        if d["status"] not in ("queued", CONFIRMING) and cache_retry(result, e):
             d["requeue"] = True
             e["reasons"] = e["reasons"][:19] + ["the record build cache was used: evaluated once more without it"]
-        if d["requeue"]:
+        if d["requeue"] or d["status"] == CONFIRMING:
             if d["verdict"] in ("ERROR", "REJECT") or not d["verified"]:
-                e["record_cache"] = False      # the retry builds clean (S5: a sabotaged cache cannot fail it)
-            e.update(status="queued", finished=None)
+                e["record_cache"] = False      # the retry builds clean: a sabotaged cache cannot fail it
+            e.update(status=d["status"] if d["status"] in ("queued", CONFIRMING) else rfqueue.waiting(e), finished=None)
         else:
             e.update(status=d["status"], finished=now)
-        ch = Changes()
-        if raw is not None and len(raw) <= 4 << 20:
+        if keep_raw:
             ch.put(f"results/{eid}.json", raw)
             e["result"] = f"results/{eid}.json"
         _write_state(ctx, ch, snap, st)
@@ -515,13 +537,21 @@ def publish(ctx, eid, result_path):
 
 def sync_main(ctx, st):
     """Makes `main` hold the standing record: its checked root (the tree at its retained commit,
-    replacing the roots of earlier records) and `records.json`. A no-op if `main` already does, or
-    if there is no record at this pin (the earlier pin's root then stays until a new record)."""
+    replacing the roots of earlier records) and `records.json`, which names the pin and the standing
+    record whatever happens. With no record at this pin, only `records.json` changes (`record:
+    null`) and the last record's root stays until a new record replaces it. A no-op if `main`
+    already says so."""
     rec = rfqueue.current_record(st, ctx.pin)
-    if rec is None:
-        return None
     want = render.records_json(st, ctx.pin)
     git = ctx.git()
+    if rec is None:
+        def mutate_none(snap):
+            if snap.read("records.json", 16 << 20) == want:
+                return None
+            ch = Changes()
+            ch.put("records.json", want)
+            return ch
+        return git.transact(ctx.default_branch, mutate_none, f"records: no record stands at the pin {ctx.pin[:12]}")
     commit = git.fetch(f"refs/tags/{rec['tag']}", local="refs/rf/record")
     if commit != rec["sha"]:
         raise RuntimeError(f"sync_main: the tag {rec['tag']} is at {commit}, the record is {rec['sha']}")

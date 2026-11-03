@@ -124,8 +124,8 @@
   <p>GitHub's runners differ by up to about 18&nbsp;%, so a record must beat the incumbent on the
     same machine. Records are kept per contract pin. While a record stands, every evaluation is a
     <strong>duel</strong>: your entry and the standing record run back to back in one job, on one
-    runner, in a random order and on the same drawn chain lengths. Your entry becomes the record
-    only if all of these hold:</p>
+    runner, in a random order and on the same drawn chain lengths. Your entry wins the duel only if
+    all of these hold:</p>
   <ul>
     <li>the verdict is <strong>ACCEPT</strong>: the certificate checked and every benchmark check passed;</li>
     <li>it is <strong>comparable</strong>: the stream ran to the end, on one CPU model, with the job plan
@@ -136,11 +136,19 @@
       both measured in that job;</li>
     <li>its prover binary is not one an earlier record already had.</li>
   </ul>
-  <p><strong>The record failing on that runner is not a win.</strong> Your entry stays
-    <em>accepted</em> and is queued once more for another duel. A record whose own run fails in two
-    duels is <em>retired</em>, and the next evaluation runs with no standing record.</p>
-  <p>With no standing record (at the start, after a retirement, or after the contract pin moves),
-    the first result that is ACCEPT, comparable and attested becomes the record, without a duel.
+  <p><strong>One win is not enough.</strong> The noise of one runner can hand a single duel to a copy
+    of the record, so a winner becomes <em>confirming</em>: one more duel of the same commit against
+    the same record runs next, before anything else, on whatever runner it gets. Win that one too
+    and your entry is the record, credited with the smaller of its two gains; lose it and it stays
+    <em>accepted</em>, with both duels shown. The 3&nbsp;% threshold and the two wins are still being
+    calibrated.</p>
+  <p><strong>The record failing on that runner is not a win.</strong> Your entry is queued once more
+    for another duel (keeping a win it already has). A record whose own run fails in two duels is
+    <em>retired</em>, and the next evaluation runs with no standing record.</p>
+  <p>When the contract pin moves, the bot first re-runs the standing record at the new pin, alone; it
+    keeps the crown if it passes. With no standing record (at the start, after a retirement, or
+    when that re-run fails), the first result that is ACCEPT, comparable and attested becomes the
+    record, without a duel.
     Everything else is still published, with its notes: an ACCEPT that does not win its duel shows
     as <em>accepted</em>, a truncated or mixed-CPU run as <em>unranked</em>. Scores from different
     jobs are shown side by side but never decide a record.</p>

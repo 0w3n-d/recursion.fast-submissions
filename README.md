@@ -28,10 +28,11 @@ because it is a theorem.
    result with a GitHub artifact attestation.
 4. **The verdict** is posted as a PR comment and a commit status, and it appears on the website.
    Your `NOTES.md` is published whatever the verdict.
-5. **A record** happens only if the entry beats the current record head to head, by at least 3 %
-   (a threshold still being calibrated). The record is re-certified and re-run on the same runner,
-   in the same job, so a duel takes longer than a first evaluation. The bot then copies the new
-   record's root to `main`. Pull requests are never merged.
+5. **A record** happens only if the entry beats the current record head to head, by at least 3 %,
+   twice: a win is confirmed by a second duel of the same commit (the threshold and the two wins
+   are still being calibrated). For each duel the record is re-certified, and re-run on the same
+   runner in the same benchmark job, so a duel can take up to about four hours. The bot then copies
+   the new record's root to `main`. Pull requests are never merged.
 
 ## Submit in three steps
 

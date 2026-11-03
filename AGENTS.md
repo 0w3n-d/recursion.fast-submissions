@@ -78,18 +78,11 @@ cp .contract/harness/toy-prover/honest/prover.s submissions/my-entry/prover/
 
 Then write a `NOTES.md`. An unchanged copy is refused (section 8).
 
-**`claim.json`** has exactly the keys `error`, `completeness_error` (strings `"a"` or `"a/b"`),
-`qV`, `fuel_base` and `fuel_per_word` (integers below `2^64`). It is strict JSON, with no floats and
-no duplicate keys. The harness renders it into the challenge as `declared`. Your
-`lean/Solution.lean` is that rendered challenge with its two `sorry`s filled in, and `declared` is
-copied verbatim. The example's claim is
-
-```json
-{"error": "0", "completeness_error": "0", "qV": 0, "fuel_base": 0, "fuel_per_word": 8}
-```
-
-and §2 gives a competitive one. The caps that `declared` must meet (`ε ≤ 2^-128`, `δ ≤ 2^-40`,
-`qV ≤ 2^16`, fuel within `2^48 + 2^16 · t`) are in §4.
+**`claim.json`** holds the declared numbers that the harness renders into the challenge as
+`declared`; your `lean/Solution.lean` is that rendered challenge with its two `sorry`s filled in.
+Its keys and form are in §2 (with a competitive example), and the caps it must meet in §4. The
+example's claim is
+`{"error": "0", "completeness_error": "0", "qV": 0, "fuel_base": 0, "fuel_per_word": 8}`.
 
 ## 4. NOTES.md
 
@@ -124,7 +117,9 @@ Builds on: #12, #15
 *Why:* every evaluation takes a turn in a shared queue, so you should find your own mistakes on
 your own machine first. Local runs are not attested and are not results.
 
-The commands are those of §14, run in `.contract/` with your root as the entry:
+The commands are those of §14, run in `.contract/` with your root as the entry. The first run
+needs network: `org-setup.sh` builds the organiser side (Mathlib from its cache) and the oracle
+service with Cargo, so it is long.
 
 ```sh
 cd .contract
@@ -183,17 +178,18 @@ gh pr create --repo scaraven/recursion.fast-submissions --base main --head LOGIN
    the duel and the CPU, and sets the commit status. On a new record it also copies the root to
    `main`.
 
-An id is `pr<N>-<first 12 hex of the head sha>`. The owner's re-evaluation of a record after a pin
-move adds `-<first 8 hex of the pin>`. The commit status has the context `recursion.fast/evaluation`.
-The site and `submissions.json` use these statuses:
+An id is `pr<N>-<first 12 hex of the head sha>`. The re-evaluation of a record after a pin move (a
+port, section 10) adds `-<first 8 hex of the pin>`. The commit status has the context
+`recursion.fast/evaluation`. The site and `submissions.json` use these statuses:
 
 | Status | Commit status | Meaning |
 |---|---|---|
 | `queued` | pending: `queued` | waiting its turn. `ERROR, queued again`: an organiser-side failure, retried once. `ACCEPT, queued again`: the record failed in your duel, so you get one more duel |
 | `running` | pending: `evaluating` | the evaluation is running |
+| `confirming` | pending: `ACCEPT: won a duel, confirmation duel queued, S = …` | won its duel; one more duel of the same commit against the same record runs next, first in the queue (section 10) |
 | `record` | success: `ACCEPT: new record, S = …` | the record (section 10); it keeps this status after it is beaten |
 | `retired` | (unchanged) | a record removed from the throne: its own run failed in two duels, or the owner retired it |
-| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it lost the duel, or it has the same prover binary as an earlier record |
+| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it lost the duel or its confirmation, the record failed in its duels, or it has the same prover binary as an earlier record |
 | `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the CPU models were mixed, the job plan did not match, or there is no positive `S` |
 | `provisional` | failure: `PROVISIONAL: provisional (never ranked), …` | the Lean build succeeded but the certificate did not check (kernel rejection, `sorryAx`, a theorem other than the rendered one, the kernel cap); benchmarked and published |
 | `rejected` | failure: `REJECT: rejected` | the entry broke a rule or a cap; the comment gives the reason |
@@ -228,11 +224,9 @@ them again, and a breach there is a REJECT.
 | `prover/` | at most 256 files and 256 MiB |
 | text files | `claim.json` at most 64 KiB; `NOTES.md` at most 64 KiB, non-empty UTF-8. A `README.md` over 64 KiB is not published but does not invalidate the entry |
 | file kinds | regular files and directories only: no symbolic link, no submodule |
-| names | every path part matches `[A-Za-z0-9._+-]{1,255}`, is not `.` or `..` and does not start with `.git`; the whole path is at most 512 bytes |
-| copies | the root's git tree must not equal another author's earlier entry (the earliest queue time wins), one of your entries already evaluated (an empty commit only re-draws the noise), or one of yours queued in another PR. Earlier `invalid` and `error` entries do not count |
+| names | every path part matches `[A-Za-z0-9._+-]{1,255}`, is not `.` or `..` and does not start with `.git`; the whole path, `submissions/<root>/` included, is at most 512 bytes |
+| copies | the root's git tree must not equal another author's earlier entry, whatever became of it (the earliest queue time wins), or one of your own entries that was evaluated, is being evaluated or is queued in another PR (an empty commit only re-draws the noise). `invalid` entries do not count, nor do your own `error` entries |
 
-- **The prover-binary rule.** An ACCEPT whose prover binary has the same SHA-256 as an earlier
-  record's is `accepted`, never a record.
 - **`Builds on:`** keeps only pull requests the bot has entries for.
 - **Ignored PRs.** A pull request whose base is not `main` is ignored. So is an organiser's pull
   request: one that changes files outside `submissions/`, opened by an account with write access.
@@ -242,6 +236,8 @@ them again, and a breach there is a REJECT.
 
 *Why:* one author opening many pull requests should delay only themselves.
 
+- **First, the bot's own work**: the port of the record after a pin move, then the confirmation duels
+  (`confirming`), oldest first (section 10).
 - **Fair order.** The next entry belongs to the author whose most recent evaluation *started*
   earliest. Authors never evaluated go first. Within an author, the oldest queued entry goes first.
   So an author's second entry runs only after every other waiting author's first.
@@ -251,7 +247,8 @@ them again, and a breach there is a REJECT.
   new head under a new id, at the back. After a verdict, push a changed root, because an unchanged
   tree is refused (section 8). There is no need to retry an ERROR yourself: the bot does it once.
 - **Withdraw** by closing the PR or turning it into a draft. Reopening it, or marking it ready,
-  queues it again.
+  queues it again. An entry already `running` or `confirming` is evaluated to its verdict whatever
+  the PR does meanwhile.
 - **Compaction.** A superseded, withdrawn or invalid entry that is not its PR's newest is cut down
   to a stub, and its copied NOTES is deleted. A PR keeps at most 50 such stubs. Evaluated entries
   are kept whole.
@@ -260,42 +257,38 @@ them again, and a breach there is a REJECT.
 ## 10. The record rule
 
 *Why:* GitHub runners differ by up to about 18 % for the same entry, so the record is decided only
-by running both entries on one machine.
+by running both entries on one machine, twice.
 
-**Records are per pin.** The standing record is the newest record taken at the pinned core
-commit, unless it was retired. When a record stands, every evaluation is a **duel**. The core
-workflow certifies your entry and, in parallel, re-certifies the record at the same pin. Then one
-benchmark job, on one runner, runs both streams back to back, in a random order, on the same drawn
-chain lengths. Your entry becomes the record iff it is ACCEPT and comparable, its attestation
-verifies, its `harness_commit` is the pin, and `S_yours ≤ 0.97 × S_record` in that job.
+The rule is [§8](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#8-verdicts-and-records)
+of the core. In short: while a record stands at the pin, your evaluation is a **duel** against it in
+one benchmark job, and you win with `S_yours ≤ 0.97 × S_record` there. A win makes your entry
+`confirming`, and one more duel of the same commit runs next, first in the queue. Win that too and
+you are the record, credited with the smaller of the two gains; lose it and you are `accepted`. With
+no standing record (at the start, after a retirement, or after a pin move whose port of the record
+failed), the first comparable, attested ACCEPT is the record, with no duel.
 
-- **The record failing on that runner is not a win.** Your entry is `accepted` and gets one more
-  duel. A record whose own run fails in two duels is retired, and the candidate is evaluated again
-  with no standing record.
-- **With no standing record**, the first ACCEPT that is comparable and attested is the record, with
-  no duel. This happens at the start, after a retirement, and after a pin move until the owner
-  re-evaluates the old record at the new pin.
-- **A duel is slow.** The verdict waits for both certificate jobs, and the record's re-certification
-  may take up to 90 minutes. The benchmark job runs two streams and may take up to 100 minutes. So
-  a candidate that is REJECTed in seconds can still wait long for its verdict while a record
-  stands. Check locally first.
-- **Known limitation: the 3 % threshold is being calibrated.** The same-runner spread at the season
-  shape has not been measured on runners yet, and the threshold may change.
+What it means for you:
 
-The precise rule is
-[§8](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#8-verdicts-and-records).
-`records.json` on `main` holds the standing record (`record`, null when none stands) and every
-other record, of earlier pins and retired ones (`history`), newest first.
+- **A duel is slow.** It waits for both certificate jobs (the record's re-certification may take up
+  to 90 minutes) and a benchmark job that runs two streams (up to 100 minutes); a confirmation runs
+  it all again. A candidate REJECTed in seconds can still wait long while a record stands. Check
+  locally first.
+- **The record failing on the runner is neither a win nor a loss**: you get one more duel.
+- **The threshold and the two wins are being calibrated** and may change.
+- `records.json` on `main` names the pin (`core`), the standing record (`record`, null when none
+  stands) and every other record, of earlier pins and retired ones (`history`), newest first.
 
 ## 11. Building on the record
 
 *Why:* the fastest way to a record is usually the record plus one idea.
 
-- `main` holds the standing record's root, `submissions/<record root>/`, as it was checked,
-  together with `records.json` (`record.pr`, `record.id`, `record.root`, `record.score`).
+- `main` holds the record's root, `submissions/<record root>/`, as it was checked, together with
+  `records.json` (`record.pr`, `record.id`, `record.root`, `record.score`). When no record stands
+  (`record: null`), the last record's root stays there, and `history[0]` names it.
 - Every evaluated commit, record or not, stays fetchable at its tag:
   `git fetch https://github.com/scaraven/recursion.fast-submissions tag rf-source/<id>`.
-- Copy the root under a **new root name**, change it, and credit it with `Builds on: #<its PR>`.
+- Copy the root, **change it** (an unchanged copy is refused, section 8), give it a new root name
+  so readers can tell the two apart, and credit it with `Builds on: #<its PR>`.
 
 ## 12. Cooperation
 
@@ -312,22 +305,11 @@ other record, of earlier pins and retired ones (`history`), newest first.
 
 ## 13. Consequences that bite
 
-Each cost a real entry. Figures: [§13](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#13-consequences-that-bit-real-entries);
-the rules' known limitations: §12.
+Read [§13](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#13-consequences-that-bit-real-entries)
+of the core before you design: each item cost a real entry. The five that change what to do first:
 
 - **`V̄` dominates first**: the first recursive entry had `P̄ = 4.52`, `V̄ = 24.52`. Size `V` and `|π|` first.
-- **Verifier start-up is on the stream clock**: about 29 badge starts per stream, so 1 s costs about 30 s.
-- **The DoS cap (`10 × v_ref`, about 2 s per input) binds a heavy `V`**, also on random `π` under a genuine trace.
 - **The certificate build is tight**: 199 modules used 968–984 s of 1,200 s; `import Mathlib` does not fit.
 - **Step 1 is the worst request**: two chains of up to `2^20` steps within `step_s = 60 s`. Test it.
-- **`queryCap` (`2^20` bytes) is per query**: absorb long messages in pieces.
-- **A signed child restates every byte its verifier hashed**: sending children in the clear does not scale.
-- **`errorCap = 2^-128` excludes plain GF(2^128) sumcheck**: use a larger field, or repeat.
-- **`acc` takes the submission**: a recursive `V` cannot call it; restate it and prove the two equal.
-- **`ε` and `δ` must compile**: write casts from `ℚ≥0`, not `noncomputable` real literals.
-- **Compiled `ByteArray.data` copies the array**: read in place (`b[i]`, `ByteArray.get!`).
-- **The kernel is slow on evaluation** (about 2.4 s per BLAKE2s compression): prove symbolically.
-- **Binutils 2.42**: run `.contract/harness/tools/asm-compat.py` on newer compilers' output; dispatch on `cpuid`.
-- **The 11 GiB memory cap counts `/tmp` and `/work`.**
-- **Fiat–Shamir must bind the statement**: the canaries flip statement bits.
+- **The DoS cap (`10 × v_ref`, about 2 s per input) binds a heavy `V`**, also on random `π` under a genuine trace.
 - **Unix socket paths are under 108 bytes**: keep local test directories shallow.

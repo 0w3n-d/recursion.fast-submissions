@@ -75,8 +75,8 @@ def tree_rule(repo, sha, root):
             reasons.append(f"{shown} is {what}; only regular files and directories are allowed")
             continue
         comps = rel.split("/")
-        if len(path) > MAX_PATH or any(not COMPONENT_RE.match(c) or c in (".", "..") or c.lower().startswith(".git")
-                                       for c in comps):
+        too_long = len(path.encode("utf-8", "surrogateescape")) > MAX_PATH
+        if too_long or any(not COMPONENT_RE.match(c) or c in (".", "..") or c.lower().startswith(".git") for c in comps):
             reasons.append(f"file name {shown!r}: each part must match [A-Za-z0-9._+-]{{1,255}}, not start "
                            f"with .git, and the path be at most {MAX_PATH} bytes")
         if typ == "blob":

@@ -9,12 +9,13 @@
   const dataKey = rawKey && Object.prototype.hasOwnProperty.call(CFG.FIXTURES, rawKey) ? rawKey : null;
   const BASE = dataKey ? CFG.FIXTURES[dataKey] : CFG.DATA_BASE;
 
-  const STATUSES = ['record', 'retired', 'accepted', 'unranked', 'provisional', 'rejected', 'error', 'invalid',
-    'queued', 'running', 'superseded', 'withdrawn'];
+  const STATUSES = ['record', 'retired', 'confirming', 'accepted', 'unranked', 'provisional', 'rejected', 'error',
+    'invalid', 'queued', 'running', 'superseded', 'withdrawn'];
   const STATUS_INFO = {
     record: ['record', 'Took the record when it was evaluated; it keeps this status in the history after it is beaten.'],
     retired: ['retired', 'A record that stood, then failed in two duels or was retired by the owner.'],
-    accepted: ['accepted', 'Certified and comparable, but it did not win its duel by 3 %, its record failed on the runner (it is queued for another duel), or its prover binary is an earlier record\'s.'],
+    confirming: ['confirming', 'Won its duel against the record; one more duel of the same commit against the same record runs next, first in the queue. A record must win both.'],
+    accepted: ['accepted', 'Certified and comparable, but it did not win its duel (or its confirmation duel) by 3 %, the record failed on the runner in its duels, or its prover binary is an earlier record\'s.'],
     unranked: ['unranked', 'Certified, but not comparable (a truncated stream, mixed CPU models, a job plan that did not match, or no positive S).'],
     provisional: ['provisional', 'The Lean builds but the certificate does not check; benchmarked, never ranked.'],
     rejected: ['rejected', 'The certificate or the benchmark failed. The reasons say why.'],
@@ -39,7 +40,7 @@
     tag: new RegExp('^rf-source/' + ID + '$'),
     run: new RegExp('^https://github\\.com/' + reEsc(CFG.REPO) + '/actions/runs/\\d{1,20}(?:/job/\\d{1,20}|/attempts/\\d{1,4})?$'),
     key: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/,
-    result: new RegExp('^results/' + ID + '\\.json$')
+    result: new RegExp('^results/' + ID + '(?:\\.duel[1-9][0-9]?)?\\.json$')
   };
   const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf']);
 
@@ -71,12 +72,18 @@
     return (out.S === null && out.P_bar === null && out.V_bar === null && n === 0) ? null : out;
   }
 
-  // The head-to-head duel the bot records (BRIEF §2a): the incumbent record's id, its S in the
-  // same job, the gain 1 - S/S_inc, and whether the incumbent failed on that runner.
+  // A head-to-head duel as the bot records it: the incumbent record's id, both scores in the same
+  // job, the gain 1 - S/S_inc, whether it was won, whether the incumbent failed on that runner, and
+  // the run and the result of that evaluation.
   function cleanDuel(d) {
     if (!d || typeof d !== 'object' || typeof d.incumbent !== 'string' || !RE.id.test(d.incumbent)) return null;
-    const sInc = num(d.S_inc), gain = num(d.gain);
-    return { incumbent: d.incumbent, S_inc: sInc !== null && sInc > 0 ? sInc : null, gain, incumbent_failed: d.incumbent_failed === true };
+    const sInc = num(d.S_inc), s = num(d.S), gain = num(d.gain);
+    return {
+      incumbent: d.incumbent, S: s !== null && s >= 0 ? s : null, S_inc: sInc !== null && sInc > 0 ? sInc : null, gain,
+      won: d.won === true, incumbent_failed: d.incumbent_failed === true,
+      run_url: typeof d.run_url === 'string' && RE.run.test(d.run_url) ? d.run_url : null,
+      result: typeof d.result === 'string' && RE.result.test(d.result) ? d.result : null
+    };
   }
 
   function cleanEntry(r) {
@@ -109,6 +116,7 @@
       readme: typeof r.readme === 'string' && RE.md.test(r.readme) && r.readme.startsWith('readme/') ? r.readme : null,
       record_of: typeof r.record_of === 'string' && RE.id.test(r.record_of) ? r.record_of : null,
       duel: cleanDuel(r.duel),
+      duels: Array.isArray(r.duels) ? r.duels.slice(0, 10).map(cleanDuel).filter(Boolean) : [],
       duel_with: typeof r.duel_with === 'string' && RE.id.test(r.duel_with) ? r.duel_with : null,
       verified: r.verified === true,
       harness_commit: typeof r.harness_commit === 'string' && RE.sha.test(r.harness_commit) ? r.harness_commit : null,
@@ -140,7 +148,7 @@
       let res;
       try { res = await fetchWithTimeout(BASE + 'submissions.json', 15000); } catch (err) {
         // the branch `data` does not exist yet: nothing has been published, which is not an error
-        if (err.status === 404) return { updated: null, core: null, margin: 0.03, subs: [], skipped: 0, notShown: 0, record: null, unpublished: true };
+        if (err.status === 404) return { updated: null, core: await mainPin(), margin: 0.03, wins: 2, subs: [], skipped: 0, notShown: 0, record: null, unpublished: true };
         throw err;
       }
       const raw = await res.json().catch(() => { throw new Error('submissions.json is not valid JSON'); });
@@ -152,13 +160,14 @@
         const e = cleanEntry(r);
         if (e && !seen.has(e.id)) { seen.add(e.id); subs.push(e); }
       }
-      const margin = num(raw.margin);
+      const margin = num(raw.margin), wins = int(raw.record_wins);
       // the standing record is the bot's statement (`record`), never re-derived here
       const rec = typeof raw.record === 'string' && RE.id.test(raw.record) ? subs.find(e => e.id === raw.record) : null;
       return {
         updated: date(raw.updated),
         core: typeof raw.core === 'string' && RE.sha.test(raw.core) ? raw.core : null,
         margin: margin !== null && margin >= 0 && margin < 1 ? margin : 0.03,
+        wins: wins !== null && wins >= 1 && wins <= 9 ? wins : 2,
         subs,
         skipped: Math.min(raw.submissions.length, CAP) - subs.length,
         notShown: Math.max(0, raw.submissions.length - CAP),
@@ -186,14 +195,14 @@
       else if (k === 'href') { if (safeHref(v)) n.setAttribute('href', v); }
       else n.setAttribute(k, v === true ? '' : String(v));
     }
-    for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false) n.append(c instanceof Node ? c : String(c));
+    for (const c of kids.flat(Infinity)) if (c !== null && c !== undefined && c !== false) n.append(c instanceof Node ? c : String(c));
     return n;
   }
   const SVGNS = 'http://www.w3.org/2000/svg';
   function svg(tag, attrs, ...kids) {
     const n = document.createElementNS(SVGNS, tag);
     if (attrs) for (const [k, v] of Object.entries(attrs)) if (v !== null && v !== undefined) n.setAttribute(k, String(v));
-    for (const c of kids.flat()) if (c !== null && c !== undefined) n.append(c instanceof Node ? c : String(c));
+    for (const c of kids.flat(Infinity)) if (c !== null && c !== undefined) n.append(c instanceof Node ? c : String(c));
     return n;
   }
   // Links built by the site are https GitHub URLs or same-origin pages; nothing else.
@@ -221,7 +230,8 @@
     author: e => e.author ? GH + e.author : null,
     commit: e => e.sha ? GH + CFG.REPO + '/commit/' + e.sha : null,
     code: e => e.tag && e.root && e.status !== 'invalid' ? GH + CFG.REPO + '/tree/' + e.tag + '/submissions/' + e.root : null,
-    result: e => !e.result ? null : dataKey ? BASE + e.result : GH + CFG.REPO + '/blob/data/' + e.result,
+    result: e => !e.result ? null : link.resultAt(e.result),
+    resultAt: path => dataKey ? BASE + path : GH + CFG.REPO + '/blob/data/' + path,
     harness: sha => GH + CFG.CORE_REPO + '/commit/' + sha,
     core: sha => GH + CFG.CORE_REPO + '/commit/' + sha,
     coreRules: GH + CFG.CORE_REPO + '/blob/main/AGENTS.md',
@@ -257,17 +267,29 @@
     return el('span', { class: 'badge st-' + status, title: desc }, label);
   }
   const shortSha = s => s ? s.slice(0, 7) : '';
-  // Head-to-head change of S against the incumbent in the same job, in percent (negative = faster).
-  const duelGain = e => {
-    const d = e.duel;
+  // Head-to-head change of S against the incumbent in the same job, in percent (negative = faster);
+  // for a record confirmed by two duels, the smaller gain (the bot's `duel`).
+  const duelGain = (e, d0) => {
+    const d = d0 || e.duel;
     if (!d || d.incumbent_failed) return null;
-    if (d.S_inc && e.score && e.score.S !== null) return (e.score.S - d.S_inc) / d.S_inc * 100;
-    return d.gain !== null ? -d.gain * 100 : null;
+    if (d.gain !== null) return -d.gain * 100;
+    const s = d.S !== null ? d.S : !d0 && e.score ? e.score.S : null;
+    return d.S_inc && s !== null ? (s - d.S_inc) / d.S_inc * 100 : null;
   };
   // A verdict whose attestation did not verify is shown as such everywhere.
   const unverified = e => e.verdict && !e.verified ? el('span', { class: 'badge st-unverified', title: 'The attestation of this result did not verify; it can never be a record.' }, 'unverified') : null;
   const pct = v => typeof v !== 'number' || !Number.isFinite(v) ? '\u2013' : (v < 0 ? '\u2212' : '+') + Math.abs(v).toFixed(1) + '\u00a0%';
   const evaluatedAt = e => e.finished || e.started || e.queued || e.opened;
+
+  // Before the bot's first write (no branch `data`), the pin comes from records.json on main.
+  async function mainPin() {
+    if (dataKey) return null;
+    try {
+      const res = await fetchWithTimeout(CFG.MAIN_BASE + 'records.json', 10000);
+      const j = await res.json();
+      return j && typeof j.core === 'string' && RE.sha.test(j.core) ? j.core : null;
+    } catch (err) { return null; }
+  }
 
   // ---- relations ---------------------------------------------------------------------------
   // builds_on names pull requests; a PR may have several heads (ids). Credit goes to the PR, and
@@ -285,21 +307,23 @@
       if (!list) return null;
       return list.find(e => !['superseded', 'withdrawn', 'queued', 'running'].includes(e.status)) || list[0];
     };
-    // A citation counts only from a pull request whose newest head is evaluated or waiting (not
-    // invalid, superseded or withdrawn), and only once per citing PR. `self` marks a citation by
-    // the cited PR's own author; it is listed but not counted.
+    // A citation is listed from a pull request whose newest head is evaluated or waiting (not
+    // invalid, superseded or withdrawn), once per citing PR. It counts only if that head has a
+    // verdict (ACCEPT, PROVISIONAL or REJECT; not an organiser error) and is by another author:
+    // `self` and `pending` mark the citations that are listed but not counted.
     const citedBy = new Map();
     for (const [pr, list] of byPr) {
       const newest = list.slice().sort((a, b) => (b.queued || b.opened || 0) - (a.queued || a.opened || 0))[0];
       if (!newest || ['invalid', 'superseded', 'withdrawn'].includes(newest.status)) continue;
+      const pending = !['ACCEPT', 'PROVISIONAL', 'REJECT'].includes(newest.verdict) || ['queued', 'running', 'error'].includes(newest.status);
       for (const n of newest.builds_on) {
         const cited = headOf(n);
         if (!cited) continue;
         if (!citedBy.has(n)) citedBy.set(n, []);
-        citedBy.get(n).push({ pr, self: !!cited.author && cited.author === newest.author });
+        citedBy.get(n).push({ pr, self: !!cited.author && cited.author === newest.author, pending });
       }
     }
-    const citeCount = n => (citedBy.get(n) || []).filter(c => !c.self).length;
+    const citeCount = n => (citedBy.get(n) || []).filter(c => !c.self && !c.pending).length;
     return { byId, byPr, citedBy, citeCount, headOf };
   }
 

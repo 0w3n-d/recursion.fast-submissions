@@ -1,17 +1,20 @@
 """The queue in `submissions.json` (TRUSTED; pure functions on the parsed state).
 
-Order (brief §4): among queued entries, the author whose most recent evaluation started earliest
-(never-evaluated authors first), then that author's oldest queued entry; `queued` is the bot's
-timestamp, so a push goes to the back of its author's line."""
+Order: first the entries waiting for a confirmation duel (`confirming`) and the ports of a record
+to a new pin, oldest first; then, among the other queued entries, the author whose most recent
+evaluation started earliest (never-evaluated authors first), then that author's oldest queued
+entry. `queued` is the bot's timestamp, so a push goes to the back of its author's line."""
 import json
 
-from common import FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR, QUEUED, RUNNING, STATUSES, now_iso
+from common import (CONFIRMING, FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR, QUEUED, RECORD_WINS, RUNNING, STATUSES,
+                    WAITING, now_iso)
 
 EVALUATED = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error")
 
 
 def empty(repo, pin):
-    return {"version": 1, "updated": None, "repo": repo, "core": pin, "margin": MARGIN, "submissions": []}
+    return {"version": 1, "updated": None, "repo": repo, "core": pin, "margin": MARGIN, "record_wins": RECORD_WINS,
+            "submissions": []}
 
 
 def load(raw, repo, pin):
@@ -25,7 +28,7 @@ def load(raw, repo, pin):
     for e in st["submissions"]:
         if not isinstance(e, dict) or e.get("status") not in STATUSES or not isinstance(e.get("id"), str):
             raise ValueError(f"submissions.json holds a malformed entry: {str(e)[:200]}")
-    st["core"], st["margin"] = pin, MARGIN
+    st["core"], st["margin"], st["record_wins"] = pin, MARGIN, RECORD_WINS
     return st
 
 
@@ -106,11 +109,11 @@ def add_invalid(st, entry, reasons, now):
 
 
 def duplicate_of(st, eid, pr, author, tree):
-    """Why a root with this tree is not queued, or None: another author's entry had the same tree
-    first (a copied root; the earliest wins), or an entry with the same tree was already evaluated
-    (an identical re-run, e.g. an empty commit, would only re-draw the measurement noise), or is
-    queued in another pull request. An
-    invalid entry, or one whose evaluation was an organiser-side error, does not count."""
+    """Why a root with this tree is not queued, or None. Another author's entry with the same tree
+    came first (a copied root: the earliest wins, whatever became of it), or one of the author's
+    own entries with the same tree was evaluated, is being evaluated, or is queued in another pull
+    request (an identical re-run, e.g. an empty commit, would only re-draw the measurement noise).
+    Invalid entries never count, nor do the author's own organiser-side errors (a retry)."""
     if not tree:
         return None
     for e in st["submissions"]:
@@ -120,19 +123,25 @@ def duplicate_of(st, eid, pr, author, tree):
             return f"the same root as {e['id']} (#{e['pr']}, by another author), submitted earlier"
         if e["status"] in EVALUATED and e["status"] != "error":
             return f"the same root as {e['id']} (#{e['pr']}), already evaluated ({e['status']})"
-        if e["pr"] != pr and e["status"] in (QUEUED, RUNNING):
+        if e["status"] in (RUNNING, CONFIRMING):
+            return f"the same root as {e['id']} (#{e['pr']}), being evaluated"
+        if e["pr"] != pr and e["status"] == QUEUED:
             return f"the same root as {e['id']}, queued in #{e['pr']}"
     return None
 
 
 def order(st):
-    """The queued entries in the fair order of brief §4."""
+    """The waiting entries in evaluation order: confirmations and ports first (oldest first), then
+    the other queued entries in the fair order."""
     last = {}
     for e in st["submissions"]:
         if e.get("started"):
             a = e["author"]
             last[a] = max(last.get(a, ""), e["started"])
-    queued = sorted((e for e in st["submissions"] if e["status"] == QUEUED), key=lambda e: (e["queued"], e["id"]))
+    key = lambda e: (e["queued"] or "", e["id"])  # noqa: E731
+    front = sorted((e for e in st["submissions"] if e["status"] == CONFIRMING
+                    or (e["status"] == QUEUED and e.get("port_of"))), key=key)
+    queued = sorted((e for e in st["submissions"] if e["status"] == QUEUED and not e.get("port_of")), key=key)
     by = {}
     for e in queued:
         by.setdefault(e["author"], []).append(e)
@@ -140,15 +149,26 @@ def order(st):
     authors = sorted(by, key=lambda a: (a in last, last.get(a, ""), by[a][0]["queued"], a))
     # round robin in that order: an author's second entry comes after every other author's first,
     # since starting the first makes that author the most recent
-    out = []
+    out = front
     for k in range(max((len(v) for v in by.values()), default=0)):
         out += [by[a][k] for a in authors if len(by[a]) > k]
     return out
 
 
+def won_duels(e, record_id):
+    """The duels `e` won against the record `record_id` (a confirmation counts only against the
+    record the first win was against)."""
+    return [d for d in e.get("duels") or [] if isinstance(d, dict) and d.get("won") and d.get("incumbent") == record_id]
+
+
+def waiting(e):
+    """The status an entry waits in: `confirming` once it has won a duel, else `queued`."""
+    return CONFIRMING if any(isinstance(d, dict) and d.get("won") for d in e.get("duels") or []) else QUEUED
+
+
 def reap(st, now):
     """Entries still `running` when a new evaluation run selects (runs are serialised by the
-    concurrency group, so their run ended without publishing): an organiser-side ERROR, queued
+    concurrency group, so their run ended without publishing): an organiser-side ERROR, waiting
     once more or left as `error`. Returns the ids."""
     out = []
     for e in st["submissions"]:
@@ -156,7 +176,7 @@ def reap(st, now):
             why = "harness error: the evaluation run ended without publishing a verdict"
             e["verdict"] = "ERROR"
             if e.get("attempts", 0) < MAX_ATTEMPTS:
-                e["status"], e["reasons"] = QUEUED, [why + " (queued again)"]
+                e["status"], e["reasons"] = waiting(e), [why + " (queued again)"]
             else:
                 _close(e, "error", now, why)
             out.append(e["id"])
@@ -176,9 +196,9 @@ def records(st):
 
 def current_record(st, pin):
     """The standing record: the newest record taken at this pin (`harness_commit == pin`), unless it
-    was retired (a beaten record never stands again). A record of an earlier pin stays in the
+    was retired (a retired record never stands again). A record of an earlier pin stays in the
     history; with none standing there is no duel, and the first comparable attested ACCEPT at the pin
-    is the record (brief §2a, review M4, M5)."""
+    is the record."""
     newest = next((e for e in records(st) if e.get("harness_commit") == pin), None)
     return newest if newest is not None and newest["status"] == "record" else None
 
@@ -194,7 +214,7 @@ COMPACT_KEYS = ("id", "pr", "sha", "root", "author", "status", "queued", "finish
 
 
 def compact(st):
-    """Bounds the state (review M1): an entry that never was evaluated (superseded, withdrawn,
+    """Bounds the state against a flood of pushes: an entry that never was evaluated (superseded, withdrawn,
     invalid) and is not its pull request's newest entry keeps only `COMPACT_KEYS` (the tree for the
     duplicate rule, `started` for fairness); a pull request keeps at most `MAX_HEADS_PER_PR` such
     entries (the oldest are dropped). Evaluated entries are kept whole. Returns the paths of copied
@@ -219,16 +239,36 @@ def compact(st):
     return drop_files
 
 
-def port(st, pr, pin, now):
-    """The owner's re-evaluation at a new pin (after a pin move): the pull request's newest record
-    (or other evaluated ACCEPT) of an earlier pin, queued again as `<id>-<pin8>` on the same retained
-    commit, so the old record can keep the crown at the new pin. None if there is none."""
-    olds = [e for e in of_pr(st, pr) if e["status"] in ("record", "retired", "accepted", "unranked")
-            and e.get("harness_commit") != pin and e.get("tag")]
-    if not olds:
+def port_id(o, pin):
+    """`pr<N>-<sha12>-<pin8>`: the entry `o` re-evaluated at the pin `pin`."""
+    return f"{o['id'][:len('pr') + len(str(o['pr'])) + 13]}-{pin[:8]}"
+
+
+def due_port(st, pin):
+    """The record to port to this pin first, or None: when no record stands at the pin, the newest
+    record of all is of an earlier pin and was not retired, and it has not been ported here yet
+    (a port evaluated once, whatever its verdict, is not repeated)."""
+    if current_record(st, pin) is not None:
         return None
-    o = max(olds, key=lambda e: e.get("finished") or "")
-    nid = f"{o['id'][:len('pr') + len(str(pr)) + 13]}-{pin[:8]}"
+    rs = records(st)
+    o = rs[0] if rs else None
+    if o is None or o["status"] != "record" or o.get("harness_commit") == pin or not o.get("tag"):
+        return None
+    return o if find(st, port_id(o, pin)) is None else None
+
+
+def port(st, pr, pin, now, o=None):
+    """A re-evaluation at a new pin: the record `o` (by default the pull request's newest record or
+    other evaluated ACCEPT of an earlier pin), queued again as `<id>-<pin8>` on the same retained
+    commit, so the old record can keep the crown at the new pin (unpaired). None if there is none
+    or it exists."""
+    if o is None:
+        olds = [e for e in of_pr(st, pr) if e["status"] in ("record", "retired", "accepted", "unranked")
+                and e.get("harness_commit") != pin and e.get("tag")]
+        if not olds:
+            return None
+        o = max(olds, key=lambda e: e.get("finished") or "")
+    nid = port_id(o, pin)
     if find(st, nid) is not None:
         return None
     keep = ("pr", "sha", "root", "author", "title", "agent", "builds_on", "opened", "tag", "notes", "readme", "tree")
@@ -241,7 +281,7 @@ def port(st, pr, pin, now):
 
 
 def any_queued(st):
-    return any(e["status"] == QUEUED for e in st["submissions"])
+    return any(e["status"] in WAITING for e in st["submissions"])
 
 
 def position(st, eid):

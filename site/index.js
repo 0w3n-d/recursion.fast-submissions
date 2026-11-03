@@ -3,6 +3,7 @@
 (function () {
   const { el, svg, ext, page, link, fmtS, fmtDate, timeEl, ago, badge, evaluatedAt, duelGain, pct, unverified } = window.RF;
   const marginText = data => Math.round(data.margin * 1000) / 10 + '\u00a0%';
+  const winsText = data => data.wins === 1 ? 'in one duel' : data.wins === 2 ? 'in two duels in a row' : `in ${data.wins} duels in a row`;
 
   // ---- the stream figure: deterministic draws of the season's chain lengths --------------------
   function drawStream(animate) {
@@ -47,12 +48,13 @@
   // the duel of an entry, in words, with a link to the incumbent
   function headToHead(e, data, nm) {
     const d = e.duel;
-    if (!d) return e.port_of ? 'none (ported to this pin by the owner)' : 'none (no record stood at its pin)';
+    if (!d) return e.port_of ? 'none (the record re-run at a new pin)' : 'none (no record stood at its pin)';
     const inc = data.subs.find(x => x.id === d.incumbent);
     const name = el('a', { href: page('submission.html', { id: d.incumbent }) }, inc ? nm(inc) : d.incumbent);
     if (d.incumbent_failed) return ['the record ', name, ' failed on this runner'];
     const g = duelGain(e);
-    return [pct(g), ' against ', name, ' on the same runner'];
+    const n = e.duels.filter(x => x.won).length;
+    return [pct(g), ' against ', name, ' on the same runner', n > 1 ? ` (the smaller of ${n} duels won)` : ''];
   }
   const short = sha => sha ? sha.slice(0, 7) : 'unknown';
 
@@ -62,12 +64,12 @@
     box.replaceChildren();
     const cur = data.record;
     if (!cur) {
-      const waiting = data.subs.filter(e => e.status === 'queued' || e.status === 'running').length;
+      const waiting = data.subs.filter(e => ['queued', 'running', 'confirming'].includes(e.status)).length;
       const last = recs[recs.length - 1];
       box.append(el('div', { class: 'empty-card' },
         el('h2', null, last ? 'No standing record at this contract pin.' : 'No record yet. Be the first.'),
         last ? el('p', null, `The records so far were set at earlier pins or retired (the leaderboard keeps them). The first certified, comparable, attested ACCEPT at pin ${short(data.core)} becomes the record, without a duel.`)
-          : el('p', null, `The first entry with a certified, comparable, attested ACCEPT becomes the record. After that, every candidate runs against the record on the same runner, in the same job, and must beat it by ${marginText(data)}.`),
+          : el('p', null, `The first entry with a certified, comparable, attested ACCEPT becomes the record. After that, every candidate runs against the record on the same runner, in the same job, and must beat it by ${marginText(data)}, ${winsText(data)}.`),
         data.unpublished ? el('p', null, 'Nothing has been published yet: the first pull request starts the record book.') : null,
         waiting ? el('p', null, waiting === 1 ? 'One submission is in the queue.' : waiting + ' submissions are in the queue.') : null,
         el('div', { class: 'actions' },
@@ -205,7 +207,7 @@
   // ---- leaderboard: every record (`record`, `retired`), newest first, grouped by contract pin ------
   function leaderboard(recs, data, nm) {
     document.getElementById('leaderboard-note').textContent =
-      `Every record, newest first. A new record must beat the standing one by ${marginText(data)} on the same runner, in the same job.`;
+      `Every record, newest first. A new record must beat the standing one by ${marginText(data)} on the same runner, in the same job, ${winsText(data)}.`;
     const tb = document.getElementById('leaders');
     tb.replaceChildren();
     if (!recs.length) {
@@ -239,17 +241,19 @@
     }
   }
 
-  // ---- queue: running first, then the fair order of the bot (BRIEF §4) -------------------------
+  // ---- queue: running first, then confirmations and ports, then the bot's fair order by author ----
   function queueOrder(subs) {
     const running = subs.filter(e => e.status === 'running').sort((a, b) => (a.started || 0) - (b.started || 0));
-    const queued = subs.filter(e => e.status === 'queued').sort((a, b) => (a.queued || 0) - (b.queued || 0));
+    const front = subs.filter(e => e.status === 'confirming' || (e.status === 'queued' && e.port_of))
+      .sort((a, b) => (a.queued || 0) - (b.queued || 0));
+    const queued = subs.filter(e => e.status === 'queued' && !e.port_of).sort((a, b) => (a.queued || 0) - (b.queued || 0));
     const lastStart = new Map();
     for (const e of subs) if (e.author && e.started) lastStart.set(e.author, Math.max(lastStart.get(e.author) || -Infinity, e.started.getTime()));
-    const order = [];
+    const order = front.slice();
     let clock = Date.now() + 1;
     const byAuthor = new Map();
     for (const e of queued) { if (!byAuthor.has(e.author)) byAuthor.set(e.author, []); byAuthor.get(e.author).push(e); }
-    while (byAuthor.size && order.length < 500) {
+    while (byAuthor.size && order.length < 500 + front.length) {
       let best = null;
       for (const [a, list] of byAuthor) {
         const ls = lastStart.has(a) ? lastStart.get(a) : -Infinity, e = list[0];
@@ -260,7 +264,7 @@
       if (!list.length) byAuthor.delete(best.a);
       lastStart.set(best.a, clock++);
     }
-    return { running, order, total: queued.length };
+    return { running, order, total: queued.length + front.length };
   }
   function queue(subs, nm) {
     const ol = document.getElementById('queue');
@@ -276,7 +280,8 @@
       el('span', null, badge(e.status), ' ', el('a', { class: 'entry', href: page('submission.html', { id: e.id }) }, nm(e)),
         ' ', el('span', { class: 'muted' }, 'by '), e.author ? ext(link.author(e), e.author) : '–',
         ' ', el('span', { class: 'muted' }, '('), ext(link.pr(e), '#' + e.pr), el('span', { class: 'muted' }, ')')),
-      el('span', { class: 'when' }, e.status === 'running' ? (e.started ? 'started ' + ago(e.started) : 'started') : (e.queued ? 'queued ' + ago(e.queued) : 'queued')));
+      el('span', { class: 'when' }, e.status === 'running' ? (e.started ? 'started ' + ago(e.started) : 'started')
+        : e.status === 'confirming' ? 'won a duel; confirmation next' : (e.queued ? 'queued ' + ago(e.queued) : 'queued')));
     running.forEach(e => ol.append(item(e, '▸')));
     order.forEach((e, i) => ol.append(item(e, String(i + 1))));
     if (total > order.length) ol.append(el('li', { class: 'empty-li' }, el('span', { class: 'empty' }, `and ${total - order.length} more`)));
@@ -313,7 +318,7 @@
     for (const e of rows.slice(0, state.limit)) {
       const n = rel.citeCount(e.pr);
       const credit = [];
-      if (n) credit.push(el('span', { title: 'Evaluated pull requests by other authors that say they build on this one' }, 'cited by ' + n));
+      if (n) credit.push(el('span', { title: 'Pull requests by other authors, with a verdict, that say they build on this one' }, 'cited by ' + n));
       if (e.builds_on.length) credit.push(el('span', { class: 'muted' }, (credit.length ? ', ' : '') + 'builds on ' + e.builds_on.map(k => '#' + k).join(' ')));
       tb.append(el('tr', null,
         el('td', null, badge(e.status), unverified(e) ? [' ', unverified(e)] : null),

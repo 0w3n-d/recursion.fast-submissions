@@ -56,12 +56,13 @@ account (Settings, Pages, Verified domains) prevents takeover if Pages is ever d
 
 Copy `site/` to any static host (Netlify, Cloudflare Pages, S3, nginx). Nothing else is needed: no
 server code, no secrets, no third-party origin. Reading the data from somewhere else takes one
-config edit **plus** the CSP: change `DATA_BASE` in `config.js`, and the `connect-src` of the
+config edit **plus** the CSP: change `DATA_BASE` (and `MAIN_BASE`) in `config.js`, and the `connect-src` of the
 Content-Security-Policy `<meta>` in each of the three `.html` files (each carries a comment saying
 so). Forgetting the second makes the browser refuse the fetch.
 
-Before launch, branch `data` must exist, or the site shows "no results yet" (a 404 of
-`submissions.json` is read as an empty record book, never as an error).
+Until branch `data` exists the site shows "no results yet": a 404 of `submissions.json` is read as
+an empty record book, never as an error, and the footer takes the contract pin from `records.json`
+on `main`. The bot's first `sync` run creates `data`.
 
 ## Security choices
 

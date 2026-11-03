@@ -2,17 +2,20 @@
 
 A result can become the record only if its verdict is ACCEPT, it is comparable, its attestation
 verifies (the core's signer workflow at the pin, on a GitHub-hosted runner, bound to this run), the
-core's `harness/verify-record.sh` accepts it, and `harness_commit` is the pin. Then (brief §2a):
+core's `harness/verify-record.sh` accepts it, and `harness_commit` is the pin. Then:
 
-- with no record, it is the record (the only unpaired path);
+- with no record, it is the record (the only unpaired path, needing no confirmation);
 - with a standing record (the newest record at this pin), the evaluation was a duel (the record
-  re-run in the same benchmark job, same drawn chain lengths), and `duel` decides: the candidate is
-  the record iff `S_cand <= (1 - margin) * S_inc` (margin 0.03). If the record fails on that
-  runner (`entry_failed`), there is no comparison: the candidate is `accepted` and evaluated once
-  more, and a record that fails in two duels is retired. An organiser-side failure is an ERROR.
+  re-run in the same benchmark job, same drawn chain lengths), and `duel` decides: the candidate
+  wins iff `S_cand <= (1 - MARGIN) * S_inc`. One win is not enough, since the runner's noise can
+  give it to a copy: a candidate with fewer than `RECORD_WINS` wins against this record is
+  `confirming` (one more duel of the same commit, first in the queue); with `RECORD_WINS` wins it
+  is the record, and a lost confirmation makes it `accepted`. If the record fails on that runner
+  (`entry_failed`), there is no comparison: no crown, the candidate is evaluated once more, and a
+  record that fails in two duels is retired. An organiser-side failure is an ERROR.
 
 A prover binary that an earlier record already had never takes the record (a resubmitted copy)."""
-from common import MARGIN, MAX_ATTEMPTS, SHA_RE, VERDICTS, clean, clean_reasons, is_num
+from common import CONFIRMING, MARGIN, MAX_ATTEMPTS, RECORD_WINS, SHA_RE, VERDICTS, clean, clean_reasons, is_num
 
 
 def clean_value(v, depth=0):
@@ -29,7 +32,7 @@ def clean_value(v, depth=0):
     return None
 
 
-DUEL_RETRIES = 1        # a candidate whose duel the record failed is evaluated once more
+DUEL_RETRIES = 1        # a candidate whose duel the record failed is evaluated once more (once per entry)
 RECORD_FAILURES = 2     # a record whose own run fails in this many duels is retired
 
 
@@ -37,8 +40,8 @@ def duel(result, S, record, margin=MARGIN):
     """(outcome, reason, duel record) of a comparable, attested ACCEPT with score `S` against the
     standing `record`, from the core's duel fields (`harness/aggregate.py pair()`): `duel: true` and
     `incumbent: {sha, path, certificate_status, verdict, comparable, truncated, score: {S, ...},
-    entry_failed, reasons}`. outcome is `record`, `accepted`, `incumbent_failed` (the record failed
-    on this runner: never a crown, review M4) or `error` (the organiser's)."""
+    entry_failed, reasons}`. outcome is `won`, `accepted`, `incumbent_failed` (the record failed on
+    this runner: never a crown) or `error` (the organiser's)."""
     rid = record["id"]
     inc = result.get("incumbent")
     if result.get("duel") is not True or not isinstance(inc, dict):
@@ -53,30 +56,32 @@ def duel(result, S, record, margin=MARGIN):
     if inc.get("entry_failed") is True:
         return "incumbent_failed", (f"the record {rid} failed on this runner ({clean(inc.get('verdict'), 20)}"
                                     + (", truncated" if inc.get("truncated") else "") + (f": {why}" if why else "")
-                                    + "): no comparison"), {"incumbent": rid, "S_inc": None, "gain": None,
-                                                            "incumbent_failed": True}
+                                    + "): no comparison"), {"incumbent": rid, "S": S, "S_inc": None, "gain": None,
+                                                            "incumbent_failed": True, "won": False}
     sc = inc.get("score") if isinstance(inc.get("score"), dict) else {}
     s_inc = sc.get("S")
     if inc.get("verdict") != "ACCEPT" or inc.get("comparable") is not True or not is_num(s_inc) or s_inc <= 0:
         return "error", (f"harness error: the record {rid}'s run in the duel gave no comparable score "
                          f"(verdict {clean(inc.get('verdict'), 20)}) and no entry failure"), None
-    d = {"incumbent": rid, "S_inc": s_inc, "gain": 1 - S / s_inc, "incumbent_failed": False}
-    if S <= (1 - margin) * s_inc:
-        return "record", f"S = {S:.4f} beats the record {rid} (S = {s_inc:.4f} in the same job) by {d['gain']:.1%}", d
+    d = {"incumbent": rid, "S": S, "S_inc": s_inc, "gain": 1 - S / s_inc, "incumbent_failed": False}
+    d["won"] = S <= (1 - margin) * s_inc
+    if d["won"]:
+        return "won", f"S = {S:.4f} beats the record {rid} (S = {s_inc:.4f} in the same job) by {d['gain']:.1%}", d
     return "accepted", (f"S = {S:.4f} against the record {rid}'s S = {s_inc:.4f} in the same job "
-                        f"({d['gain']:+.1%}; a record needs {margin:.0%})"), d
+                        f"({d['gain']:+.1%}; a win needs {margin:.0%})"), d
 
 
 def decide(result, verification, pin, record, attempts, record_provers=(), margin=MARGIN, duel_retries=0,
-           record_failures=0):
+           record_failures=0, wins=(), record_wins=RECORD_WINS):
     """The fields an evaluation sets on its entry, with `requeue` (evaluate it once more) and
     `retire_record` / `record_failed` (what happens to the standing record).
 
     result: the parsed result.json or None; verification: {"attested": bool, "record_ok": bool,
     "reason": str}; record: the standing record's entry (at this pin) or None; attempts: this entry's
-    evaluations so far, this one included; record_provers: {prover_sha256: id} of every record;
-    duel_retries: the candidate's evaluations lost to a failure of the record; record_failures: the
-    record's duels it failed so far."""
+    evaluations so far in this round, this one included; record_provers: {prover_sha256: id} of
+    every record; duel_retries: the candidate's evaluations lost to a failure of the record;
+    record_failures: the record's duels it failed so far; wins: the duels this entry already won
+    against `record`. `status` is `confirming` (not `queued`) when the entry waits with a win."""
     if not isinstance(result, dict):
         result = {"verdict": "ERROR", "reasons": ["harness error: the evaluation produced no readable result "
                                                   "(no `result` artifact: a job failed before the attest job)"]}
@@ -88,7 +93,7 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
            "truncated": result.get("truncated") is True,
            "cpu": [clean(m, 100) for m in (result.get("cpu_models") or [])[:4]] if isinstance(result.get("cpu_models"), list) else [],
            "harness_commit": hc, "verified": bool(verification.get("attested")),
-           "record_of": None, "duel": None, "requeue": False, "duel_retry": False, "record_failed": False,
+           "record_of": None, "duel": None, "duel_now": None, "requeue": False, "duel_retry": False, "record_failed": False,
            "retire_record": False}
     reasons = clean_reasons(result.get("reasons"))
     extra = []
@@ -103,7 +108,7 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
         return "error"
 
     if not out["verified"]:
-        # any result whose provenance fails is the organiser's problem, whatever it says (review m11)
+        # any result whose provenance fails is the organiser's problem, whatever it says
         status = error("attestation not verified: " + clean(verification.get("reason") or "no attestation", 240))
     elif verdict == "ERROR":
         status = error()
@@ -129,9 +134,18 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
         status = "record"
     else:
         outcome, why, out["duel"] = duel(result, S, record, margin)
+        out["duel_now"] = out["duel"]
         extra.append(why)
-        if outcome == "record":
+        won = list(wins) + ([out["duel"]] if outcome == "won" else [])
+        if outcome == "won" and len(won) >= record_wins:
             status, out["record_of"] = "record", record["id"]
+            out["duel"] = min(won, key=lambda d: d["gain"])       # the gain it is credited with: the smallest
+            if len(won) > 1:
+                extra.append(f"{len(won)} duels won against the record {record['id']}: the new record")
+        elif outcome == "won":
+            status = CONFIRMING
+            extra.append(f"duel {len(won)} of {record_wins} won: one more duel of this commit against the record "
+                         f"{record['id']} runs next, first in the queue")
         elif outcome == "error":
             status = error()
         elif outcome == "incumbent_failed":
@@ -149,6 +163,10 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
                 status = "queued"
         else:
             status = "accepted"
+            if wins:
+                extra.append("the confirmation duel was lost: not the record")
+    if status == "queued" and wins and not out["retire_record"]:
+        status = CONFIRMING                    # a retry keeps the win and its place at the front
     out["status"] = status
     out["reasons"] = reasons[:max(0, 20 - len(extra))] + extra[:20]
     return out
@@ -157,7 +175,7 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
 def cache_retry(result, entry):
     """True if a REJECT used the record build cache (its certificate, or the incumbent's, restored
     modules from it) and this entry was not yet evaluated without it: it is queued once more with
-    `record_cache: false`, so a sabotaged cache cannot fail a candidate (S5). An ERROR's retry runs
+    `record_cache: false`, so a sabotaged cache cannot fail a candidate. An ERROR's retry runs
     without the cache anyway (flows.publish)."""
     if not isinstance(result, dict) or result.get("verdict") != "REJECT" or entry.get("record_cache") is False:
         return False
