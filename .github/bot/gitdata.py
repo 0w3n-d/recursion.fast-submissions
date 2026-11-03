@@ -31,7 +31,11 @@ class Repo:
         self.env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
                          "GIT_AUTHOR_NAME": BOT_NAME, "GIT_AUTHOR_EMAIL": BOT_EMAIL,
                          "GIT_COMMITTER_NAME": BOT_NAME, "GIT_COMMITTER_EMAIL": BOT_EMAIL})
-        cfg = [("core.hooksPath", os.devnull), ("protocol.version", "2"), ("fetch.fsckObjects", "true")]
+        # No background gc/maintenance: a detached `gc --auto` after one fetch rewrites `shallow` under
+        # the next `fetch --depth=1` ("shallow file has changed", "shallow.lock exists").
+        cfg = [("core.hooksPath", os.devnull), ("protocol.version", "2"), ("fetch.fsckObjects", "true"),
+               ("gc.auto", "0"), ("gc.autoDetach", "false"), ("maintenance.auto", "false"),
+               ("fetch.writeCommitGraph", "false")]
         if token:
             b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
             cfg.append(("http.https://github.com/.extraheader", f"AUTHORIZATION: basic {b64}"))

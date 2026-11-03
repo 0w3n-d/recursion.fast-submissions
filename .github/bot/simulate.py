@@ -172,6 +172,8 @@ class World:
         self.bare = os.path.join(self.dir, "github.git")
         os.makedirs(self.bare)
         git(self.bare, "init", "-q", "--bare")
+        for k, v in (("gc.auto", "0"), ("receive.autogc", "false"), ("maintenance.auto", "false")):
+            git(self.bare, "config", k, v)      # no background gc racing the bot's fetches and pushes
         main = commit_tree(self.bare, None, {"README.md": b"# recursion.fast submissions\n",
                                              "records.json": b'{"version": 1, "records": {}}\n',
                                              "submissions/README.md": b"roots\n", ".contract": PIN.encode(),

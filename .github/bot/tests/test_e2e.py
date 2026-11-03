@@ -430,7 +430,9 @@ class E2E(unittest.TestCase):
             ch = gitdata.Changes()
             ch.put(f"w{i}.txt", b"x")
             try:
-                gitdata.Repo(self.w.bare).transact("data", lambda s: ch, f"w{i}", base=0.05)
+                # 16 writers is a stress test (production has two: sync and evaluate-next), so allow
+                # more tries than the default on a slow 2-CPU runner
+                gitdata.Repo(self.w.bare).transact("data", lambda s: ch, f"w{i}", tries=40, base=0.05)
                 res[i] = True
             except gitdata.GitError:
                 res[i] = False
