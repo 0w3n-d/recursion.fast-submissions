@@ -1,1 +1,7 @@
-{"version": 1, "records": {}}
+{
+ "version": 1,
+ "core": "9eb4ace62922296e9f29dfebb5a6089c184f6086",
+ "margin": 0.03,
+ "record": null,
+ "history": []
+}

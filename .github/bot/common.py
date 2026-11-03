@@ -1,0 +1,74 @@
+"""Constants and the sanitisers every module uses (TRUSTED; the bot of recursion.fast-submissions).
+
+Every string that reaches `data`, a comment or a commit status from a pull request (its title, the
+NOTES header, file names, the result's reasons) goes through `clean` or `code_span` first.
+"""
+import datetime
+import re
+
+CORE_REPO = "scaraven/recursion.fast"
+SIGNER_WORKFLOW = "scaraven/recursion.fast/.github/workflows/evaluate.yml"
+STATUS_CONTEXT = "recursion.fast/evaluation"
+MARGIN = 0.03             # a record needs S_cand <= (1 - MARGIN) * S_inc, measured in one job (the duel)
+MAX_ATTEMPTS = 2          # an organiser-side ERROR is evaluated once more, then left for the owner
+
+ROOT_RE = re.compile(r"[a-z][a-z0-9-]{0,39}\Z")
+SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
+ID_RE = re.compile(r"pr[1-9][0-9]{0,8}-[0-9a-f]{12}\Z")
+LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?\Z")
+
+QUEUED, RUNNING = "queued", "running"
+FINAL = ("record", "accepted", "unranked", "provisional", "rejected", "error", "invalid",
+         "superseded", "withdrawn")
+STATUSES = (QUEUED, RUNNING) + FINAL
+VERDICTS = ("ACCEPT", "PROVISIONAL", "REJECT", "ERROR")
+
+# intake caps (none is fixed by the core: AGENTS.md §5 leaves "limits on files and bytes per root"
+# to the intake). The largest v4 root so far, flock-recursive, has 446 files and 34 MB.
+MAX_PR_FILES = 3000       # the pull-request files API lists at most 3000
+MAX_ROOT_FILES = 2000
+MAX_FILE_BYTES = 64 << 20
+MAX_ROOT_BYTES = 128 << 20
+MAX_TEXT_BYTES = 64 << 10   # NOTES.md, README.md, claim.json
+MAX_PATH = 512
+
+
+def entry_id(pr, sha):
+    """The id of one evaluated commit of one pull request: `pr<N>-<first 12 hex of the sha>`."""
+    return f"pr{int(pr)}-{sha[:12]}"
+
+
+def now_iso(clock=None):
+    t = clock() if clock else datetime.datetime.now(datetime.timezone.utc)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def clean(s, cap):
+    """Untrusted text as one printable line of at most `cap` characters (Unicode letters kept;
+    control, format (bidi) and separator characters other than space become `?`)."""
+    s = " ".join(str(s if s is not None else "").split())
+    out = "".join(c if c.isprintable() else "?" for c in s)
+    return out if len(out) <= cap else out[: max(cap - 1, 0)] + "…"
+
+
+def ascii_line(s, cap):
+    """Untrusted text as printable ASCII, at most `cap` characters, with no backtick."""
+    s = " ".join(str(s if s is not None else "").split())
+    out = "".join(c if 32 <= ord(c) < 127 else "?" for c in s).replace("`", "'")
+    return out if len(out) <= cap else out[: max(cap - 3, 0)] + "..."
+
+
+def code_span(s, cap=300):
+    """Untrusted text for a comment: printable ASCII in a code span, so no markdown, link, HTML or
+    @-mention in it is rendered."""
+    return "`" + (ascii_line(s, cap) or " ") + "`"
+
+
+def clean_reasons(rs, n=20, cap=300):
+    if not isinstance(rs, list):
+        rs = [rs] if rs else []
+    return [clean(r, cap) for r in rs[:n]]
+
+
+def is_num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x and abs(x) != float("inf")

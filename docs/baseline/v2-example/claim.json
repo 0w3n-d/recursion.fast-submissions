@@ -1,9 +1,0 @@
-{
- "k": 24,
- "hash": "blake2s",
- "arity": 2,
- "image": {
-  "code": "extractor/extractor.bin",
-  "data": "extractor/extractor.data"
- }
-}

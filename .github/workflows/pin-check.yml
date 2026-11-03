@@ -1,0 +1,35 @@
+# The one core pin (TRUSTED check): the `.contract` gitlink and the `uses: …/evaluate.yml@<PIN>`
+# and `core_ref: <PIN>` of evaluate-next.yml must be the same full SHA (.github/bot/pin.py). Fails
+# on a disagreement; warns if the pin is not the core's current `main` head. Set the pin only with
+# .github/bot/pin-core.sh <sha>, in its own commit. Also runs the bot's unit tests.
+name: pin-check
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: [".contract", ".gitmodules", ".github/**"]
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: one pin in three places
+        run: |
+          out=$(python3 -I .github/bot/pin.py .)
+          pin=${out##*$'\n'}
+          echo "pin: $pin"
+          head=$(git ls-remote https://github.com/scaraven/recursion.fast.git refs/heads/main | cut -f1)
+          if [[ "$head" != "$pin" ]]; then
+            echo "::warning title=pin::the pin $pin is not the core's main head ($head)"
+          fi
+      - name: the bot's tests
+        run: python3 -I -m unittest discover -s .github/bot/tests -t .github/bot
