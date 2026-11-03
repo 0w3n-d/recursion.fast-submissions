@@ -66,14 +66,14 @@ jobs:
     needs: select
     if: needs.select.outputs.id != ''
     # the core's evaluation, pinned by commit (THE PIN)
-    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@9eb4ace62922296e9f29dfebb5a6089c184f6086
+    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@7138ec7e146a1f7d61471e0de794060a5a08638f
     permissions: { contents: read, id-token: write, attestations: write }
     with:
       entry_repo: ${{ github.repository }}
       entry_sha: ${{ needs.select.outputs.sha }}
       entry_path: ${{ needs.select.outputs.path }}
       pr_ref: ${{ needs.select.outputs.ref }}
-      core_ref: 9eb4ace62922296e9f29dfebb5a6089c184f6086
+      core_ref: 7138ec7e146a1f7d61471e0de794060a5a08638f
       # the duel: the standing record at the pin, re-run in the same benchmark job (all three empty
       # when there is none); the record build cache (false after a failure that used it)
       incumbent_sha: ${{ needs.select.outputs.incumbent_sha }}
