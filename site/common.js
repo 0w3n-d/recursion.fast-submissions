@@ -9,12 +9,13 @@
   const dataKey = rawKey && Object.prototype.hasOwnProperty.call(CFG.FIXTURES, rawKey) ? rawKey : null;
   const BASE = dataKey ? CFG.FIXTURES[dataKey] : CFG.DATA_BASE;
 
-  const STATUSES = ['record', 'accepted', 'unranked', 'provisional', 'rejected', 'error', 'invalid',
+  const STATUSES = ['record', 'retired', 'accepted', 'unranked', 'provisional', 'rejected', 'error', 'invalid',
     'queued', 'running', 'superseded', 'withdrawn'];
   const STATUS_INFO = {
-    record: ['record', 'Became the record when it was evaluated.'],
-    accepted: ['accepted', 'Certified and comparable, but did not beat the record by the margin.'],
-    unranked: ['unranked', 'Certified, but not comparable (a truncated stream or mixed CPU models).'],
+    record: ['record', 'Took the record when it was evaluated; it keeps this status in the history after it is beaten.'],
+    retired: ['retired', 'A record that stood, then failed in two duels or was retired by the owner.'],
+    accepted: ['accepted', 'Certified and comparable, but it did not win its duel by 3 %, its record failed on the runner (it is queued for another duel), or its prover binary is an earlier record\'s.'],
+    unranked: ['unranked', 'Certified, but not comparable (a truncated stream, mixed CPU models, a job plan that did not match, or no positive S).'],
     provisional: ['provisional', 'The Lean builds but the certificate does not check; benchmarked, never ranked.'],
     rejected: ['rejected', 'The certificate or the benchmark failed. The reasons say why.'],
     error: ['error', 'An organiser-side fault, not the entry\'s. Requeued once, then left for the owner.'],
@@ -22,21 +23,25 @@
     queued: ['queued', 'Waiting for the evaluator.'],
     running: ['running', 'Being evaluated now.'],
     superseded: ['superseded', 'The pull request moved before evaluation; the new head is queued instead.'],
-    withdrawn: ['withdrawn', 'The pull request was closed before evaluation.']
+    withdrawn: ['withdrawn', 'The pull request was closed, made a draft or put on hold before evaluation.']
   };
   const VERDICTS = ['ACCEPT', 'PROVISIONAL', 'REJECT', 'ERROR'];
 
+  // An id is pr<N>-<12 hex of the head sha>, with -<8 hex of the pin> for a record ported to a new pin.
+  const ID = 'pr[1-9]\\d{0,8}-[0-9a-f]{12}(?:-[0-9a-f]{8})?';
+  const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const RE = {
-    id: /^pr\d{1,7}-[0-9a-f]{12}$/,
+    id: new RegExp('^' + ID + '$'),
     sha: /^[0-9a-f]{40}$/,
     root: /^[a-z][a-z0-9-]{0,39}$/,
-    login: /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/,
-    md: /^(notes|readme)\/pr\d{1,7}-[0-9a-f]{12}\.md$/,
-    tag: /^rf-source\/pr\d{1,7}-[0-9a-f]{12}$/,
-    run: /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/actions\/runs\/\d{1,20}(?:\/job\/\d{1,20}|\/attempts\/\d{1,4})?$/,
+    login: /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/,
+    md: new RegExp('^(notes|readme)/' + ID + '\\.md$'),
+    tag: new RegExp('^rf-source/' + ID + '$'),
+    run: new RegExp('^https://github\\.com/' + reEsc(CFG.REPO) + '/actions/runs/\\d{1,20}(?:/job/\\d{1,20}|/attempts/\\d{1,4})?$'),
     key: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/,
-    result: /^results\/pr\d{1,7}-[0-9a-f]{12}\.json$/
+    result: new RegExp('^results/' + ID + '\\.json$')
   };
+  const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf']);
 
   // Plain text only: no control characters, no bidirectional overrides (they can disguise text).
   function text(v, max) {
@@ -52,10 +57,10 @@
 
   function cleanScore(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const out = {};
+    const out = Object.create(null);
     let n = 0;
     for (const [k, v] of Object.entries(raw)) {
-      if (n >= 60 || !RE.key.test(k)) continue;
+      if (n >= 60 || !RE.key.test(k) || BAD_KEYS.has(k)) continue;
       if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
       else if (typeof v === 'boolean') out[k] = v;
       else if (typeof v === 'string' && text(v, 80)) out[k] = text(v, 80);
@@ -108,7 +113,10 @@
       verified: r.verified === true,
       harness_commit: typeof r.harness_commit === 'string' && RE.sha.test(r.harness_commit) ? r.harness_commit : null,
       prover_sha256: typeof r.prover_sha256 === 'string' && /^[0-9a-f]{64}$/.test(r.prover_sha256) ? r.prover_sha256 : null,
-      result: typeof r.result === 'string' && RE.result.test(r.result) ? r.result : null
+      result: typeof r.result === 'string' && RE.result.test(r.result) ? r.result : null,
+      duel_failures: int(r.duel_failures),
+      retired: date(r.retired),
+      port_of: typeof r.port_of === 'string' && RE.id.test(r.port_of) ? r.port_of : null
     };
   }
 
@@ -117,7 +125,7 @@
     const t = setTimeout(() => ctl.abort(), ms);
     try {
       const res = await fetch(url, { cache: 'no-cache', signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
-      if (!res.ok) throw new Error('the server answered HTTP ' + res.status);
+      if (!res.ok) { const err = new Error('the server answered HTTP ' + res.status); err.status = res.status; throw err; }
       return res;
     } catch (e) {
       if (e.name === 'AbortError') throw new Error('the request timed out');
@@ -129,22 +137,32 @@
   function loadData(force) {
     if (dataPromise && !force) return dataPromise;
     dataPromise = (async () => {
-      const res = await fetchWithTimeout(BASE + 'submissions.json', 15000);
+      let res;
+      try { res = await fetchWithTimeout(BASE + 'submissions.json', 15000); } catch (err) {
+        // the branch `data` does not exist yet: nothing has been published, which is not an error
+        if (err.status === 404) return { updated: null, core: null, margin: 0.03, subs: [], skipped: 0, notShown: 0, record: null, unpublished: true };
+        throw err;
+      }
       const raw = await res.json().catch(() => { throw new Error('submissions.json is not valid JSON'); });
       if (!raw || raw.version !== 1 || !Array.isArray(raw.submissions)) throw new Error('submissions.json has an unknown format');
       const seen = new Set();
       const subs = [];
-      for (const r of raw.submissions.slice(0, 20000)) {
+      const CAP = 20000;
+      for (const r of raw.submissions.slice(0, CAP)) {
         const e = cleanEntry(r);
         if (e && !seen.has(e.id)) { seen.add(e.id); subs.push(e); }
       }
       const margin = num(raw.margin);
+      // the standing record is the bot's statement (`record`), never re-derived here
+      const rec = typeof raw.record === 'string' && RE.id.test(raw.record) ? subs.find(e => e.id === raw.record) : null;
       return {
         updated: date(raw.updated),
         core: typeof raw.core === 'string' && RE.sha.test(raw.core) ? raw.core : null,
         margin: margin !== null && margin >= 0 && margin < 1 ? margin : 0.03,
         subs,
-        skipped: raw.submissions.length - subs.length
+        skipped: Math.min(raw.submissions.length, CAP) - subs.length,
+        notShown: Math.max(0, raw.submissions.length - CAP),
+        record: rec && rec.status === 'record' && rec.score && rec.score.S !== null && evaluatedAt(rec) ? rec : null
       };
     })();
     dataPromise.catch(() => { dataPromise = null; });
@@ -248,7 +266,7 @@
   };
   // A verdict whose attestation did not verify is shown as such everywhere.
   const unverified = e => e.verdict && !e.verified ? el('span', { class: 'badge st-unverified', title: 'The attestation of this result did not verify; it can never be a record.' }, 'unverified') : null;
-  const pct = v => (v < 0 ? '\u2212' : '+') + Math.abs(v).toFixed(1) + '\u00a0%';
+  const pct = v => typeof v !== 'number' || !Number.isFinite(v) ? '\u2013' : (v < 0 ? '\u2212' : '+') + Math.abs(v).toFixed(1) + '\u00a0%';
   const evaluatedAt = e => e.finished || e.started || e.queued || e.opened;
 
   // ---- relations ---------------------------------------------------------------------------
@@ -262,22 +280,58 @@
       byPr.get(e.pr).push(e);
     }
     for (const list of byPr.values()) list.sort((a, b) => (evaluatedAt(b) || 0) - (evaluatedAt(a) || 0));
-    const citedBy = new Map();
-    for (const e of subs) for (const n of e.builds_on) {
-      if (!citedBy.has(n)) citedBy.set(n, new Set());
-      citedBy.get(n).add(e.pr);
-    }
     const headOf = n => {
       const list = byPr.get(n);
       if (!list) return null;
       return list.find(e => !['superseded', 'withdrawn', 'queued', 'running'].includes(e.status)) || list[0];
     };
-    return { byId, byPr, citedBy, headOf };
+    // A citation counts only from a pull request whose newest head is evaluated or waiting (not
+    // invalid, superseded or withdrawn), and only once per citing PR. `self` marks a citation by
+    // the cited PR's own author; it is listed but not counted.
+    const citedBy = new Map();
+    for (const [pr, list] of byPr) {
+      const newest = list.slice().sort((a, b) => (b.queued || b.opened || 0) - (a.queued || a.opened || 0))[0];
+      if (!newest || ['invalid', 'superseded', 'withdrawn'].includes(newest.status)) continue;
+      for (const n of newest.builds_on) {
+        const cited = headOf(n);
+        if (!cited) continue;
+        if (!citedBy.has(n)) citedBy.set(n, []);
+        citedBy.get(n).push({ pr, self: !!cited.author && cited.author === newest.author });
+      }
+    }
+    const citeCount = n => (citedBy.get(n) || []).filter(c => !c.self).length;
+    return { byId, byPr, citedBy, citeCount, headOf };
   }
 
+  // Every record ever taken (`record` or `retired`), oldest first; entries without a score or a
+  // date are left out rather than allowed to break a page.
   function records(subs) {
-    return subs.filter(e => e.status === 'record' && e.score && e.score.S !== null)
-      .sort((a, b) => (evaluatedAt(a) || 0) - (evaluatedAt(b) || 0));
+    return subs.filter(e => (e.status === 'record' || e.status === 'retired') && e.score && e.score.S !== null && evaluatedAt(e))
+      .sort((a, b) => evaluatedAt(a) - evaluatedAt(b));
+  }
+
+  // A root name that two authors use is shown with its pull request, so it cannot pass as the other.
+  function nameOf(subs) {
+    const authors = new Map();
+    for (const e of subs) if (e.root) {
+      if (!authors.has(e.root)) authors.set(e.root, new Set());
+      authors.get(e.root).add(e.author);
+    }
+    return e => !e.root ? e.id : authors.get(e.root).size > 1 ? `${e.root} (#${e.pr})` : e.root;
+  }
+
+  // Runs one section's render; a failure shows a message in that section only.
+  function section(name, target, fn) {
+    try { fn(); } catch (err) {
+      const box = typeof target === 'string' ? document.getElementById(target) : target;
+      if (box) {
+        const msg = el('p', { class: 'section-error', role: 'alert' }, `This section could not be shown (${name}): the data has an unexpected shape.`);
+        if (box.tagName === 'TBODY') box.replaceChildren(el('tr', { class: 'empty-row' }, el('td', { colspan: 9 }, msg)));
+        else if (box.tagName === 'OL' || box.tagName === 'UL') box.replaceChildren(el('li', { class: 'empty-li' }, msg));
+        else box.replaceChildren(msg);
+      }
+      if (window.console) console.warn('recursion.fast: ' + name + ': ' + (err && err.message));
+    }
   }
 
   // ---- page chrome -------------------------------------------------------------------------
@@ -316,7 +370,7 @@
   window.RF = {
     CFG, BASE, dataKey, STATUSES, STATUS_INFO, RE,
     loadData, loadText, el, svg, ext, page, link, fmtS, fmtDate, fmtDateTime, timeEl, ago, badge,
-    shortSha, duelGain, pct, unverified, evaluatedAt, relations, records, chrome, footer
+    shortSha, duelGain, pct, unverified, evaluatedAt, relations, records, nameOf, section, chrome, footer
   };
   document.addEventListener('DOMContentLoaded', chrome);
 })();

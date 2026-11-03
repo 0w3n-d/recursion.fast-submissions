@@ -17,6 +17,17 @@ if ! git -C "$T" -c protocol.version=2 fetch -q --depth=1 --no-tags "$CORE" "$SH
   echo "pin-core: $SHA is not a commit of $CORE" >&2; exit 1
 fi
 [[ "$(git -C "$T" rev-parse FETCH_HEAD)" == "$SHA" ]] || { echo "pin-core: fetched another commit" >&2; exit 1; }
+# warn (not fail) if the core at SHA does not take the inputs the bot passes, or its [entry] caps differ
+git -C "$T" show "$SHA:.github/workflows/evaluate.yml" > "$T/core-evaluate.yml"
+git -C "$T" show "$SHA:harness/season.toml" > "$T/season.toml" 2>/dev/null || : > "$T/season.toml"
+python3 -I - "$TOP/.github/bot" "$WF" "$T/core-evaluate.yml" "$T/season.toml" <<'PY' >&2 || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import pin
+ours, core, season = (open(p, encoding="utf-8").read() for p in sys.argv[2:5])
+for p in pin.inputs_problems(ours, core) + pin.caps_problems(season):
+    print(f"pin-core: warning: {p}")
+PY
 head=$(git ls-remote "$CORE" refs/heads/main | cut -f1)
 [[ "$head" == "$SHA" ]] || echo "pin-core: warning: $SHA is not the core's main head ($head)" >&2
 

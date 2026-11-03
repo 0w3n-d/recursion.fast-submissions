@@ -3,7 +3,8 @@
 # from the queue a replaced pending run loses nothing).
 #
 #   select    picks the next entry (fair order: .github/bot/rfqueue.py), marks it running on `data`,
-#             and reaps any entry a previous run left running; no entry code
+#             reaps any entry a previous run left running, and names the standing record at the pin
+#             as the duel's incumbent; no entry code
 #   evaluate  the core's reusable workflow at the PIN, with the entry fetched from its retention tag
 #   publish   no entry code: verifies the attestation (.github/bot/attest.py, the checks of the
 #             core's harness/verify-record.sh, which it also runs for an ACCEPT), decides the status
@@ -17,7 +18,8 @@ name: evaluate-next
 on:
   workflow_dispatch:
     inputs:
-      pr: { description: "force this pull request's queued (or errored) entry", required: false, default: "" }
+      pr: { description: "force this pull request's queued or errored entry, or re-evaluate its record of an earlier pin", required: false, default: "" }
+      retire: { description: "retire this record id first (the owner's)", required: false, default: "" }
   schedule:
     - cron: "17,47 * * * *"   # fallback: a lost dispatch delays the queue by at most 30 minutes
 permissions: {}
@@ -47,6 +49,7 @@ jobs:
       incumbent_path: ${{ steps.sel.outputs.incumbent_path }}
       incumbent_ref: ${{ steps.sel.outputs.incumbent_ref }}
       record_cache: ${{ steps.sel.outputs.record_cache }}
+      record_manifest_sha256: ${{ steps.sel.outputs.record_manifest_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { ref: "${{ github.sha }}", path: bot-src, persist-credentials: false, sparse-checkout: .github }
@@ -55,7 +58,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RF_CHECKOUT: ${{ github.workspace }}/bot-src
           PR: ${{ inputs.pr }}
-        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR"
+          RETIRE: ${{ inputs.retire }}
+        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR" --retire "$RETIRE"
 
   evaluate:
     needs: select
@@ -69,12 +73,15 @@ jobs:
       entry_path: ${{ needs.select.outputs.path }}
       pr_ref: ${{ needs.select.outputs.ref }}
       core_ref: 9eb4ace62922296e9f29dfebb5a6089c184f6086
-      # brief §2a (the duel): when the core's evaluate.yml takes them, pass the standing record
-      #   incumbent_sha: ${{ needs.select.outputs.incumbent_sha }}
-      #   incumbent_path: ${{ needs.select.outputs.incumbent_path }}
-      #   incumbent_ref: ${{ needs.select.outputs.incumbent_ref }}
-      # stage S5 (the record build cache; false after a REJECT or ERROR that reused it):
-      #   record_cache: ${{ needs.select.outputs.record_cache != 'false' }}
+      # the duel (brief §2a): the standing record at the pin, re-run in the same benchmark job (all
+      # three empty when there is none); the record build cache (false after a failure that used it)
+      incumbent_sha: ${{ needs.select.outputs.incumbent_sha }}
+      incumbent_path: ${{ needs.select.outputs.incumbent_path }}
+      incumbent_ref: ${{ needs.select.outputs.incumbent_ref }}
+      record_cache: ${{ needs.select.outputs.record_cache != 'false' }}
+      # the standing record's attested entry_build.manifest_sha256 ("" if none): the core refuses a
+      # record cache whose manifest differs
+      record_manifest_sha256: ${{ needs.select.outputs.record_manifest_sha256 }}
 
   publish:
     needs: [select, evaluate]

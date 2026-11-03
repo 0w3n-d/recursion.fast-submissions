@@ -4,15 +4,13 @@
 # (pull_request_target and workflow_dispatch run the default branch's copy); the checkout below
 # is `main` at the event's commit, never the pull request.
 #
-# On a valid head: the creation-only tag rf-source/<id>, the queue entry on branch `data`, the
-# commit status `recursion.fast/evaluation` (pending), one comment, and a dispatch of
-# evaluate-next.yml. On an invalid head: the entry as `invalid` and a comment with the reasons.
-# Closed, draft and held (label `hold`) pull requests have their queued entry withdrawn. Organiser
-# pull requests (files outside submissions/, author with write access) are ignored.
-#
-# No concurrency group: every write to `data` is an optimistic transaction (fetch, apply, push
-# without force, retry), and the intake reads the pull request's current state, so out-of-order
-# runs converge on it.
+# It writes nothing on branch `data` (one writer of the queue: sync.yml). On a valid head: the
+# creation-only tag rf-source/<id>, the commit status `recursion.fast/evaluation` = pending "queued"
+# (its time is the queue timestamp), one comment. On an invalid head: the failure status and a
+# comment with the reasons. Then it dispatches sync.yml, which records the head (or withdraws a
+# closed, draft or held pull request's entry). Organiser pull requests (files outside
+# submissions/, author with write access) are ignored. An intake that fails sets the status
+# "intake failed"; sync (dispatched, or on its schedule) admits the head itself.
 name: intake
 on:
   pull_request_target:
@@ -34,10 +32,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: write        # the rf-source/<id> tag and branch `data`
+      contents: write        # the rf-source/<id> tag (and reading `data`)
       pull-requests: write   # the comment
       statuses: write        # recursion.fast/evaluation
-      actions: write         # dispatch evaluate-next.yml
+      actions: write         # dispatch sync.yml
     steps:
       - name: the bot (main at the event's commit; no pull-request content)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,4 +49,5 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RF_CHECKOUT: ${{ github.workspace }}/bot-src
           PR: ${{ github.event.pull_request.number || inputs.pr }}
-        run: python3 -I bot-src/.github/bot/bot.py intake --pr "$PR"
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && 'yes' || '' }}
+        run: python3 -I bot-src/.github/bot/bot.py intake --pr "$PR" ${FORCE:+--force}

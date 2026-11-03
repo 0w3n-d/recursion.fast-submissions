@@ -8,17 +8,27 @@ this run, and that script itself for an ACCEPT.
    `harness_commit` (as verify-record.sh);
 3. the attestation was made by this workflow run (`runInvocationURI`) and the result names this
    run (`job`): a genuine result of another evaluation, replayed as this run's artifact, fails;
-4. for an ACCEPT, the core's `harness/verify-record.sh` at the pin must pass as well.
+4. for a comparable ACCEPT, the core's `harness/verify-record.sh` at the pin must pass as well.
 
 `attested` is 1-3; `record_ok` is 4."""
 import json
 import os
+import re
 import subprocess
 
 from common import SHA_RE, SIGNER_WORKFLOW
 
 
-def verify(path, result, repo, run_id, core_dir=None, run=subprocess.run):
+def _attempt(s, run_id):
+    m = re.search(rf"/actions/runs/{run_id}/attempts/([0-9]+)", s or "")
+    return int(m.group(1)) if m else None
+
+
+def verify(path, result, repo, run_id, core_dir=None, run=subprocess.run, min_attempt=1):
+    """`attested` (provenance, 1-3, for every verdict) and `record_ok` (4, only for a comparable
+    ACCEPT: verify-record.sh refuses anything else, so it is never asked about an unranked one). The
+    attempt that produced the result must not precede the attempt whose `select` chose the entry
+    (`min_attempt`): after "re-run all jobs", an older attempt's artifact is refused."""
     out = {"attested": False, "record_ok": False, "reason": ""}
     hc = result.get("harness_commit") if isinstance(result, dict) else None
     if not isinstance(hc, str) or not SHA_RE.match(hc):
@@ -27,6 +37,9 @@ def verify(path, result, repo, run_id, core_dir=None, run=subprocess.run):
     job = result.get("job")
     if not isinstance(job, str) or not job.startswith(f"{repo}/actions/runs/{run_id}/"):
         out["reason"] = f"the result names another run ({str(job)[:120]})"
+        return out
+    if (_attempt("/" + job, run_id) or 0) < min_attempt:
+        out["reason"] = f"the result is from an attempt before the one that selected this entry ({min_attempt})"
         return out
     try:
         r = run(["gh", "attestation", "verify", path, "--repo", repo, "--signer-workflow", SIGNER_WORKFLOW,
@@ -48,11 +61,11 @@ def verify(path, result, repo, run_id, core_dir=None, run=subprocess.run):
         out["reason"] = f"the attesting workflow ran at {sorted(map(str, digests))}, the result says {hc}"
         return out
     runs = {c.get("runInvocationURI") or "" for c in certs}
-    if not all(f"/{repo}/actions/runs/{run_id}/" in u for u in runs):
-        out["reason"] = "the attestation was made by another workflow run"
+    if not all(f"/{repo}/actions/runs/{run_id}/" in u and (_attempt(u, run_id) or 0) >= min_attempt for u in runs):
+        out["reason"] = "the attestation was made by another workflow run or an earlier attempt"
         return out
     out["attested"] = True
-    if result.get("verdict") == "ACCEPT" and core_dir:
+    if result.get("verdict") == "ACCEPT" and result.get("comparable") is True and core_dir:
         script = os.path.join(core_dir, "harness", "verify-record.sh")
         try:
             r = run(["bash", script, path], capture_output=True, timeout=300)

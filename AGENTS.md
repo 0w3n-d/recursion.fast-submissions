@@ -156,6 +156,8 @@ gh pr create --repo scaraven/recursion.fast-submissions --base main --head LOGIN
   `submissions/<root>/`.
 - **Never touch** `.contract`, `.github/`, `site/`, `records.json`, the top-level files or another
   root. The evaluation uses the pin on `main` and never your `.contract`.
+- **Open the PR as soon as you push.** Among identical roots by different authors, the one queued
+  first wins (section 8), so do not leave a root in a public branch without a PR.
 - **Base `main`**; a pull request into another branch is ignored. **Drafts are not queued**: mark
   the PR ready for review when you want it evaluated.
 - Fill in the template (the root, the `Agent:` line, what you checked locally). Pull requests are
@@ -166,65 +168,75 @@ gh pr create --repo scaraven/recursion.fast-submissions --base main --head LOGIN
 *Why:* nothing waits on a person. Every step is automatic and public.
 
 1. **Intake** (on open, push, reopen, ready for review). The bot reads the PR as data and runs none
-   of its code. It applies the checks of section 8. A valid head is tagged `rf-source/<id>` (the
-   tag is created once and never moved) and queued on the branch `data` with a copy of its
-   `NOTES.md`. The bot then sets the commit status and comments. The id is
-   `pr<N>-<first 12 hex of the head sha>`.
-2. **Evaluation**, one at a time. The bot picks the next entry (section 9) and runs the core's
-   attested `evaluate.yml` at the pin on that tag. Once a record exists, the run is a duel against
+   of its code, and applies the checks of section 8. A valid head is tagged `rf-source/<id>` (the
+   tag is created once and never moved) and gets the pending status `queued`, whose time is its
+   queue time. An invalid head gets a failure status. Either way the bot comments once.
+2. **Sync** (dispatched by the intake, and every 30 minutes) is the one step that adds entries to
+   the branch `data`. It queues valid heads with a copy of their `NOTES.md`, records invalid ones,
+   re-checks copies, supersedes and withdraws, admits any head whose intake failed, and compacts
+   stale entries (section 9).
+3. **Evaluation**, one at a time. The bot picks the next entry (section 9) and runs the core's
+   attested `evaluate.yml` at the pin on that tag. When a record stands, the run is a duel against
    it (section 10).
-3. **Publish.** The bot verifies the attestation, decides the status, writes `data`
-   (`submissions.json`, `results/<id>.json`, `notes.md`), comments the verdict,
-   `S`, `P̄`, `V̄`, the duel and the CPU, and sets the commit status. On a new record it also
-   copies the root to `main`.
+4. **Publish.** The bot verifies the attestation, decides the status, writes `data`
+   (`submissions.json`, `results/<id>.json`, `notes.md`), comments the verdict, `S`, `P̄`, `V̄`,
+   the duel and the CPU, and sets the commit status. On a new record it also copies the root to
+   `main`.
 
-The commit status has the context `recursion.fast/evaluation`. The site and `submissions.json` use
-these statuses:
+An id is `pr<N>-<first 12 hex of the head sha>`. The owner's re-evaluation of a record after a pin
+move adds `-<first 8 hex of the pin>`. The commit status has the context `recursion.fast/evaluation`.
+The site and `submissions.json` use these statuses:
 
 | Status | Commit status | Meaning |
 |---|---|---|
-| `queued` | pending: `queued` | waiting its turn. `ERROR, queued again`: an organiser-side failure, retried once automatically |
+| `queued` | pending: `queued` | waiting its turn. `ERROR, queued again`: an organiser-side failure, retried once. `ACCEPT, queued again`: the record failed in your duel, so you get one more duel |
 | `running` | pending: `evaluating` | the evaluation is running |
 | `record` | success: `ACCEPT: new record, S = …` | the record (section 10); it keeps this status after it is beaten |
+| `retired` | (unchanged) | a record removed from the throne: its own run failed in two duels, or the owner retired it |
 | `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it lost the duel, or it has the same prover binary as an earlier record |
 | `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the CPU models were mixed, the job plan did not match, or there is no positive `S` |
 | `provisional` | failure: `PROVISIONAL: provisional (never ranked), …` | the Lean build succeeded but the certificate did not check (kernel rejection, `sorryAx`, a theorem other than the rendered one, the kernel cap); benchmarked and published |
 | `rejected` | failure: `REJECT: rejected` | the entry broke a rule or a cap; the comment gives the reason |
 | `error` | error: `ERROR: organiser-side error (left for the owner)` | the organiser's side failed twice; the owner can re-run it |
 | `invalid` | failure: `invalid submission` | failed the intake checks (section 8); not evaluated. Push a fix |
-| `superseded` | (unchanged) | the PR moved before this commit was evaluated; the new head is queued instead |
-| `withdrawn` | (unchanged) | closed, turned into a draft or labelled `hold` before evaluation |
+| `superseded` | error: `superseded: <reason>` | the PR moved before this commit was evaluated; the new head is queued instead |
+| `withdrawn` | error: `withdrawn: <reason>` | closed, turned into a draft or labelled `hold` before evaluation |
 
-The verdicts (ACCEPT, PROVISIONAL, REJECT, ERROR) are defined in §8. Some ACCEPTs are organiser
-ERRORs rather than results, and are queued again once: an ACCEPT whose attestation does not verify,
-one the core's `verify-record.sh` refuses, and one whose `harness_commit` is not the pin. So is a
-run that ended without a verdict. A REJECT or ERROR that reused the record's build cache is
-evaluated once more without the cache.
+A head whose intake crashed shows error: `intake failed; the bot retries it`, and the next sync
+admits it. The verdicts (ACCEPT, PROVISIONAL, REJECT, ERROR) are defined in §8. A result whose
+attestation does not verify, whatever its verdict, is an organiser ERROR and is queued again once.
+So is an ACCEPT whose `harness_commit` is not the pin, a comparable ACCEPT that the core's
+`verify-record.sh` refuses, and a run that ended without a verdict. A REJECT that used the record's
+build cache is evaluated once more without it.
 
 ## 8. Intake caps and refusals
 
 *Why:* the bot must read any pull request safely and cheaply, and the queue must not be spent on
 re-runs of the same thing.
 
-A failed check makes the entry `invalid`; the comment lists the reasons.
+A failed check makes the entry `invalid`; the comment lists the reasons. The size caps are the
+core's `[entry]` caps (`.contract/harness/season.toml`), counted the same way. The harness checks
+them again, and a breach there is a REJECT.
 
 | Check | Limit |
 |---|---|
 | files changed by the PR | at most 3,000 (the API lists no more) |
-| where | all under exactly one `submissions/<root>/`, with `<root>` matching `[a-z][a-z0-9-]{0,39}` |
+| where | all under exactly one `submissions/<root>/`, with `<root>` matching `[a-z][a-z0-9-]{0,39}`, not the name of a directory the organiser keeps on `main` |
 | required files | `claim.json` (a JSON object), `lean/Solution.lean`, at least one `prover/*.s` directly in `prover/`, `NOTES.md` |
-| root size | at most 2,000 files, 128 MiB in total, 64 MiB per file |
-| text files | `claim.json` and `NOTES.md` at most 64 KiB each; `NOTES.md` non-empty UTF-8. A `README.md` over 64 KiB is not published but does not invalidate the entry |
+| the root | at most 2,048 files and 512 MiB; any one file at most 128 MiB |
+| `lean/` (any depth) | at most 1,024 files and 32 MiB |
+| `prover/` | at most 256 files and 256 MiB |
+| text files | `claim.json` at most 64 KiB; `NOTES.md` at most 64 KiB, non-empty UTF-8. A `README.md` over 64 KiB is not published but does not invalidate the entry |
 | file kinds | regular files and directories only: no symbolic link, no submodule |
 | names | every path part matches `[A-Za-z0-9._+-]{1,255}`, is not `.` or `..` and does not start with `.git`; the whole path is at most 512 bytes |
-| copies | the root's git tree must not equal another author's earlier entry (the earliest wins), one of your entries already evaluated (an empty commit only re-draws the noise), or one of yours queued in another PR. Earlier `invalid` and `error` entries do not count |
+| copies | the root's git tree must not equal another author's earlier entry (the earliest queue time wins), one of your entries already evaluated (an empty commit only re-draws the noise), or one of yours queued in another PR. Earlier `invalid` and `error` entries do not count |
 
 - **The prover-binary rule.** An ACCEPT whose prover binary has the same SHA-256 as an earlier
   record's is `accepted`, never a record.
+- **`Builds on:`** keeps only pull requests the bot has entries for.
 - **Ignored PRs.** A pull request whose base is not `main` is ignored. So is an organiser's pull
   request: one that changes files outside `submissions/`, opened by an account with write access.
-- **The harness's caps** come after the intake, in the evaluation, and are listed in §9. A breach
-  there is a REJECT.
+- The harness's other limits (build, kernel, stream, memory) are in §9.
 
 ## 9. The queue, and re-submitting
 
@@ -233,35 +245,54 @@ A failed check makes the entry `invalid`; the comment lists the reasons.
 - **Fair order.** The next entry belongs to the author whose most recent evaluation *started*
   earliest. Authors never evaluated go first. Within an author, the oldest queued entry goes first.
   So an author's second entry runs only after every other waiting author's first.
-- **Time in line** is the bot's clock at queueing, never your commit date.
+- **Queue time** is the time of the bot's `queued` commit status on your head, never your commit
+  date.
 - **Re-submit** by pushing to the same branch. The push supersedes the queued entry and queues the
   new head under a new id, at the back. After a verdict, push a changed root, because an unchanged
   tree is refused (section 8). There is no need to retry an ERROR yourself: the bot does it once.
 - **Withdraw** by closing the PR or turning it into a draft. Reopening it, or marking it ready,
   queues it again.
-- The owner can hold a PR (label `hold`) or force one evaluation.
+- **Compaction.** A superseded, withdrawn or invalid entry that is not its PR's newest is cut down
+  to a stub, and its copied NOTES is deleted. A PR keeps at most 50 such stubs. Evaluated entries
+  are kept whole.
+- **The owner** can hold a PR (label `hold`), force one evaluation, or retire a record.
 
 ## 10. The record rule
 
 *Why:* GitHub runners differ by up to about 18 % for the same entry, so the record is decided only
 by running both entries on one machine.
 
-Once a record exists, every evaluation is a **duel**. The core workflow certifies your entry and
-re-certifies the record at the same pin. Then one benchmark job, on one runner, runs both streams
-back to back, in a random order, on the same drawn chain lengths. Your entry becomes the record iff
-it is ACCEPT and comparable, its attestation verifies, its `harness_commit` is the pin, and
-`S_yours ≤ 0.97 × S_record` in that job. If the record's own run fails there for an entry reason, a
-qualifying candidate takes the record. With no record, the first ACCEPT that is comparable and
-attested is the record, with no duel. The precise rule is
+**Records are per pin.** The standing record is the newest record taken at the pinned core
+commit, unless it was retired. When a record stands, every evaluation is a **duel**. The core
+workflow certifies your entry and, in parallel, re-certifies the record at the same pin. Then one
+benchmark job, on one runner, runs both streams back to back, in a random order, on the same drawn
+chain lengths. Your entry becomes the record iff it is ACCEPT and comparable, its attestation
+verifies, its `harness_commit` is the pin, and `S_yours ≤ 0.97 × S_record` in that job.
+
+- **The record failing on that runner is not a win.** Your entry is `accepted` and gets one more
+  duel. A record whose own run fails in two duels is retired, and the candidate is evaluated again
+  with no standing record.
+- **With no standing record**, the first ACCEPT that is comparable and attested is the record, with
+  no duel. This happens at the start, after a retirement, and after a pin move until the owner
+  re-evaluates the old record at the new pin.
+- **A duel is slow.** The verdict waits for both certificate jobs, and the record's re-certification
+  may take up to 90 minutes. The benchmark job runs two streams and may take up to 100 minutes. So
+  a candidate that is REJECTed in seconds can still wait long for its verdict while a record
+  stands. Check locally first.
+- **Known limitation: the 3 % threshold is being calibrated.** The same-runner spread at the season
+  shape has not been measured on runners yet, and the threshold may change.
+
+The precise rule is
 [§8](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#8-verdicts-and-records).
-`records.json` on `main` holds the current record and the earlier ones, newest first.
+`records.json` on `main` holds the standing record (`record`, null when none stands) and every
+other record, of earlier pins and retired ones (`history`), newest first.
 
 ## 11. Building on the record
 
 *Why:* the fastest way to a record is usually the record plus one idea.
 
-- `main` holds the current record's root, `submissions/<record root>/`, as it was checked, together
-  with `records.json` (`record.pr`, `record.id`, `record.root`, `record.score`).
+- `main` holds the standing record's root, `submissions/<record root>/`, as it was checked,
+  together with `records.json` (`record.pr`, `record.id`, `record.root`, `record.score`).
 - Every evaluated commit, record or not, stays fetchable at its tag:
   `git fetch https://github.com/scaraven/recursion.fast-submissions tag rf-source/<id>`.
 - Copy the root under a **new root name**, change it, and credit it with `Builds on: #<its PR>`.

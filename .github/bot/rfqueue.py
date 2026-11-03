@@ -5,9 +5,9 @@ Order (brief §4): among queued entries, the author whose most recent evaluation
 timestamp, so a push goes to the back of its author's line."""
 import json
 
-from common import FINAL, MARGIN, MAX_ATTEMPTS, QUEUED, RUNNING, STATUSES, now_iso
+from common import FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR, QUEUED, RUNNING, STATUSES, now_iso
 
-EVALUATED = ("record", "accepted", "unranked", "provisional", "rejected", "error")
+EVALUATED = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error")
 
 
 def empty(repo, pin):
@@ -31,6 +31,8 @@ def load(raw, repo, pin):
 
 def dump(st, clock=None):
     st["updated"] = now_iso(clock)
+    rec = current_record(st, st.get("core"))
+    st["record"] = rec["id"] if rec else None      # the standing record at the pin, for readers (the site)
     return (json.dumps(st, indent=1, ensure_ascii=False, sort_keys=False) + "\n").encode()
 
 
@@ -167,14 +169,75 @@ def mark_running(e, now, run_url):
 
 
 def records(st):
-    """The records, newest first."""
-    rs = [e for e in st["submissions"] if e["status"] == "record"]
+    """Every record ever taken (status `record` or `retired`), newest first."""
+    rs = [e for e in st["submissions"] if e["status"] in ("record", "retired")]
     return sorted(rs, key=lambda e: (e.get("finished") or "", e["id"]), reverse=True)
 
 
-def current_record(st):
-    rs = records(st)
-    return rs[0] if rs else None
+def current_record(st, pin):
+    """The standing record: the newest record taken at this pin (`harness_commit == pin`), unless it
+    was retired (a beaten record never stands again). A record of an earlier pin stays in the
+    history; with none standing there is no duel, and the first comparable attested ACCEPT at the pin
+    is the record (brief §2a, review M4, M5)."""
+    newest = next((e for e in records(st) if e.get("harness_commit") == pin), None)
+    return newest if newest is not None and newest["status"] == "record" else None
+
+
+def retire(e, now, why):
+    """The record leaves the throne (it stays in the history as `retired`)."""
+    e["status"], e["retired"] = "retired", now
+    e["reasons"] = (e.get("reasons") or [])[:19] + [why]
+
+
+COMPACT_KEYS = ("id", "pr", "sha", "root", "author", "status", "queued", "finished", "tree", "attempts", "verdict",
+                "started")
+
+
+def compact(st):
+    """Bounds the state (review M1): an entry that never was evaluated (superseded, withdrawn,
+    invalid) and is not its pull request's newest entry keeps only `COMPACT_KEYS` (the tree for the
+    duplicate rule, `started` for fairness); a pull request keeps at most `MAX_HEADS_PER_PR` such
+    entries (the oldest are dropped). Evaluated entries are kept whole. Returns the paths of copied
+    NOTES/README files that are no longer referenced."""
+    newest, drop_files, keep = {}, [], []
+    for e in st["submissions"]:
+        if e["pr"] not in newest or (e.get("queued") or "") >= (newest[e["pr"]].get("queued") or ""):
+            newest[e["pr"]] = e
+    per_pr = {}
+    for e in sorted(st["submissions"], key=lambda e: (e.get("queued") or "", e["id"]), reverse=True):
+        if e["status"] in ("superseded", "withdrawn", "invalid") and e is not newest[e["pr"]]:
+            per_pr[e["pr"]] = per_pr.get(e["pr"], 0) + 1
+            drop_files += [e[k] for k in ("notes", "readme") if e.get(k)]
+            if per_pr[e["pr"]] > MAX_HEADS_PER_PR:
+                continue
+            for k in list(e):
+                if k not in COMPACT_KEYS:
+                    del e[k]
+        keep.append(e)
+    keep_ids = {id(e) for e in keep}
+    st["submissions"] = [e for e in st["submissions"] if id(e) in keep_ids]
+    return drop_files
+
+
+def port(st, pr, pin, now):
+    """The owner's re-evaluation at a new pin (after a pin move): the pull request's newest record
+    (or other evaluated ACCEPT) of an earlier pin, queued again as `<id>-<pin8>` on the same retained
+    commit, so the old record can keep the crown at the new pin. None if there is none."""
+    olds = [e for e in of_pr(st, pr) if e["status"] in ("record", "retired", "accepted", "unranked")
+            and e.get("harness_commit") != pin and e.get("tag")]
+    if not olds:
+        return None
+    o = max(olds, key=lambda e: e.get("finished") or "")
+    nid = f"{o['id'][:len('pr') + len(str(pr)) + 13]}-{pin[:8]}"
+    if find(st, nid) is not None:
+        return None
+    keep = ("pr", "sha", "root", "author", "title", "agent", "builds_on", "opened", "tag", "notes", "readme", "tree")
+    e = {k: o.get(k) for k in keep}
+    e.update(id=nid, port_of=o["id"], status=QUEUED, queued=now, started=None, finished=None, attempts=0,
+             verdict=None, score=None, comparable=False, truncated=False, reasons=[], cpu=[], run_url=None,
+             record_of=None, verified=False, harness_commit=None, prover_sha256=None)
+    st["submissions"].append(e)
+    return e
 
 
 def any_queued(st):

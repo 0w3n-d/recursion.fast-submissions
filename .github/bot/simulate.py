@@ -68,9 +68,9 @@ def good_root(name, salt="", notes=None):
 class FakeGitHub:
     """The REST calls the bot makes, against the bare repository."""
 
-    def __init__(self, bare):
-        self.bare, self.prs, self.perms = bare, {}, {}
-        self.comments, self.statuses, self.dispatches = [], [], []
+    def __init__(self, bare, clock=None):
+        self.bare, self.prs, self.perms, self.clock = bare, {}, {}, clock
+        self.comments, self.status_log, self.dispatches, self.by_sha = [], [], [], {}
 
     def main(self):
         return git(self.bare, "rev-parse", "refs/heads/main")
@@ -113,8 +113,18 @@ class FakeGitHub:
     def comment(self, n, body):
         self.comments.append((n, body))
 
-    def set_status(self, sha, state, description, target_url=None):
-        self.statuses.append((sha, state, description))
+    def set_status(self, sha, state, description, target_url=None, creator="github-actions[bot]"):
+        self.status_log.append((sha, state, description))
+        t = flows.now_iso(self.clock) if self.clock else "2026-11-03T00:00:00Z"
+        self.by_sha.setdefault(sha, []).insert(0, {"state": state, "description": description, "created_at": t,
+                                                   "context": "recursion.fast/evaluation", "creator": {"login": creator}})
+
+    def statuses(self, sha):
+        return list(self.by_sha.get(sha, []))
+
+    def open_prs(self):
+        return [{k: v for k, v in self.pr(n).items() if k != "changed_files"} for n, p in sorted(self.prs.items())
+                if p["state"] == "open"]
 
     def dispatch(self, workflow, ref, inputs=None):
         self.dispatches.append((workflow, ref))
@@ -126,6 +136,15 @@ class FakeGitHub:
         self.cache_keys.remove(key)
 
 
+def duel_of(e, S=10.0, entry_failed=False, cert="ok", verdict="ACCEPT"):
+    """The core's duel fields (aggregate.py pair()) for the incumbent `e` (select's output)."""
+    inc = e["incumbent"]
+    return {"sha": inc["sha"], "path": f"submissions/{inc['root']}", "certificate_status": cert,
+            "verdict": verdict if cert == "ok" else None, "benchmarked": cert == "ok", "comparable": verdict == "ACCEPT"
+            and not entry_failed, "truncated": entry_failed and verdict == "ACCEPT", "entry_failed": entry_failed,
+            "score": {"S": S} if verdict == "ACCEPT" and cert == "ok" else None, "reasons": ["stream cap"] if entry_failed else []}
+
+
 def make_result(run_id, verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, incumbent=None, prover="a" * 64):
     r = {"schema": "recursion.fast/v4/result-1", "verdict": verdict, "comparable": comparable, "truncated": False,
          "harness_commit": harness, "job": f"{REPO}/actions/runs/{run_id}/attempts/1", "cpu_models": ["AMD EPYC 9V74"],
@@ -133,12 +152,12 @@ def make_result(run_id, verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, i
     if verdict in ("ACCEPT", "PROVISIONAL"):
         r["score"] = {"S": S, "P_bar": S * 0.8, "V_bar": S * 0.2, "M": 96, "c_P": 1.0, "fit": {"a": 1e-6}}
     if incumbent is not None:
-        r["incumbent"] = incumbent
+        r["duel"], r["incumbent"] = True, incumbent
     return r
 
 
 def fake_verify(pin):
-    def verify(path, result):
+    def verify(path, result, min_attempt=1):
         ok = result.get("harness_commit") == pin and "/actions/runs/" in str(result.get("job"))
         return {"attested": ok, "record_ok": ok and result.get("verdict") == "ACCEPT" and result.get("comparable") is True,
                 "reason": "" if ok else "fake: not attested"}
@@ -159,8 +178,8 @@ class World:
                                              "submissions/example/NOTES.md": b"kept\n"},
                            "main", modes={".contract": "160000"})
         git(self.bare, "update-ref", "refs/heads/main", main)
-        self.gh = FakeGitHub(self.bare)
-        self.t, self.run = 0, 100
+        self.gh = FakeGitHub(self.bare, self.clock)
+        self.t, self.run, self.pin = 0, 100, PIN
         self.logs = []
 
     def clock(self):
@@ -169,22 +188,29 @@ class World:
         return datetime.datetime(2026, 11, 3, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=self.t)
 
     def ctx(self, run_id=None):
-        return flows.Ctx(self.gh, REPO, self.bare, PIN, run_id=run_id or self.run, clock=self.clock,
-                         sleep=lambda s: None, verify=fake_verify(PIN), log=self.logs.append)
+        return flows.Ctx(self.gh, REPO, self.bare, self.pin, run_id=run_id or self.run, clock=self.clock,
+                         sleep=lambda s: None, verify=fake_verify(self.pin), log=self.logs.append)
 
     def state(self):
         raw = subprocess.run(["git", "-C", self.bare, "show", "data:submissions.json"], capture_output=True).stdout
-        return rfqueue.load(raw or None, REPO, PIN)
+        return rfqueue.load(raw or None, REPO, self.pin)
 
     def show(self, ref_path):
         r = subprocess.run(["git", "-C", self.bare, "show", ref_path], capture_output=True)
         return r.stdout if r.returncode == 0 else None
 
-    def evaluate(self, result=None, force=None):
+    def intake(self, n, sync=True):
+        """The intake of #n, then the sync it dispatches."""
+        k = flows.intake(self.ctx(), n)
+        if sync:
+            flows.sync(self.ctx())
+        return k
+
+    def evaluate(self, result=None, force=None, retire=None):
         """select → (the core's evaluation, replaced by `result(entry, run_id)`) → publish."""
         self.run += 1
         ctx = self.ctx(self.run)
-        e = flows.select(ctx, force)
+        e = flows.select(ctx, force, retire)
         if e is None:
             return None, None
         path = None
@@ -208,16 +234,34 @@ def main():
         g.open_pr(2, "bob", good_root("beta", "2"))
         g.open_pr(3, "mallory", {**good_root("gamma", "3"), ".github/workflows/x.yml": b"evil"})
         for n in (1, 2, 3):
-            print(f"intake #{n}:", flows.intake(w.ctx(), n))
+            print(f"intake #{n}:", w.intake(n, sync=False))
+        print("sync: changed", flows.sync(w.ctx()))
         e, p = w.evaluate(lambda e, run: make_result(run, S=10.0))
-        print("evaluated", e["id"], "->", p["status"])
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.5, prover="b" * 64,
-                                                     incumbent={"verdict": "ACCEPT", "comparable": True,
-                                                                "score": {"S": 10.2}, "entry_failed": False}))
-        print("evaluated", e["id"], "->", p["status"], p["reasons"][-1])
-        print("main records.json:", json.loads(w.show("main:records.json"))["record"]["id"])
-        print("main tree:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
-        print("comments:", len(g.comments), "statuses:", len(g.statuses), "dispatches:", len(g.dispatches))
+        print("evaluated", e["id"], "->", p["status"], "(no record: unpaired)")
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.5, prover="b" * 64, incumbent=duel_of(e, 10.2)))
+        print("evaluated", e["id"], "->", p["status"], "|", p["reasons"][-1])
+        print("main records.json:", json.loads(w.show("main:records.json"))["record"]["id"],
+              "main roots:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
+        # the record fails on two runners: no crown, a retry, then retirement
+        g.open_pr(4, "carol", good_root("delta", "4"))
+        w.intake(4)
+        e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64, incumbent=duel_of(e, entry_failed=True)))
+        print("duel, the record failed:", p["status"], "|", p["reasons"][-2:])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64, incumbent=duel_of(e, entry_failed=True)))
+        print("duel, the record failed again:", p["status"], "|", p["reasons"][-1])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64))
+        print("unpaired after the retirement:", e["id"], "->", p["status"], "incumbent" in e)
+        # the pin moves: no record at the new pin; the old record's PR is re-queued first by the owner
+        w.pin = "c" * 40
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, harness=w.pin, prover="b" * 64), force=2)
+        print("pin moved; the owner re-queues #2 first:", e["id"], "->", p["status"], "incumbent" in e)
+        g.open_pr(5, "dave", good_root("eps", "5"))
+        w.intake(5)
+        e, p = w.evaluate(lambda e, run: make_result(run, S=8.0, harness=w.pin, prover="e" * 64, incumbent=duel_of(e, 9.0)))
+        print("then a duel at the new pin:", e["id"], "->", p["status"], "|", p["reasons"][-1])
+        rec = json.loads(w.show("main:records.json"))
+        print("records.json:", rec["record"]["id"], "history:", [h["id"] + ":" + h["status"] for h in rec["history"]])
+        print("comments:", len(g.comments), "statuses:", len(g.status_log), "dispatches:", len(g.dispatches))
         print("queue:", [(x["id"], x["status"]) for x in w.state()["submissions"]])
     finally:
         w.cleanup()

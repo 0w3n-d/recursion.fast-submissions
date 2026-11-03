@@ -8,11 +8,13 @@ from common import MARGIN, ascii_line, code_span, is_num
 import rfqueue
 
 STATE = {"record": "success", "accepted": "success", "unranked": "success", "provisional": "failure",
-         "rejected": "failure", "invalid": "failure", "error": "error", "queued": "pending", "running": "pending"}
+         "rejected": "failure", "invalid": "failure", "error": "error", "queued": "pending", "running": "pending",
+         "retired": "success"}
 WORDS = {"record": "new record", "accepted": "accepted (did not beat the record)",
          "unranked": "accepted, not comparable (not ranked)", "provisional": "provisional (never ranked)",
          "rejected": "rejected", "error": "organiser-side error (left for the owner)", "invalid": "invalid submission",
-         "queued": "queued", "running": "evaluating", "superseded": "superseded", "withdrawn": "withdrawn"}
+         "queued": "queued", "running": "evaluating", "superseded": "superseded", "withdrawn": "withdrawn",
+         "retired": "a record, retired"}
 
 
 def num(x, nd=4):
@@ -24,6 +26,9 @@ def status_for(e):
     st = e["status"]
     s = (e.get("score") or {}).get("S")
     d = WORDS.get(st, st)
+    if st in ("withdrawn", "superseded"):
+        why = (e.get("reasons") or [""])[-1]
+        return "error", ascii_line(f"{st}: {why}" if why else st, 140)
     if e.get("verdict") and st not in ("queued", "running"):
         d = f"{e['verdict']}: {d}"
     if is_num(s) and st in ("record", "accepted", "unranked", "provisional"):
@@ -103,7 +108,9 @@ def notes_md(st, read, repo, cap=4 << 20):
 
 
 def records_json(st, pin):
-    """`records.json` for `main`: the current record and the earlier ones, newest first."""
-    rs = rfqueue.records(st)
-    return (json.dumps({"version": 1, "core": pin, "margin": MARGIN, "record": rs[0] if rs else None,
-                        "history": rs[1:]}, indent=1, ensure_ascii=False) + "\n").encode()
+    """`records.json` for `main`: the standing record (the newest record at this pin, or null) and
+    every other record (earlier pins', retired ones), newest first."""
+    cur = rfqueue.current_record(st, pin)
+    rs = [r for r in rfqueue.records(st) if cur is None or r["id"] != cur["id"]]
+    return (json.dumps({"version": 1, "core": pin, "margin": MARGIN, "record": cur, "history": rs},
+                       indent=1, ensure_ascii=False) + "\n").encode()

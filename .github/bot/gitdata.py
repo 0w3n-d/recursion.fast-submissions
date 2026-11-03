@@ -8,8 +8,10 @@ The token, if any, goes to git as an HTTP header through `GIT_CONFIG_*` variable
 config file or a URL)."""
 import base64
 import os
+import random
 import subprocess
 import tempfile
+import time
 
 BOT_NAME = "github-actions[bot]"
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -51,23 +53,41 @@ class Repo:
 
     # -- reading -----------------------------------------------------------------------------
     def fetch(self, ref, local=None, depth=1):
-        """Fetches `ref` of the remote; returns its commit (None if the ref does not exist)."""
+        """Fetches `ref` of the remote; returns its commit, or None only if the remote answered that
+        the ref does not exist (`ls-remote`). Any other failure raises: an unreadable branch is never
+        mistaken for an absent one."""
         dst = local or "refs/rf/fetched"
         r = self.git("fetch", "-q", "--no-tags", f"--depth={depth}", self.url, f"+{ref}:{dst}", check=False)
         if r.returncode:
-            if b"couldn't find remote ref" in r.stderr or b"not found" in r.stderr.lower():
+            if self.remote_ref(ref) is None:      # raises if the remote cannot be listed
                 return None
             raise GitError(f"git fetch {ref} failed: {r.stderr.decode('utf-8', 'replace')[-800:]}")
         return self.out("rev-parse", f"{dst}^{{commit}}")
 
     def blob(self, commit, path, cap):
-        """The bytes of `path` at `commit` if it is a blob of at most `cap` bytes, else None."""
+        """The bytes of `path` at `commit` if it is a blob of at most `cap` bytes, else None (the
+        precheck's reader: it has checked the sizes first)."""
         r = self.git("cat-file", "-s", f"{commit}:{path}", check=False)
         if r.returncode or int(r.stdout) > cap:
             return None
         if self.out("cat-file", "-t", f"{commit}:{path}") != "blob":
             return None
         return self.git("cat-file", "blob", f"{commit}:{path}").stdout
+
+    def read_strict(self, commit, path, cap):
+        """The bytes of `path` at `commit`; None only if the path does not exist there. A path that
+        exists but is not a blob, is over `cap`, or cannot be read raises (fail closed)."""
+        ls = self.git("ls-tree", "-z", "--full-tree", commit, "--", path).stdout
+        recs = [r for r in ls.split(b"\0") if r and r.split(b"\t", 1)[1].decode("utf-8", "surrogateescape") == path]
+        if not recs:
+            return None
+        _mode, typ, oid = recs[0].split(b"\t", 1)[0].decode().split()
+        if typ != "blob":
+            raise GitError(f"{path} at {commit[:12]} is a {typ}, not a file")
+        size = int(self.out("cat-file", "-s", oid))
+        if size > cap:
+            raise GitError(f"{path} at {commit[:12]} has {size} bytes, over the bot's read cap {cap}")
+        return self.git("cat-file", "blob", oid).stdout
 
     def tree_of(self, commit, path):
         """The object id of the tree `path` at `commit`, or None."""
@@ -88,9 +108,17 @@ class Repo:
         return out
 
     def remote_ref(self, ref):
-        r = self.git("ls-remote", self.url, ref)
-        line = r.stdout.decode().split("\n")[0].split()
-        return line[0] if line else None
+        """The remote's object id for `ref`, or None if it has no such ref (raises if unreachable)."""
+        r = self.git("ls-remote", "--exit-code", self.url, ref, check=False)
+        if r.returncode == 2:
+            return None
+        if r.returncode:
+            raise GitError(f"git ls-remote {ref} failed: {r.stderr.decode('utf-8', 'replace')[-400:]}")
+        for line in r.stdout.decode().splitlines():
+            oid, name = line.split()[:2]
+            if name == ref:
+                return oid
+        return None
 
     # -- writing -----------------------------------------------------------------------------
     def create_tag(self, sha, name):
@@ -103,13 +131,15 @@ class Repo:
         """A read-only view of the remote's `branch` now."""
         return Snapshot(self, self.fetch(f"refs/heads/{branch}", local=f"refs/rf/{branch}"))
 
-    def transact(self, branch, mutate, message, tries=5):
+    def transact(self, branch, mutate, message, tries=12, deadline=600, base=0.5, sleep=time.sleep):
         """Applies `mutate(Snapshot) -> Changes | None` to the fresh head of `branch` and pushes the
-        result as one commit, without force; on a lost race fetches again and re-applies (at most
-        `tries` times). An absent branch is created as an orphan. Returns the new commit, or None if
-        the mutation changed nothing."""
-        last = None
-        for _ in range(tries):
+        result as one commit, without force; on a lost race fetches again and re-applies, after an
+        exponential backoff with full jitter (at most `tries` times and `deadline` seconds). An absent
+        branch is created as an orphan. Returns the new commit, or None if the mutation changed
+        nothing. Writers are few by design (`sync` under `rf-data`, `evaluate-next` under
+        `rf-eval`); the retry covers their overlap."""
+        last, t0 = None, time.monotonic()
+        for k in range(tries):
             head = self.fetch(f"refs/heads/{branch}", local=f"refs/rf/{branch}")
             ch = mutate(Snapshot(self, head))
             if ch is None or ch.empty():
@@ -121,7 +151,10 @@ class Repo:
             if r.returncode == 0:
                 return commit
             last = r.stderr.decode("utf-8", "replace")[-800:]
-        raise GitError(f"push to {branch} failed {tries} times: {last}")
+            if time.monotonic() - t0 > deadline:
+                break
+            sleep(random.uniform(0, min(30.0, base * 2 ** k)))
+        raise GitError(f"push to {branch} failed {k + 1} times: {last}")
 
     def _commit(self, head, ch, message):
         idx = os.path.join(self.dir, "rf-index")
@@ -166,8 +199,9 @@ class Snapshot:
     def __init__(self, repo, head):
         self.repo, self.head = repo, head
 
-    def read(self, path, cap=64 << 20):
-        return self.repo.blob(self.head, path, cap) if self.head else None
+    def read(self, path, cap=256 << 20):
+        """The file's bytes, or None if the branch or the path does not exist; anything else raises."""
+        return self.repo.read_strict(self.head, path, cap) if self.head else None
 
 
 class Changes:

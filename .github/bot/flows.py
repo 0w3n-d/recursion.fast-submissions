@@ -1,9 +1,17 @@
-"""The bot's three steps (TRUSTED): intake, select, publish, and the sync of `main` to the record.
+"""The bot's steps (TRUSTED): intake, sync, select, publish, and the sync of `main` to the record.
 Each reads GitHub through `ctx.gh` and git through `gitdata.Repo(ctx.git_url)`, so the tests and
 `simulate.py` drive them against a local bare repository and a fake API.
 
+Writers of `data` (review M3): `sync` (workflow sync.yml, concurrency `rf-data`) is the only writer
+of new queue entries; `select` and `publish` (evaluate-next.yml, `rf-eval`) mark entries running and
+evaluated. The intake writes nothing on `data`: it prechecks, creates the retention tag, and sets
+the commit status `recursion.fast/evaluation` to pending "queued", whose `created_at` is the queue
+timestamp (only the base repository's token can set it); then it dispatches `sync`, which rescans
+every open pull request and is idempotent, so coalesced runs lose nothing.
+
 No step runs entry code or checks an entry out: a pull request is read as git objects and API
-JSON. Every write to `data` and `main` is an optimistic transaction (`gitdata.Repo.transact`)."""
+JSON. Every write to `data` and `main` is an optimistic transaction (`gitdata.Repo.transact`), and a
+`data` that cannot be read aborts the step (review M1)."""
 import copy
 import json
 import time
@@ -11,23 +19,26 @@ import time
 import precheck
 import render
 import rfqueue
-from common import (ID_RE, LOGIN_RE, MAX_TEXT_BYTES, ROOT_RE, SHA_RE, clean, entry_id, now_iso)
-from decide import cache_retry, decide
+from common import (ID_RE, LOGIN_RE, MAX_TEXT_BYTES, ROOT_RE, SHA_RE, STATUS_CONTEXT, clean, entry_id, now_iso)
+from decide import build_manifest_sha, cache_retry, decide
 from gitdata import Changes, Repo
 
 DATA, NOTES_MD = "data", "notes.md"
 ORGANISER = ("admin", "maintain", "write")
+BOT_LOGIN = "github-actions[bot]"
+# descriptions of the bot's statuses after which a head may be admitted again
+READMIT = ("withdrawn", "superseded", "intake failed")
 
 
 class Ctx:
     """Everything a step needs from its environment."""
 
-    def __init__(self, gh, repo, git_url, pin, token=None, run_id="0", server="https://github.com",
-                 default_branch="main", clock=None, sleep=time.sleep, verify=None, log=print):
+    def __init__(self, gh, repo, git_url, pin, token=None, run_id="0", run_attempt=1, server="https://github.com",
+                 default_branch="main", clock=None, sleep=time.sleep, verify=None, log=print, bot_login=BOT_LOGIN):
         self.gh, self.repo, self.git_url, self.pin, self.token = gh, repo, git_url, pin, token
-        self.run_id, self.server, self.default_branch = str(run_id), server, default_branch
+        self.run_id, self.run_attempt, self.server, self.default_branch = str(run_id), int(run_attempt), server, default_branch
         self.run_url = f"{server}/{repo}/actions/runs/{self.run_id}"
-        self.clock, self.sleep, self.verify, self.log = clock, sleep, verify, log
+        self.clock, self.sleep, self.verify, self.log, self.bot_login = clock, sleep, verify, log, bot_login
 
     def git(self):
         return Repo(self.git_url, self.token)
@@ -51,64 +62,73 @@ def _labels(pr):
     return {(lab.get("name") or "").lower() for lab in pr.get("labels") or []}
 
 
-def _withdraw(ctx, pr_n, reason):
-    def mutate(snap):
-        st = _state(ctx, snap)
-        if not rfqueue.withdraw(st, pr_n, ctx.now(), reason):
-            return None
-        ch = Changes()
-        _write_state(ctx, ch, snap, st)
-        return ch
-    ctx.git().transact(DATA, mutate, f"withdraw #{pr_n}: {reason}")
+def _try(ctx, what, fn, *a):
+    """One side effect (a status, a comment, a dispatch): logged, never stopping the others
+    (review m2). Returns False on failure."""
+    try:
+        fn(*a)
+        return True
+    except Exception as ex:  # noqa: BLE001
+        ctx.log(f"{what} failed: {ex.__class__.__name__}: {str(ex)[:200]}")
+        return False
 
 
-# ---- intake -------------------------------------------------------------------------------------
-def intake(ctx, pr_n):
-    """Prechecks the pull request's current head and queues it (or records it invalid, or
-    withdraws its queued entry). Returns what it did."""
-    pr = ctx.gh.pr(pr_n)
-    author = pr["user"]["login"]
-    if pr["base"]["ref"] != ctx.default_branch:
-        ctx.log(f"intake: #{pr_n} targets {clean(pr['base']['ref'], 60)!r}, not {ctx.default_branch}: ignored")
-        return "ignored"
-    files = ctx.gh.pr_files(pr_n) if (pr.get("changed_files") or 0) <= 3000 else None
+def bot_statuses(ctx, sha):
+    """The bot's statuses of the context on `sha`, newest first."""
+    return [s for s in ctx.gh.statuses(sha) if s.get("context") == STATUS_CONTEXT
+            and (s.get("creator") or {}).get("login") == ctx.bot_login]
+
+
+def main_roots(git, branch="main"):
+    """The directory names under `submissions/` on `main`."""
+    head = git.fetch(f"refs/heads/{branch}", local="refs/rf/main-roots")
+    if not head:
+        return set()
+    return {p.split("/", 1)[1] for mode, typ, _s, p in git.ls_tree(head, "submissions")
+            if typ == "tree" and p.count("/") == 1}
+
+
+# ---- examine: what the bot makes of a pull request's head (reads only) ----------------------------
+def examine(ctx, git, pr, st, reserved=()):
+    """{kind, entry, info, reasons}: kind is ignored (not into main), organiser, closed, draft, held,
+    moved (the head changed while it was read), invalid or valid."""
+    n = pr["number"]
+    author = (pr.get("user") or {}).get("login") or "ghost"
+    if (pr.get("base") or {}).get("ref") != ctx.default_branch:
+        return {"kind": "ignored"}
+    files = ctx.gh.pr_files(n) if (pr.get("changed_files") or 0) <= 3000 else None
     root, reasons, outside = precheck.paths_rule(files)
     if outside and ctx.gh.permission(author) in ORGANISER:
-        ctx.log(f"intake: #{pr_n} is an organiser pull request: ignored")
-        _withdraw(ctx, pr_n, "an organiser pull request")
-        return "organiser"
-    if pr["state"] != "open":
-        _withdraw(ctx, pr_n, "the pull request was closed before its evaluation")
-        return "withdrawn"
+        return {"kind": "organiser"}
+    if pr.get("state") != "open":
+        return {"kind": "closed"}
     if pr.get("draft"):
-        _withdraw(ctx, pr_n, "the pull request is a draft")
-        return "draft"
+        return {"kind": "draft"}
     if "hold" in _labels(pr):
-        _withdraw(ctx, pr_n, "the pull request is on hold (label `hold`)")
-        return "held"
-    sha = pr["head"]["sha"]
-    if not SHA_RE.match(sha or ""):
+        return {"kind": "held"}
+    sha = (pr.get("head") or {}).get("sha") or ""
+    if not SHA_RE.match(sha):
         raise ValueError("the pull request's head is not a full SHA")
-    git = ctx.git()
     got = None
     for k in range(4):
-        got = git.fetch(f"refs/pull/{pr_n}/head")
+        got = git.fetch(f"refs/pull/{n}/head")
         if got == sha:
             break
         ctx.sleep(5 * (k + 1))
     if got != sha:
-        if ctx.gh.pr(pr_n)["head"]["sha"] != sha:
-            ctx.log(f"intake: #{pr_n} moved while it was read; the newer event's run handles it")
-            return "moved"
-        raise RuntimeError(f"refs/pull/{pr_n}/head is {got}, the API says {sha}")
-    eid = entry_id(pr_n, sha)
+        if ctx.gh.pr(n)["head"]["sha"] != sha:
+            return {"kind": "moved"}
+        raise RuntimeError(f"refs/pull/{n}/head is {got}, the API says {sha}")
+    eid = entry_id(n, sha)
     info = {}
     if root:
+        if root in reserved:
+            reasons.append(f"submissions/{root}/ is a directory the organiser keeps on main; choose another root name")
         more, info = precheck.tree_rule(git, sha, root)
         reasons = reasons + more
-    agent, builds = precheck.notes_header(info["notes"], pr_n) if info.get("notes") else (None, [])
-    entry = {"id": eid, "pr": pr_n, "sha": sha, "root": root or "",
-             "author": author if LOGIN_RE.match(author or "") else clean(author, 40),
+    agent, builds = precheck.notes_header(info["notes"], n) if info.get("notes") else (None, [])
+    entry = {"id": eid, "pr": n, "sha": sha, "root": root or "",
+             "author": author if LOGIN_RE.match(author) else clean(author, 40),
              "title": clean(pr.get("title"), 200), "agent": agent, "builds_on": builds,
              "opened": pr.get("created_at"), "queued": None, "started": None, "finished": None, "attempts": 0,
              "status": "queued", "verdict": None, "score": None, "comparable": False, "truncated": False,
@@ -118,59 +138,199 @@ def intake(ctx, pr_n):
              "record_of": None, "tree": info.get("tree"), "verified": False, "harness_commit": None,
              "prover_sha256": None}
     if not reasons:
-        dup = rfqueue.duplicate_of(_state(ctx, git.snapshot(DATA)), eid, pr_n, author, entry["tree"])
+        dup = rfqueue.duplicate_of(st, eid, n, entry["author"], entry["tree"])
         if dup:
             reasons.append(dup)
-    if not reasons and not git.create_tag(sha, entry["tag"]):
-        reasons.append(f"the retention tag {entry['tag']} exists at another commit")
-    valid = not reasons
     reasons = [clean(r, 300) for r in reasons[:20]]
-    done = {}
+    if reasons:
+        entry.update(tag=None, notes=None, readme=None)
+    return {"kind": "invalid" if reasons else "valid", "entry": entry, "info": info, "reasons": reasons}
+
+
+def admit(ctx, git, x, force=False):
+    """The intake's writes for an examined head (none on `data`): the retention tag and the pending
+    "queued" status (valid), or the failure status (invalid), and one comment. A head the bot has
+    already admitted is left alone unless `force` (the owner's re-intake). Returns the head's queue
+    timestamp (the status's time) or None."""
+    e = x["entry"]
+    prior = bot_statuses(ctx, e["sha"])
+    if prior and not force and not prior[0].get("description", "").startswith(READMIT):
+        return None
+    if x["kind"] == "valid" and not git.create_tag(e["sha"], e["tag"]):
+        x["kind"], x["reasons"] = "invalid", [f"the retention tag {e['tag']} exists at another commit"]
+        e.update(tag=None, notes=None, readme=None)
+    if x["kind"] == "valid":
+        ctx.gh.set_status(e["sha"], "pending", "queued", f"{ctx.server}/{ctx.repo}/pull/{e['pr']}")
+        if not prior:
+            _try(ctx, "comment", ctx.gh.comment, e["pr"], render.intake_comment(dict(e, status="queued"), None, None))
+    else:
+        e2 = dict(e, status="invalid", reasons=x["reasons"])
+        ctx.gh.set_status(e["sha"], *render.status_for(e2), f"{ctx.server}/{ctx.repo}/pull/{e['pr']}")
+        _try(ctx, "comment", ctx.gh.comment, e["pr"], render.intake_comment(e2, None, None))
+    return ctx.now()
+
+
+# ---- intake -------------------------------------------------------------------------------------
+def intake(ctx, pr_n, force=False):
+    """Prechecks the pull request's current head and admits it (tag, status, comment), then
+    dispatches `sync`. Writes nothing on `data`. Returns what it found."""
+    pr = ctx.gh.pr(pr_n)
+    git = ctx.git()
+    st = _state(ctx, git.snapshot(DATA))       # fails closed: an unreadable `data` stops the intake
+    x = examine(ctx, git, pr, st, _reserved(git, st))
+    if x["kind"] in ("valid", "invalid"):
+        admit(ctx, git, x, force)
+    if x["kind"] not in ("ignored", "organiser"):
+        _try(ctx, "dispatch sync", ctx.gh.dispatch, "sync.yml", ctx.default_branch)
+    ctx.log(f"intake: #{pr_n}: {x['kind']}")
+    return x["kind"]
+
+
+def intake_failed(ctx, pr_n):
+    """After an exception in the intake: the head's status says so (sync retries it)."""
+    try:
+        sha = ctx.gh.pr(pr_n)["head"]["sha"]
+        ctx.gh.set_status(sha, "error", "intake failed; the bot retries it", ctx.run_url)
+    except Exception as ex:  # noqa: BLE001
+        ctx.log(f"intake_failed: {ex}")
+
+
+def _reserved(git, st):
+    roots = {e["root"] for e in rfqueue.records(st)}
+    return main_roots(git) - roots
+
+
+# ---- sync: the single writer of new queue entries ------------------------------------------------
+def sync(ctx):
+    """Brings `data` up to date with GitHub: every open pull request's head is queued (with its
+    NOTES/README copied from the retention tag) or invalid; older heads are superseded; closed,
+    draft, held and organiser pull requests' queued entries are withdrawn; superseded and withdrawn
+    heads get their commit status. Idempotent. Returns the number of entries changed."""
+    git = ctx.git()
+    st0 = _state(ctx, git.snapshot(DATA))
+    reserved = _reserved(git, st0)
+    prs = {p["number"]: p for p in ctx.gh.open_prs()}
+    looks, admitted = {}, {}
+    for n, pr in sorted(prs.items()):
+        if (pr.get("base") or {}).get("ref") != ctx.default_branch or pr.get("draft") or "hold" in _labels(pr):
+            continue
+        sha = pr["head"]["sha"]
+        old = rfqueue.find(st0, entry_id(n, sha)) if SHA_RE.match(sha or "") else None
+        if old and old["status"] not in ("withdrawn", "superseded", "invalid"):
+            continue
+        prior = bot_statuses(ctx, sha)
+        if old and old["status"] == "invalid" and not (prior and prior[0].get("description") == "queued"):
+            continue                       # an invalid head stays invalid unless re-admitted
+        try:
+            full = ctx.gh.pr(n)            # changed_files is only in the single-PR payload
+            x = examine(ctx, git, full, st0, reserved)
+        except Exception as ex:  # noqa: BLE001 - one unreadable pull request must not stop the others
+            ctx.log(f"sync: #{n} not examined ({ex.__class__.__name__}: {str(ex)[:120]}); next sync retries")
+            continue
+        if x["kind"] not in ("valid", "invalid"):
+            looks[n] = x
+            continue
+        # the head's status must say what the bot found: a valid head "queued" (whose time is the
+        # queue time), an invalid one "invalid…"; otherwise (no intake ran, it failed, or the fresh
+        # state disagrees with it) sync admits the head itself
+        want = "queued" if x["kind"] == "valid" else "invalid"
+        top = prior[0].get("description", "") if prior else ""
+        if (top == "queued") if want == "queued" else top.startswith("invalid"):
+            q = prior[0]["created_at"]
+        else:
+            try:
+                q = admit(ctx, git, x, force=True)
+            except Exception as ex:  # noqa: BLE001
+                ctx.log(f"sync: #{n} not admitted ({ex.__class__.__name__}: {str(ex)[:120]}); next sync retries")
+                continue
+        admitted[n] = (x, q)
+    closed = {}
+    for e in st0["submissions"]:
+        if e["status"] == "queued" and e["pr"] not in prs and e["pr"] not in closed:
+            try:
+                closed[e["pr"]] = ctx.gh.pr(e["pr"])
+            except Exception as ex:  # noqa: BLE001
+                ctx.log(f"sync: #{e['pr']} unreadable ({ex.__class__.__name__}); kept")
+    effects, changed = [], []
 
     def mutate(snap):
         st = _state(ctx, snap)
         now = ctx.now()
-        e = copy.deepcopy(entry)
-        if valid:
-            dup = rfqueue.duplicate_of(st, eid, pr_n, author, e["tree"])
-            if dup:
-                e, changed = rfqueue.add_invalid(st, e, [dup], now)
+        effects.clear()
+        changed.clear()
+        before = {e["id"]: e["status"] for e in st["submissions"]}
+        ch, extra = Changes(), {}
+        for n, (x, q) in sorted(admitted.items(), key=lambda kv: (kv[1][1], kv[0])):
+            e = copy.deepcopy(x["entry"])
+            e["builds_on"] = [b for b in e.get("builds_on") or [] if rfqueue.of_pr(st, b)]
+            if x["kind"] == "valid":
+                dup = rfqueue.duplicate_of(st, e["id"], n, e["author"], e["tree"])
+                if dup:
+                    e.update(tag=None, notes=None, readme=None)
+                    e, _c = rfqueue.add_invalid(st, e, [dup], q)
+                    effects.append(("invalid", copy.deepcopy(e)))
+                    continue
+                e, _c = rfqueue.enqueue(st, e, q)
+                if e["status"] == "queued":
+                    for k, src in (("notes", "notes"), ("readme", "readme")):
+                        if e.get(k) and x["info"].get(src):
+                            ch.put(e[k], x["info"][src])
+                            extra[e[k]] = x["info"][src]
             else:
-                e, changed = rfqueue.enqueue(st, e, now)
-        else:
-            e, changed = rfqueue.add_invalid(st, e, reasons, now)
-        done.clear()
-        if not changed:
+                rfqueue.add_invalid(st, e, x["reasons"], q)
+        for n, pr in prs.items():
+            sha = (pr.get("head") or {}).get("sha") or ""
+            if (pr.get("base") or {}).get("ref") != ctx.default_branch:
+                continue
+            kind = (looks.get(n) or {}).get("kind")
+            if pr.get("draft") or kind == "draft":
+                rfqueue.withdraw(st, n, now, "the pull request is a draft")
+                continue
+            if "hold" in _labels(pr) or kind == "held":
+                rfqueue.withdraw(st, n, now, "the pull request is on hold (label hold)")
+                continue
+            if kind == "organiser":
+                rfqueue.withdraw(st, n, now, "an organiser pull request")
+                continue
+            for e in rfqueue.of_pr(st, n):
+                if e["status"] == "queued" and e["sha"] != sha:
+                    e.update(status="superseded", finished=now,
+                             reasons=["the pull request moved before this commit was evaluated"])
+        for n, pr in closed.items():
+            if pr.get("state") != "open":
+                rfqueue.withdraw(st, n, now, "the pull request was closed before its evaluation")
+        for path in rfqueue.compact(st):
+            ch.put(path, None)
+        for e in st["submissions"]:
+            if before.get(e["id"]) != e["status"]:
+                changed.append(e["id"])
+                if e["status"] in ("superseded", "withdrawn") and before.get(e["id"]) is not None:
+                    effects.append(("status", copy.deepcopy(e)))
+        if not changed and ch.empty():
             return None
-        ch = Changes()
-        extra = {}
-        if e["status"] == "queued":
-            if info.get("notes"):
-                ch.put(e["notes"], info["notes"])
-                extra[e["notes"]] = info["notes"]
-            if info.get("readme"):
-                ch.put(e["readme"], info["readme"])
         _write_state(ctx, ch, snap, st, extra)
-        done.update(entry=copy.deepcopy(e), pos=rfqueue.position(st, eid))
+        effects.append(("queued?", rfqueue.any_queued(st)))
         return ch
-    git.transact(DATA, mutate, f"intake #{pr_n}: {eid}")
-    if not done:
-        ctx.log(f"intake: #{pr_n} {eid} unchanged")
-        return "unchanged"
-    e = done["entry"]
-    state, desc = render.status_for(e)
-    ctx.gh.set_status(sha, state, desc, f"{ctx.server}/{ctx.repo}/pull/{pr_n}")
-    ctx.gh.comment(pr_n, render.intake_comment(e, *done["pos"]))
-    if e["status"] == "queued":
-        ctx.gh.dispatch("evaluate-next.yml", ctx.default_branch)
-    return e["status"]
+    git.transact(DATA, mutate, "sync")
+    for kind, e in effects:
+        if kind == "status":
+            st_, desc = render.status_for(e)
+            _try(ctx, "status", ctx.gh.set_status, e["sha"], st_, desc, None)
+        elif kind == "invalid":
+            _try(ctx, "status", ctx.gh.set_status, e["sha"], *render.status_for(e), None)
+            _try(ctx, "comment", ctx.gh.comment, e["pr"], render.intake_comment(e, None, None))
+        elif kind == "queued?" and e:
+            _try(ctx, "dispatch", ctx.gh.dispatch, "evaluate-next.yml", ctx.default_branch)
+    ctx.log(f"sync: {len(changed)} entries changed")
+    return len(changed)
 
 
 # ---- select -------------------------------------------------------------------------------------
-def select(ctx, force_pr=None):
+def select(ctx, force_pr=None, retire_id=None):
     """Picks the next entry (brief §4; `force_pr`: that pull request's queued or errored entry),
-    marks it running, and returns a copy of it (None: nothing to evaluate). Entries a previous run
-    left running are reaped first (runs are serialised by the `rf-eval` concurrency group)."""
+    marks it running, and returns a copy of it with the standing record as `incumbent` (None:
+    nothing to evaluate). Entries a previous run left running are reaped first (runs are serialised
+    by `rf-eval`). `retire_id`: the owner retires that record first."""
     live, picked, notify, final = {}, {}, {}, {}
 
     def live_pr(n):
@@ -187,40 +347,54 @@ def select(ctx, force_pr=None):
         now = ctx.now()
         picked.clear()
         notify.clear()
+        changed = False
+        if retire_id:
+            r = rfqueue.find(st, retire_id)
+            if r is not None and r["status"] == "record":
+                rfqueue.retire(r, now, "retired by the owner")
+                changed = True
         reaped = rfqueue.reap(st, now)
         notify.update({i: copy.deepcopy(rfqueue.find(st, i)) for i in reaped})
-        changed = bool(reaped)
+        changed = changed or bool(reaped)
         cands = rfqueue.order(st)
         if force_pr is not None:
             cands = [e for e in cands if e["pr"] == force_pr]
             if not cands:
                 errs = [e for e in rfqueue.of_pr(st, force_pr) if e["status"] == "error"]
+                port = rfqueue.port(st, force_pr, ctx.pin, now)
                 if errs:
                     e = max(errs, key=lambda e: e.get("finished") or "")
                     e.update(status="queued", finished=None, attempts=0)
                     cands, changed = [e], True
-        for e in cands[:25]:
-            p = live_pr(e["pr"])
+                elif port:
+                    cands, changed = [port], True
+        for e in cands:                      # every candidate (review m1)
+            p = live_pr(e["pr"]) if not e.get("port_of") else {"state": "open", "head": {"sha": e["sha"]}}
             if p is None:
                 continue
             if p.get("state") != "open":
                 e.update(status="withdrawn", finished=now, reasons=["the pull request was closed before its evaluation"])
+                notify[e["id"]] = copy.deepcopy(e)
                 changed = True
                 continue
             if (p.get("head") or {}).get("sha") != e["sha"]:
                 e.update(status="superseded", finished=now,
                          reasons=["the pull request moved before this commit was evaluated"])
+                notify[e["id"]] = copy.deepcopy(e)
                 changed = True
                 continue
             if force_pr is None and (p.get("draft") or "hold" in _labels(p)):
                 continue
             rfqueue.mark_running(e, now, ctx.run_url)
-            rec = rfqueue.current_record(st)
+            e["run_attempt"] = ctx.run_attempt
+            rec = rfqueue.current_record(st, ctx.pin)
             e["duel_with"] = rec["id"] if rec else None      # the incumbent this run measures (brief §2a)
             picked.update(copy.deepcopy(e))
             picked["record_cache"] = e.get("record_cache") is not False
             if rec:
                 picked["incumbent"] = {k: rec[k] for k in ("id", "sha", "root", "tag")}
+            # the record build cache may only be restored with the standing record's attested manifest
+            picked["record_manifest"] = (rec or {}).get("build_manifest") or ""
             changed = True
             break
         final.update(state=copy.deepcopy(st))
@@ -236,7 +410,7 @@ def select(ctx, force_pr=None):
         ctx.log(f"select: main is not synced to the record: {ex}")
     for e in notify.values():
         st_, desc = render.status_for(e)
-        ctx.gh.set_status(e["sha"], st_, desc, e.get("run_url"))
+        _try(ctx, "status", ctx.gh.set_status, e["sha"], st_, desc, e.get("run_url"))
     if not picked:
         ctx.log("select: nothing to evaluate")
         return None
@@ -244,10 +418,10 @@ def select(ctx, force_pr=None):
     if not (ID_RE.match(e["id"]) and SHA_RE.match(e["sha"]) and ROOT_RE.match(e["root"])):
         raise ValueError(f"select: a malformed entry {e['id']!r}")
     git = ctx.git()
-    if git.remote_ref(f"refs/tags/{e['tag']}") != e["sha"]:
-        if git.fetch(f"refs/pull/{e['pr']}/head") != e["sha"] or not git.create_tag(e["sha"], e["tag"]):
-            raise RuntimeError(f"select: the retention tag {e['tag']} is missing and cannot be created")
-    ctx.gh.set_status(e["sha"], "pending", "evaluating", ctx.run_url)
+    for t, s in [(e["tag"], e["sha"])] + ([(e["incumbent"]["tag"], e["incumbent"]["sha"])] if e.get("incumbent") else []):
+        if git.remote_ref(f"refs/tags/{t}") != s:
+            raise RuntimeError(f"select: the retention tag {t} is not at {s}")
+    _try(ctx, "status", ctx.gh.set_status, e["sha"], "pending", "evaluating", ctx.run_url)
     return e
 
 
@@ -270,10 +444,12 @@ def publish(ctx, eid, result_path):
     `data`, the record on `main`, the comment and the commit status; then dispatches the next
     evaluation if anything is queued. Returns the entry (None if this run does not own it)."""
     raw, result = load_result(result_path) if result_path else (None, None)
+    st0 = _state(ctx, ctx.git().snapshot(DATA))
+    e0 = rfqueue.find(st0, eid) or {}
     if result is None:
         ver = {"attested": False, "record_ok": False, "reason": "no result"}
     else:
-        ver = ctx.verify(result_path, result)
+        ver = ctx.verify(result_path, result, e0.get("run_attempt") or 1)
     done = {}
 
     def mutate(snap):
@@ -282,22 +458,32 @@ def publish(ctx, eid, result_path):
         e = rfqueue.find(st, eid)
         if e is None or e["status"] != "running" or e.get("run_url") != ctx.run_url:
             return None
-        rec = rfqueue.current_record(st)
-        provers = {r["prover_sha256"]: r["id"] for r in rfqueue.records(st) if r.get("prover_sha256")}
+        rec = rfqueue.current_record(st, ctx.pin)
+        provers = {r["prover_sha256"]: r["id"] for r in rfqueue.records(st)
+                   if r.get("prover_sha256") and r["id"] != e.get("port_of")}   # a port may keep its own crown
         res = result
         if isinstance(result, dict) and (rec or {}).get("id") != e.get("duel_with"):
-            res = dict(result, incumbent=None)    # measured against another record than the standing one
-        d = decide(res, ver, ctx.pin, rec, e.get("attempts", 1), provers)
+            res = dict(result, duel=None, incumbent=None)     # measured against another record
+        d = decide(res, ver, ctx.pin, rec, e.get("attempts", 1), provers, duel_retries=e.get("duel_retries", 0),
+                   record_failures=(rec or {}).get("duel_failures", 0))
         now = ctx.now()
         ps = result.get("prover_sha256") if isinstance(result, dict) else None
+        e["build_manifest"] = build_manifest_sha(result) if d["verified"] else None
         e.update({k: d[k] for k in ("verdict", "score", "comparable", "truncated", "cpu", "harness_commit",
                                     "verified", "record_of", "duel", "reasons")},
                  prover_sha256=ps if isinstance(ps, str) and len(ps) == 64 and ps.isalnum() else None)
+        if d["record_failed"] and rec is not None:
+            rec["duel_failures"] = rec.get("duel_failures", 0) + 1
+            if d["retire_record"]:
+                rfqueue.retire(rec, now, f"its own run failed in {rec['duel_failures']} duels")
+        if d["duel_retry"]:
+            e["duel_retries"] = e.get("duel_retries", 0) + 1
         if d["status"] != "queued" and cache_retry(result, e):
             d["requeue"] = True
-            e["record_cache"] = False         # the next evaluation runs without the record build cache
-            e["reasons"] = e["reasons"][:19] + ["the record build cache was reused: evaluated once more without it"]
+            e["reasons"] = e["reasons"][:19] + ["the record build cache was used: evaluated once more without it"]
         if d["requeue"]:
+            if d["verdict"] in ("ERROR", "REJECT") or not d["verified"]:
+                e["record_cache"] = False      # the retry builds clean (S5: a sabotaged cache cannot fail it)
             e.update(status="queued", finished=None)
         else:
             e.update(status=d["status"], finished=now)
@@ -313,23 +499,25 @@ def publish(ctx, eid, result_path):
         ctx.log(f"publish: {eid} is not running under this run; nothing published")
         return None
     e, st = done["entry"], done["state"]
-    try:
-        state, desc = render.status_for(e)
-        ctx.gh.set_status(e["sha"], state, desc, ctx.run_url)
-        ctx.gh.comment(e["pr"], render.publish_comment(e, ctx.run_url))
-        if e["status"] == "record":
-            sync_main(ctx, st)
-    finally:
-        if rfqueue.any_queued(st):
-            ctx.gh.dispatch("evaluate-next.yml", ctx.default_branch)
+    failed = []
+    if not _try(ctx, "status", ctx.gh.set_status, e["sha"], *render.status_for(e), ctx.run_url):
+        failed.append("status")
+    if not _try(ctx, "comment", ctx.gh.comment, e["pr"], render.publish_comment(e, ctx.run_url)):
+        failed.append("comment")
+    if e["status"] == "record" and not _try(ctx, "sync main", sync_main, ctx, st):
+        failed.append("main")
+    if rfqueue.any_queued(st) and not _try(ctx, "dispatch", ctx.gh.dispatch, "evaluate-next.yml", ctx.default_branch):
+        failed.append("dispatch")
+    if failed:
+        raise RuntimeError(f"publish: {eid} is published on data, but these failed: {', '.join(failed)}")
     return e
 
 
 def sync_main(ctx, st):
-    """Makes `main` hold the current record: its checked root (the tree at its retained commit,
-    replacing the previous record's root) and `records.json`. A no-op if `main` already does, or
-    if there is no record."""
-    rec = rfqueue.current_record(st)
+    """Makes `main` hold the standing record: its checked root (the tree at its retained commit,
+    replacing the roots of earlier records) and `records.json`. A no-op if `main` already does, or
+    if there is no record at this pin (the earlier pin's root then stays until a new record)."""
+    rec = rfqueue.current_record(st, ctx.pin)
     if rec is None:
         return None
     want = render.records_json(st, ctx.pin)
@@ -345,14 +533,16 @@ def sync_main(ctx, st):
         cur = snap.read("records.json", 16 << 20)
         if cur == want:
             return None
-        old = None
+        olds = set()
         try:
-            old = (json.loads(cur or b"null") or {}).get("record") or {}
-            old = old.get("root") if isinstance(old, dict) else None
-        except (ValueError, AttributeError):
-            old = None
+            j = json.loads(cur or b"null") or {}
+            for r in [j.get("record")] + list(j.get("history") or []):
+                if isinstance(r, dict) and isinstance(r.get("root"), str) and ROOT_RE.match(r["root"]):
+                    olds.add(r["root"])
+        except (ValueError, AttributeError, TypeError):
+            pass
         ch = Changes()
-        if isinstance(old, str) and ROOT_RE.match(old) and old != rec["root"]:
+        for old in sorted(olds - {rec["root"]}):
             ch.drop_dir(f"submissions/{old}")
         ch.drop_dir(f"submissions/{rec['root']}")
         ch.graft(f"submissions/{rec['root']}", tree)
@@ -370,7 +560,6 @@ def record_build(ctx, result, build_dir, pin, eid):
     `rf-record-build-<pin>-*` caches (the new one is saved by the workflow under the returned key)."""
     import hashlib
     import os
-    from decide import build_manifest_sha
     want = build_manifest_sha(result)
     try:
         with open(os.path.join(build_dir, "manifest.json"), "rb") as f:

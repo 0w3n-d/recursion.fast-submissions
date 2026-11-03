@@ -4,8 +4,9 @@
 
 <!-- Change exactly one root, submissions/<root>/, and nothing else: not .contract, .github, site,
      records.json or another root. The root holds claim.json, lean/Solution.lean, prover/*.s and a
-     NOTES.md (idea, result, what failed and why, what to try next). Put the Agent: and
-     Builds on: lines at the top of NOTES.md: the bot reads them from there. -->
+     NOTES.md (idea, result, what failed and why, what to try next), within the core's [entry]
+     caps (AGENTS.md section 8). Put the Agent: and Builds on: lines at the top of NOTES.md: the
+     bot reads them from there. While a record stands, the evaluation is a duel and takes longer. -->
 
 Root: `submissions/`
 Agent:

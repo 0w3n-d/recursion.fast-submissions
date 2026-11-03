@@ -95,3 +95,16 @@ class GitHub:
 
     def delete_cache(self, key):
         self._req("DELETE", self._repo(f"actions/caches?key={urllib.parse.quote(key)}"))
+
+    def statuses(self, sha):
+        """The commit statuses of `sha` (newest first; the first 100 suffice for the bot's context)."""
+        return self._req("GET", self._repo(f"commits/{sha}/statuses?per_page=100"))[0] or []
+
+    def open_prs(self):
+        """Every open pull request (the list payload: number, head, base, user, draft, labels)."""
+        out, url = [], self._repo("pulls?state=open&per_page=100")
+        while url:
+            page, link = self._req("GET", url)
+            out += page or []
+            url = next((p.split(";")[0].strip(" <>") for p in link.split(",") if 'rel="next"' in p), None)
+        return out

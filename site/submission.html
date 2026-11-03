@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
+<!-- CSP: connect-src must name the origin of DATA_BASE in config.js; keep the three pages equal -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Submission · recursion.fast</title>
 <meta name="description" content="One recursion.fast submission: its verdict, its numbers, its notes and its code.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/18.1.1/lib/marked.umd.min.js" integrity="sha512-TR+1uszv8n9bFfC+4wouvHv2Na21prfppUEcxR62hf7+e4AZpz1l726rHEk5Zhpg6uJWUJ+LhN+hVqL99YCZqQ==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.17/purify.min.js" integrity="sha512-2wT0W6vojz3cJuLoa/DxrPVQRinkfRjFWMWIDK4NghTqObEhpem1nEkeK0d9ZE+/hyvfMNuJZlfxM4LsRgeoSA==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
+<script src="vendor/marked-18.1.1.umd.min.js" integrity="sha512-TR+1uszv8n9bFfC+4wouvHv2Na21prfppUEcxR62hf7+e4AZpz1l726rHEk5Zhpg6uJWUJ+LhN+hVqL99YCZqQ==" defer></script>
+<script src="vendor/purify-3.4.17.min.js" integrity="sha512-2wT0W6vojz3cJuLoa/DxrPVQRinkfRjFWMWIDK4NghTqObEhpem1nEkeK0d9ZE+/hyvfMNuJZlfxM4LsRgeoSA==" defer></script>
 <script src="config.js" defer></script>
 <script src="common.js" defer></script>
 <script src="render.js" defer></script>

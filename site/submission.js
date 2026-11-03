@@ -32,17 +32,20 @@
 
   function render(e, data) {
     const rel = RF.relations(data.subs);
+    const nm = RF.nameOf(data.subs);
+    const subLink = (x, label) => el('a', { href: page('submission.html', { id: x.id }) }, label || nm(x));
     document.title = (e.root || e.id) + ' · recursion.fast';
     const box = document.getElementById('detail');
     const parts = [];
 
     // heading
     parts.push(el('div', { class: 'detail-head' },
-      el('h1', null, e.root || e.id),
-      e.title ? el('p', { class: 'title' }, e.title) : null,
+      el('h1', null, nm(e)),
       el('div', { class: 'badges' }, badge(e.status), unverified(e),
+        data.record && data.record.id === e.id ? el('span', { class: 'badge st-record' }, 'current record') : null,
         e.verdict ? el('span', null, 'verdict ' + e.verdict) : null,
-        el('span', null, RF.STATUS_INFO[e.status][1]))));
+        el('span', null, RF.STATUS_INFO[e.status][1])),
+      e.title ? el('p', { class: 'title' }, el('span', { class: 'muted' }, 'Pull request title (written by the submitter): '), e.title) : null));
 
     // numbers
     const sc = e.score;
@@ -58,15 +61,16 @@
         const incName = inc ? subLink(inc) : el('code', null, d.incumbent);
         if (d.incumbent_failed) {
           parts.push(el('p', { class: 'duel' }, el('strong', null, 'Head-to-head: the record failed on this runner.'), ' ',
-            'The incumbent record (', incName, ') was run in the same job and failed for a reason of its own, so this entry, certified and comparable, took the record.'));
+            'The incumbent record (', incName, ') was run in the same job and failed for a reason of its own. That does not crown a challenger: this entry stays accepted and is queued once more for another duel. A record that fails two duels is retired.'));
         } else {
           const g = duelGain(e);
           parts.push(el('p', { class: 'duel' }, el('strong', null, 'Head-to-head: ' + (g !== null ? pct(g) : '\u2013') + '.'), ' ',
             `This entry scored ${fmtS(sc.S)} s and the incumbent record (`, incName,
             `) ${fmtS(d.S_inc)} s, on the same runner in the same job, with the same chain lengths. A new record needs ${pct(-data.margin * 100)} or better.`));
         }
-      } else if (e.status === 'record' && !e.record_of) {
-        parts.push(el('p', { class: 'duel' }, 'The first record: there was no incumbent to duel.'));
+      } else if ((e.status === 'record' || e.status === 'retired') && !e.record_of) {
+        parts.push(el('p', { class: 'duel' }, e.port_of ? 'A record ported to a new contract pin by the owner: no duel.'
+          : 'No record stood at its contract pin when it was evaluated, so it took the record without a duel.'));
       }
     }
 
@@ -97,7 +101,10 @@
       e.harness_commit ? dt('Harness commit', ext(link.harness(e.harness_commit), e.harness_commit.slice(0, 12))) : null,
       e.prover_sha256 ? dt('Prover sha256', el('code', { class: 'hash' }, e.prover_sha256)) : null,
       e.duel_with && !e.duel ? dt('Measured against', rel.byId.get(e.duel_with) ? subLink(rel.byId.get(e.duel_with)) : el('code', null, e.duel_with)) : null,
-      e.status === 'record' ? dt('Previous record', recOf ? subLink(recOf) : (e.record_of ? el('code', null, e.record_of) : 'none: the first record')) : null);
+      e.status === 'record' || e.status === 'retired' ? dt('Previous record', recOf ? subLink(recOf) : (e.record_of ? el('code', null, e.record_of) : 'none at its pin')) : null,
+      e.duel_failures ? dt('Duel failures', `${e.duel_failures} (a record that fails two duels is retired)`) : null,
+      e.retired ? dt('Retired', timeEl(e.retired, true)) : null,
+      e.port_of ? dt('Port of', rel.byId.get(e.port_of) ? subLink(rel.byId.get(e.port_of)) : el('code', null, e.port_of)) : null);
     const links = el('ul', { class: 'links' },
       el('li', null, ext(link.pr(e), 'Pull request')),
       e.run_url ? el('li', null, ext(e.run_url, 'Actions run')) : null,
@@ -112,12 +119,13 @@
       return head ? el('li', null, subLink(head), ' ', el('span', { class: 'muted' }, '(#' + n + (head.author ? ', ' + head.author : '') + ')'))
         : el('li', null, ext(link.prNum(n), '#' + n));
     };
-    const cites = [...(rel.citedBy.get(e.pr) || [])].sort((a, b) => a - b);
+    const cites = (rel.citedBy.get(e.pr) || []).slice().sort((a, b) => a.pr - b.pr);
+    const citeRef = c => { const li = prRef(c.pr); if (c.self) li.append(el('span', { class: 'muted' }, ' same author, not counted')); return li; };
     parts.push(el('section', { class: 'panel', 'aria-labelledby': 'h-credit' },
       el('h2', { id: 'h-credit' }, 'Builds on and cited by'),
       el('dl', { class: 'kv' },
         dt('Builds on', e.builds_on.length ? el('ul', { class: 'reasons' }, e.builds_on.map(prRef)) : 'nothing declared'),
-        dt('Cited by', cites.length ? el('ul', { class: 'reasons' }, cites.map(prRef)) : 'no later submission yet'))));
+        dt('Cited by', cites.length ? el('ul', { class: 'reasons' }, cites.map(citeRef)) : 'no evaluated submission yet'))));
 
     // other heads of the same pull request
     const heads = (rel.byPr.get(e.pr) || []).filter(x => x.id !== e.id);
@@ -179,7 +187,10 @@
         el('a', { href: page('index.html') + '#submissions' }, 'See all submissions'), '.']);
       return;
     }
-    render(e, data);
+    try { render(e, data); } catch (err) {
+      message('This submission could not be shown', ['Its entry in submissions.json has an unexpected shape (', err.message, '). ',
+        el('a', { href: page('index.html') + '#submissions' }, 'See all submissions'), '.']);
+    }
   }
 
   document.addEventListener('DOMContentLoaded', () => start(false));

@@ -51,6 +51,8 @@ class Tree(unittest.TestCase):
         for bad in (b"[1, 2]", b"{not json", b"\xff\xfe", b"[" * 60000):
             reasons, _ = self.check({**f, "submissions/alpha/claim.json": bad})
             self.assertIn("claim.json is not a JSON object", reasons)
+        reasons, _ = self.check({**f, "submissions/alpha/claim.json": b" " * 70000})
+        self.assertTrue(any("claim_bytes" in r for r in reasons))
         reasons, _ = self.check({**f, "submissions/alpha/NOTES.md": b"x" * (common.MAX_TEXT_BYTES + 1)})
         self.assertTrue(any("NOTES.md has" in r for r in reasons))
         reasons, _ = self.check({**f, "submissions/alpha/NOTES.md": b"  \n"})
@@ -77,13 +79,23 @@ class Tree(unittest.TestCase):
 
     def test_caps(self):
         f = good_root("alpha")
-        with mock.patch.object(precheck, "MAX_ROOT_FILES", 5):
+        caps = dict(common.ENTRY_CAPS)
+        with mock.patch.dict(precheck.ENTRY_CAPS, files=5):
             reasons, _ = self.check({**f, "submissions/alpha/extra.txt": b"x"})
-            self.assertTrue(any("6 files" in r for r in reasons))
-        with mock.patch.object(precheck, "MAX_FILE_BYTES", 10), mock.patch.object(precheck, "MAX_ROOT_BYTES", 50):
+            self.assertTrue(any("6 files, above the cap files" in r for r in reasons))
+        with mock.patch.dict(precheck.ENTRY_CAPS, file_bytes=10, bytes=50):
             reasons, _ = self.check(f)
-            self.assertTrue(any("at most 10" in r for r in reasons))
-            self.assertTrue(any("at most 50" in r for r in reasons))
+            self.assertTrue(any("file_bytes = 10" in r for r in reasons))
+            self.assertTrue(any("cap bytes = 50" in r for r in reasons))
+        with mock.patch.dict(precheck.ENTRY_CAPS, lean_files=1, lean_bytes=5, prover_files=1, prover_bytes=5, claim_bytes=10):
+            reasons, _ = self.check({**f, "submissions/alpha/lean/deep/X.lean": b"x", "submissions/alpha/prover/b.s": b"y"})
+            for k in ("lean_files", "lean_bytes", "prover_files", "prover_bytes", "claim_bytes"):
+                self.assertTrue(any(f"cap {k} =" in r for r in reasons), k)
+        self.assertEqual(precheck.ENTRY_CAPS, caps)
+        # the season's values (core harness/season.toml [entry], launch S6)
+        self.assertEqual(caps, {"files": 2048, "bytes": 536870912, "file_bytes": 134217728, "lean_files": 1024,
+                                "lean_bytes": 33554432, "prover_files": 256, "prover_bytes": 268435456,
+                                "claim_bytes": 65536})
 
 
 class Paths(unittest.TestCase):

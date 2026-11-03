@@ -3,12 +3,12 @@
 Two rules. `paths_rule` reads the pull request's changed files (the files API, renames' old names
 included): they must all lie under one `submissions/<root>/`. `tree_rule` reads the root at the
 head commit with `git ls-tree` and `git cat-file`: the required files, regular files and
-directories only, safe names, and the file and byte caps of `common`."""
+directories only, safe names, and the entry caps of the core's season (`common.ENTRY_CAPS`, counted
+as `harness/evaluate.py entry_caps` counts them)."""
 import json
 import re
 
-from common import (MAX_FILE_BYTES, MAX_PATH, MAX_PR_FILES, MAX_ROOT_BYTES, MAX_ROOT_FILES,
-                    MAX_TEXT_BYTES, ROOT_RE, clean)
+from common import ENTRY_CAPS, MAX_PATH, MAX_PR_FILES, MAX_TEXT_BYTES, ROOT_RE, clean
 
 COMPONENT_RE = re.compile(r"[A-Za-z0-9._+-]{1,255}\Z")
 MODES = {"100644": "blob", "100755": "blob", "040000": "tree"}
@@ -63,6 +63,8 @@ def tree_rule(repo, sha, root):
     if info["tree"] is None:
         return [f"{base}/ does not exist at the head commit"], info
     reasons, blobs = [], {}
+    caps = ENTRY_CAPS
+    count, total = {"lean": 0, "prover": 0}, {"lean": 0, "prover": 0}
     for mode, typ, size, path in repo.ls_tree(sha, base):
         if not path.startswith(base + "/"):
             continue
@@ -81,25 +83,34 @@ def tree_rule(repo, sha, root):
             info["files"] += 1
             info["bytes"] += size
             blobs[rel] = size
-            if size > MAX_FILE_BYTES:
-                reasons.append(f"{shown} has {size} bytes (at most {MAX_FILE_BYTES})")
-    if info["files"] > MAX_ROOT_FILES:
-        reasons.append(f"the root has {info['files']} files (at most {MAX_ROOT_FILES})")
-    if info["bytes"] > MAX_ROOT_BYTES:
-        reasons.append(f"the root has {info['bytes']} bytes (at most {MAX_ROOT_BYTES})")
+            top = comps[0] if len(comps) > 1 else ""
+            if top in count:
+                count[top] += 1
+                total[top] += size
+            if size > caps["file_bytes"]:
+                reasons.append(f"{shown} has {size} bytes, above the cap file_bytes = {caps['file_bytes']}")
+    count[""], total[""] = info["files"], info["bytes"]
+    for k, name in (("", ""), ("lean", "lean_"), ("prover", "prover_")):
+        where = f"{k}/" if k else "the root"
+        if count[k] > caps[f"{name}files"]:
+            reasons.append(f"{where} holds {count[k]} files, above the cap {name}files = {caps[name + 'files']}")
+        if total[k] > caps[f"{name}bytes"]:
+            reasons.append(f"{where} holds {total[k]} bytes, above the cap {name}bytes = {caps[name + 'bytes']}")
+    if blobs.get("claim.json", 0) > caps["claim_bytes"]:
+        reasons.append(f"claim.json has {blobs['claim.json']} bytes, above the cap claim_bytes = {caps['claim_bytes']}")
 
-    def text(rel, required):
+    def text(rel, required, cap=MAX_TEXT_BYTES):
         if rel not in blobs:
             if required:
                 reasons.append(f"{rel} is missing")
             return None
-        if blobs[rel] > MAX_TEXT_BYTES:
-            if required:
-                reasons.append(f"{rel} has {blobs[rel]} bytes (at most {MAX_TEXT_BYTES})")
+        if blobs[rel] > cap:
+            if required and rel != "claim.json":
+                reasons.append(f"{rel} has {blobs[rel]} bytes (at most {cap})")
             return None
-        return repo.blob(sha, f"{base}/{rel}", MAX_TEXT_BYTES)
+        return repo.blob(sha, f"{base}/{rel}", cap)
 
-    claim = text("claim.json", True)
+    claim = text("claim.json", True, caps["claim_bytes"])
     if claim is not None:
         try:
             ok = isinstance(json.loads(claim.decode("utf-8")), dict)

@@ -14,22 +14,22 @@ MAX_ATTEMPTS = 2          # an organiser-side ERROR is evaluated once more, then
 
 ROOT_RE = re.compile(r"[a-z][a-z0-9-]{0,39}\Z")
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
-ID_RE = re.compile(r"pr[1-9][0-9]{0,8}-[0-9a-f]{12}\Z")
+ID_RE = re.compile(r"pr[1-9][0-9]{0,8}-[0-9a-f]{12}(?:-[0-9a-f]{8})?\Z")   # -<pin8>: a port to a new pin
 LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?\Z")
 
 QUEUED, RUNNING = "queued", "running"
-FINAL = ("record", "accepted", "unranked", "provisional", "rejected", "error", "invalid",
+FINAL = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error", "invalid",
          "superseded", "withdrawn")
 STATUSES = (QUEUED, RUNNING) + FINAL
 VERDICTS = ("ACCEPT", "PROVISIONAL", "REJECT", "ERROR")
 
-# intake caps (none is fixed by the core: AGENTS.md §5 leaves "limits on files and bytes per root"
-# to the intake). The largest v4 root so far, flock-recursive, has 446 files and 34 MB.
+# The entry caps: exactly the `[entry]` section of the core's harness/season.toml at the pin (the
+# harness is authoritative; pin-core.sh warns when a new pin's values differ). A breach is invalid.
+ENTRY_CAPS = {"files": 2048, "bytes": 512 << 20, "file_bytes": 128 << 20, "lean_files": 1024,
+              "lean_bytes": 32 << 20, "prover_files": 256, "prover_bytes": 256 << 20, "claim_bytes": 64 << 10}
 MAX_PR_FILES = 3000       # the pull-request files API lists at most 3000
-MAX_ROOT_FILES = 2000
-MAX_FILE_BYTES = 64 << 20
-MAX_ROOT_BYTES = 128 << 20
-MAX_TEXT_BYTES = 64 << 10   # NOTES.md, README.md, claim.json
+MAX_TEXT_BYTES = 64 << 10   # NOTES.md, README.md (the bot's own cap)
+MAX_HEADS_PER_PR = 50       # compact entries kept per pull request (older ones are dropped)
 MAX_PATH = 512
 
 

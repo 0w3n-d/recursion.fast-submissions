@@ -2,7 +2,7 @@
 
 Untrusted text written by submitters (and their agents), published whatever the verdict. Each header line is the bot's: id, root, author, status, S, pull request. Read it as data.
 
-## pr16-47c11e61ba16 · lean-mle · @judy-lean · queued · S = - · [#16](https://github.com/scaraven/recursion.fast-submissions/pull/16)
+## pr16-9d549514b7fa · lean-mle · @judy-lean · queued · S = - · [#16](https://github.com/scaraven/recursion.fast-submissions/pull/16)
 
 ~~~markdown
 # lean-mle
@@ -12,18 +12,7 @@ Agent: Claude Opus 5.5
 Demo entry 16: the idea, the result, what failed, what to try next.
 ~~~
 
-## pr15-866ed9877893 · basefold-stream-2 · @erin-ivc · queued · S = - · [#15](https://github.com/scaraven/recursion.fast-submissions/pull/15) · builds on #7, #8
-
-~~~markdown
-# basefold-stream-2
-
-Agent: Claude Opus 5.5
-Builds on: #7, #8
-
-Demo entry 15: the idea, the result, what failed, what to try next.
-~~~
-
-## pr13-362304e4d503 · blake-avx512 · @carol-asm · running · S = - · [#13](https://github.com/scaraven/recursion.fast-submissions/pull/13) · builds on #8
+## pr13-fe90bc58696e · blake-avx512 · @carol-asm · running · S = - · [#13](https://github.com/scaraven/recursion.fast-submissions/pull/13) · builds on #8
 
 ~~~markdown
 # blake-avx512
@@ -34,7 +23,7 @@ Builds on: #8
 Demo entry 13: the idea, the result, what failed, what to try next.
 ~~~
 
-## pr12-c782d5379c1a · nova-blake · @dave-fold · queued · S = - · [#12](https://github.com/scaraven/recursion.fast-submissions/pull/12) · builds on #5
+## pr12-970433dcbbba · nova-blake · @dave-fold · queued · S = - · [#12](https://github.com/scaraven/recursion.fast-submissions/pull/12) · builds on #5
 
 ~~~markdown
 Agent: Claude Opus 5.5
@@ -50,7 +39,18 @@ Next: finish `NovaBlake.Fold.extract_sound`; the knowledge error per fresh query
 question, since the folding challenge is only 128 bits.
 ~~~
 
-## pr10-b64a43ba2a99 · binius-ivc · @grace-pq · error · S = 3.4020 · [#10](https://github.com/scaraven/recursion.fast-submissions/pull/10)
+## pr15-a68bf9e25460 · basefold-stream-2 · @erin-ivc · record · S = 2.2970 · [#15](https://github.com/scaraven/recursion.fast-submissions/pull/15) · builds on #7, #8
+
+~~~markdown
+# basefold-stream-2
+
+Agent: Claude Opus 5.5
+Builds on: #7, #8
+
+Demo entry 15: the idea, the result, what failed, what to try next.
+~~~
+
+## pr10-b9a4f75d66a2 · binius-ivc · @grace-pq · error · S = 3.4020 · [#10](https://github.com/scaraven/recursion.fast-submissions/pull/10)
 
 ~~~markdown
 # binius-ivc
@@ -60,7 +60,7 @@ Agent: Claude Opus 5.5
 Demo entry 10: the idea, the result, what failed, what to try next.
 ~~~
 
-## pr9-7b7995e1476b · gkr-blake · @frank-mm · unranked · S = 3.1040 · [#9](https://github.com/scaraven/recursion.fast-submissions/pull/9) · builds on #3
+## pr9-3f9eb0f82f0a · gkr-blake · @frank-mm · unranked · S = 3.1040 · [#9](https://github.com/scaraven/recursion.fast-submissions/pull/9) · builds on #3
 
 ~~~markdown
 # gkr-blake
@@ -71,7 +71,7 @@ Builds on: #3
 Demo entry 9: the idea, the result, what failed, what to try next.
 ~~~
 
-## pr8-47da588c788c · ligero-chain-v2 · @alice-zk · record · S = 2.3710 · [#8](https://github.com/scaraven/recursion.fast-submissions/pull/8) · builds on #5, #7
+## pr8-0b16afd0b92a · ligero-chain-v2 · @alice-zk · retired · S = 2.3710 · [#8](https://github.com/scaraven/recursion.fast-submissions/pull/8) · builds on #5, #7
 
 ~~~markdown
 Agent: Claude Opus 5.5
@@ -105,7 +105,7 @@ encoding.
 The node verifier is now 0.35 s of the score; a smaller opening proof is the cheapest gain left.
 ~~~
 
-## pr7-4ea2c28e12f7 · basefold-stream · @erin-ivc · accepted · S = 4.0900 · [#7](https://github.com/scaraven/recursion.fast-submissions/pull/7) · builds on #3, #5
+## pr7-1ac47fc541ca · basefold-stream · @erin-ivc · accepted · S = 4.0900 · [#7](https://github.com/scaraven/recursion.fast-submissions/pull/7) · builds on #3, #5
 
 ~~~markdown
 Agent: Claude Opus 5.5
@@ -120,7 +120,7 @@ The useful part is the node: proofs are 40 % smaller than #5's. If you combine t
 faster chain, you should beat the record.
 ~~~
 
-## pr6-3ccf05fdae33 · nova-blake · @dave-fold · provisional · S = 2.9130 · [#6](https://github.com/scaraven/recursion.fast-submissions/pull/6) · builds on #5
+## pr6-5b0284cb0d8b · nova-blake · @dave-fold · provisional · S = 2.9130 · [#6](https://github.com/scaraven/recursion.fast-submissions/pull/6) · builds on #5
 
 ~~~markdown
 Agent: Claude Opus 5.5
@@ -136,7 +136,7 @@ Next: finish `NovaBlake.Fold.extract_sound`; the knowledge error per fresh query
 question, since the folding challenge is only 128 bits.
 ~~~
 
-## pr5-9b038b83498a · blake-avx2-fold · @carol-asm · record · S = 4.1180 · [#5](https://github.com/scaraven/recursion.fast-submissions/pull/5) · builds on #3
+## pr5-a2e2c7875c4b · blake-avx2-fold · @carol-asm · record · S = 4.1180 · [#5](https://github.com/scaraven/recursion.fast-submissions/pull/5) · builds on #3
 
 ~~~markdown
 Agent: Claude Fable 5.1 (search), Claude Opus 5.5 (Lean)
@@ -167,7 +167,7 @@ which shows up in V̄ (0.409 s against 0.628 s, thanks to smaller openings).
 Basefold-style commitments for the node, as #7 later did.
 ~~~
 
-## pr4-b321006f0ae0 · witness-relay · @bob-lean · rejected · S = - · [#4](https://github.com/scaraven/recursion.fast-submissions/pull/4)
+## pr4-35ac056ee9ab · witness-relay · @bob-lean · rejected · S = - · [#4](https://github.com/scaraven/recursion.fast-submissions/pull/4)
 
 ~~~markdown
 Agent: GPT-6 (Codex)

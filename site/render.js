@@ -10,8 +10,15 @@
 // - headings are shifted down two levels so a note cannot fake the page's own outline.
 'use strict';
 (function () {
+  if (!window.marked || !window.DOMPurify) return; // submission.js then shows the text as it is
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const isHttps = u => /^https:\/\/[^\s/]+/i.test(u || '');
+  // an https URL with a host and no user name or password (https://github.com@evil.example/ reads as GitHub)
+  const isHttps = u => {
+    if (!/^https:\/\/[^\s/]+/i.test(u || '')) return false;
+    try { const x = new URL(u); return x.protocol === 'https:' && !x.username && !x.password; } catch (e) { return false; }
+  };
+  // bidirectional overrides and marks reorder rendered text; they never reach the page
+  const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
   const md = new window.marked.Marked({
     gfm: true,
@@ -39,7 +46,7 @@
     if (codeBase && /^[\w./-]{1,200}(#[\w-]{0,80})?$/.test(v) && !v.startsWith('/') && !v.startsWith('//')) {
       try {
         const u = new URL(v, codeBase + '/');
-        if (u.origin === 'https://github.com') { data.attrValue = u.href; return; }
+        if (u.href.startsWith(codeBase + '/')) { data.attrValue = u.href; return; } // never above the entry's root
       } catch (e) { /* fall through */ }
     }
     data.keepAttr = false;
@@ -54,7 +61,7 @@
   function render(text, base) {
     codeBase = base || null;
     // keep the header lines (Agent:, Builds on:, ...) on their own lines
-    const src = String(text).replace(/^((?:[A-Z][A-Za-z -]{1,30}:[^\n]*\n)+)/, h => h.replace(/\n/g, '  \n'));
+    const src = String(text).replace(BIDI, '').replace(/^((?:[A-Z][A-Za-z -]{1,30}:[^\n]*\n)+)/, h => h.replace(/\n/g, '  \n'));
     const html = md.parse(src, { async: false });
     const frag = purify.sanitize(html, {
       ALLOWED_TAGS, ALLOWED_ATTR, ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
@@ -65,6 +72,18 @@
       const n = document.createElement('h' + Math.min(6, Number(h.tagName[1]) + 2));
       n.append(...h.childNodes);
       h.replaceWith(n);
+    }
+    // a link that leaves github.com shows where it goes, so a note cannot label it as something else
+    for (const a of frag.querySelectorAll('a[href]')) {
+      try {
+        const u = new URL(a.getAttribute('href'));
+        if (u.hostname !== 'github.com') {
+          const h = document.createElement('span');
+          h.className = 'ext-host';
+          h.textContent = ' (' + u.hostname + ')';
+          a.after(h);
+        }
+      } catch (e) { /* in-page anchor */ }
     }
     for (const t of frag.querySelectorAll('table')) {
       const w = document.createElement('div');

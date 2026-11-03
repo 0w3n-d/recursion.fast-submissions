@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- CSP: connect-src must name the origin of DATA_BASE in config.js; keep the three pages equal -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Rules · recursion.fast</title>
@@ -121,23 +122,28 @@
 
   <h2 id="record">What makes a record</h2>
   <p>GitHub's runners differ by up to about 18&nbsp;%, so a record must beat the incumbent on the
-    same machine. Once a record exists, every evaluation is a <strong>duel</strong>: your entry and
-    the current record run back to back in one job, on one runner, in a random order and on the
-    same drawn chain lengths. Your entry becomes the record only if all of these hold:</p>
+    same machine. Records are kept per contract pin. While a record stands, every evaluation is a
+    <strong>duel</strong>: your entry and the standing record run back to back in one job, on one
+    runner, in a random order and on the same drawn chain lengths. Your entry becomes the record
+    only if all of these hold:</p>
   <ul>
     <li>the verdict is <strong>ACCEPT</strong>: the certificate checked and every benchmark check passed;</li>
-    <li>it is <strong>comparable</strong>: the stream ran to the end and on one CPU model;</li>
+    <li>it is <strong>comparable</strong>: the stream ran to the end, on one CPU model, with the job plan
+      matched and a positive <span class="math">S</span>;</li>
     <li>it is <strong>attested</strong>: signed by the core's evaluation workflow at the pinned commit, on a GitHub-hosted runner;</li>
     <li>it <strong>beats the record by 3&nbsp;% in the duel</strong>:
       <span class="math">S</span><sub>yours</sub> &le; 0.97 &times; <span class="math">S</span><sub>record</sub>,
-      both measured in that job.</li>
+      both measured in that job;</li>
+    <li>its prover binary is not one an earlier record already had.</li>
   </ul>
-  <p>With no record yet, the first result that is ACCEPT, comparable and attested is the record,
-    without a duel. If the record's own run fails on that runner for a reason of its own, a
-    qualifying challenger takes the record. Everything else is still published, with its notes:
-    an ACCEPT that does not win the duel shows as <em>accepted</em>, a truncated or mixed-CPU run
-    as <em>unranked</em>. Scores from different jobs are shown side by side but never decide a
-    record.</p>
+  <p><strong>The record failing on that runner is not a win.</strong> Your entry stays
+    <em>accepted</em> and is queued once more for another duel. A record whose own run fails in two
+    duels is <em>retired</em>, and the next evaluation runs with no standing record.</p>
+  <p>With no standing record (at the start, after a retirement, or after the contract pin moves),
+    the first result that is ACCEPT, comparable and attested becomes the record, without a duel.
+    Everything else is still published, with its notes: an ACCEPT that does not win its duel shows
+    as <em>accepted</em>, a truncated or mixed-CPU run as <em>unranked</em>. Scores from different
+    jobs are shown side by side but never decide a record.</p>
 
   <h2 id="limits">Limits at a glance</h2>
   <div class="table-wrap" role="region" tabindex="0" aria-labelledby="limits">
@@ -172,10 +178,11 @@
       and create <code>submissions/&lt;root&gt;/</code> (lowercase letters, digits and dashes) with
       <code>claim.json</code>, <code>lean/Solution.lean</code> and your other modules,
       <code>prover/*.s</code>, a <code>NOTES.md</code> (required) and a <code>README.md</code>.</li>
-    <li><strong>Check it locally.</strong> Build the Lean against the pinned contract and run your
-      prover through the harness's smoke shape, as the
-      <a data-link="guide" href="https://github.com/scaraven/recursion.fast-submissions/blob/main/AGENTS.md">submission guide</a>
-      describes. <!-- VERIFY: the exact local-check commands are S4's (submissions AGENTS.md) --></li>
+    <li><strong>Check it locally.</strong> In <code>.contract/</code>, run the harness on your root:
+      <code>harness/evaluate.py all</code> with <code>--season harness/smoke.toml</code> (6 steps,
+      short chains), then with the real <code>harness/season.toml</code> before you expect to rank.
+      The <a data-link="guide" href="https://github.com/scaraven/recursion.fast-submissions/blob/main/AGENTS.md">submission guide</a>
+      (section 5) has the setup and the exact commands. Local runs are not results.</li>
     <li><strong>Open a pull request</strong> that changes only that root. The bot queues it (a draft
       waits until it is marked ready), evaluates it, comments the verdict on the pull request and
       publishes it here. A new push is a new head and goes to the back of the queue. Pull requests

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The bot's command line, for the workflows (TRUSTED; Python 3 standard library only).
 
-  python3 -I .github/bot/bot.py intake  --pr N
-  python3 -I .github/bot/bot.py select  [--pr N]            outputs id, sha, path, pr, ref (or nothing)
+  python3 -I .github/bot/bot.py intake  --pr N [--force]    prechecks and admits a head (no `data` write)
+  python3 -I .github/bot/bot.py sync                        the single writer of new queue entries
+  python3 -I .github/bot/bot.py select  [--pr N] [--retire ID]
+                                    outputs id, sha, path, ref, record_cache, incumbent_* (or nothing)
   python3 -I .github/bot/bot.py publish --id ID [--result result/result.json] [--core core]
   python3 -I .github/bot/bot.py sync-main
 
@@ -25,7 +27,10 @@ from gh import GitHub  # noqa: E402
 
 def output(**kv):
     path = os.environ.get("GITHUB_OUTPUT")
-    lines = "".join(f"{k}={v}\n" for k, v in kv.items() if "\n" not in str(v) and "\r" not in str(v))
+    for k, v in kv.items():
+        if "\n" in str(v) or "\r" in str(v):
+            raise SystemExit(f"bot: output {k} holds a line break")      # never a silently missing output
+    lines = "".join(f"{k}={v}\n" for k, v in kv.items())
     if path:
         with open(path, "a", encoding="utf-8") as f:
             f.write(lines)
@@ -45,13 +50,17 @@ def make_ctx(core_dir=None):
     print(f"::add-mask::{b64}")
     run_id = env.get("GITHUB_RUN_ID", "0")
     return flows.Ctx(GitHub(token, repo, env.get("GITHUB_API_URL", "https://api.github.com")), repo,
-                     f"{server}/{repo}.git", pin, token=token, run_id=run_id, server=server,
-                     verify=lambda path, result: attest.verify(path, result, repo, run_id, core_dir))
+                     f"{server}/{repo}.git", pin, token=token, run_id=run_id,
+                     run_attempt=int(env.get("GITHUB_RUN_ATTEMPT", "1") or 1), server=server,
+                     verify=lambda path, result, min_attempt: attest.verify(path, result, repo, run_id, core_dir,
+                                                                            min_attempt=min_attempt))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["intake", "select", "publish", "sync-main", "record-build"])
+    ap.add_argument("cmd", choices=["intake", "sync", "select", "publish", "sync-main", "record-build"])
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--retire", default="")
     ap.add_argument("--dir", default="")
     ap.add_argument("--pr", default="")
     ap.add_argument("--id", default="")
@@ -67,13 +76,22 @@ def main():
     if a.cmd == "intake":
         if pr is None:
             sys.exit("bot: intake needs --pr")
-        print(f"intake: #{pr}: {flows.intake(ctx, pr)}")
+        try:
+            print(f"intake: #{pr}: {flows.intake(ctx, pr, a.force)}")
+        except Exception:
+            flows.intake_failed(ctx, pr)
+            raise
+    elif a.cmd == "sync":
+        flows.sync(ctx)
     elif a.cmd == "select":
-        e = flows.select(ctx, pr)
+        if a.retire and not ID_RE.match(a.retire):
+            sys.exit("bot: --retire must be an entry id")
+        e = flows.select(ctx, pr, a.retire or None)
         if e:
             print(f"select: {e['id']} (#{e['pr']}, {e['root']}, attempt {e['attempts']})")
-            output(id=e["id"], sha=e["sha"], path=f"submissions/{e['root']}", pr=e["pr"], ref=f"refs/tags/{e['tag']}",
-                   record_cache="true" if e.get("record_cache", True) else "false")
+            output(id=e["id"], sha=e["sha"], path=f"submissions/{e['root']}", ref=f"refs/tags/{e['tag']}",
+                   record_cache="true" if e.get("record_cache", True) else "false",
+                   record_manifest_sha256=e.get("record_manifest") or "")
             inc = e.get("incumbent")
             if inc:   # the standing record, re-run in the same job (brief §2a)
                 output(incumbent_id=inc["id"], incumbent_sha=inc["sha"], incumbent_path=f"submissions/{inc['root']}",
@@ -92,7 +110,7 @@ def main():
         key = flows.record_build(ctx, result, a.dir, ctx.pin, a.id)
         output(key=key or "")
     elif a.cmd == "sync-main":
-        st = flows.rfqueue.load(ctx.git().snapshot(flows.DATA).read("submissions.json"), ctx.repo, ctx.pin)
+        st = flows._state(ctx, ctx.git().snapshot(flows.DATA))
         print(f"sync-main: {flows.sync_main(ctx, st)}")
     return 0
 

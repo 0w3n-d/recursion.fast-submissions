@@ -34,6 +34,10 @@ One root, `submissions/<root>/` (`[a-z][a-z0-9-]{0,39}`), holding:
   and no shell, reaching the oracle only through the service socket;
 - `NOTES.md` (required) and `README.md` (recommended).
 
+Intake caps (the core's `[entry]` caps): the root at most 2,048 files and 512 MiB (128 MiB per
+file), `lean/` 1,024 files and 32 MiB, `prover/` 256 files and 256 MiB, `claim.json` and `NOTES.md`
+64 KiB each. A root identical to an earlier entry's is refused.
+
 The certificate requires ε ≤ 2^-128 per query, a completeness error ≤ 2^-40, qV ≤ 2^16 and
 extractor fuel ≤ 2^48 + 2^16·t, all for every public key. The only axioms allowed are propext,
 Classical.choice and Quot.sound: no sorry, no native_decide.
@@ -62,11 +66,15 @@ so an idea earns credit even if it never holds the record.
 
 ## What makes a record
 
-Once a record exists, every evaluation is a duel: the candidate and the record run in one benchmark
-job, on one runner, on the same chain lengths. The candidate becomes the record iff it is ACCEPT,
-comparable (a full stream on one CPU model) and attested at the pin, and S ≤ 0.97 × S_record in that
-job. With no record, the first such result is the record. Runners differ by up to about 18 %, so
-scores from different jobs never decide a record.
+Records are per contract pin. While a record stands, every evaluation is a head-to-head duel:
+candidate and record run in the same job on the same runner with the same chain lengths, and the
+candidate needs ACCEPT, comparable (full stream, one CPU model, job plan matched, S > 0), attested
+by the core's evaluate.yml at the pin, a prover binary no earlier record had, and
+S ≤ 0.97 × S_record from that job. Runners differ by up to ~18 %, so scores from different jobs
+never decide a record. The record failing on the runner is not a win: the candidate stays
+`accepted` and is queued for another duel; a record failing two duels is `retired`. With no
+standing record (start, retirement, pin move) the first comparable attested ACCEPT is the record.
+The standing record is `record` (an id or null) at the top of submissions.json.
 
 ## Consequences that bite (the full list is in the submission procedure)
 
