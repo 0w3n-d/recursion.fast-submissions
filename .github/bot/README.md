@@ -11,7 +11,7 @@ Four workflows and a small Python package (standard library only, run as `python
 | `bot.py` | the command line (`intake`, `sync`, `select`, `publish`, `sync-main`, `record-build`) |
 | `flows.py` | examine/admit, intake, sync, select, publish, the sync of `main` |
 | `precheck.py` | the paths rule (files API) and the tree rule (`git ls-tree`/`cat-file`), the core's `[entry]` caps |
-| `rfqueue.py` | `submissions.json`: order (ports and confirmations first, then fair by author), supersede, withdraw, reap, duplicates, records per pin, retirement, ports, compaction |
+| `rfqueue.py` | `submissions.json`: order (a waiting port, then confirmations, then fair by author), supersede, withdraw, reap, duplicates, records per pin, retirement, ports, stale wins, compaction |
 | `decide.py` | status and record rule (the duel and its confirmation), record-cache retry |
 | `common.py` | constants: `MARGIN` (0.03) and `RECORD_WINS` (2), the record rule's two parameters, and the caps |
 | `render.py`, `attest.py`, `gitdata.py`, `gh.py`, `pin.py`, `pin-core.sh` | comments/statuses/notes.md/records.json; provenance; git plumbing; REST; the pin |
@@ -22,10 +22,10 @@ Tests: `python3 -I -m unittest discover -s .github/bot/tests -t .github/bot`. Si
 ## Operating it
 
 - **Move the pin** (a new core): `.github/bot/pin-core.sh <sha>`. It sets the `.contract` gitlink and both literals of `evaluate-next.yml`, re-pins `records.json` (`core`; the record moves to `history`) and any demo fixture that carries the old pin. It refuses a core whose `evaluate.yml` lacks an input the bot passes or uses an action by tag rather than full SHA, and warns if the core's `[entry]` caps differ from `common.ENTRY_CAPS` (fix those in the same commit). Commit the change on its own. Then nothing is manual:
-  1. Records are per pin: after the move no record stands. The next `evaluate-next` run (any run, a forced one included) first re-evaluates the last standing record's retained commit at the new pin as `<id>-<pin8>`, unpaired, before any other entry. A comparable, attested ACCEPT keeps the crown; later entries duel it.
-  2. If that port fails, no record stands, and the first comparable, attested ACCEPT at the new pin is the record, unpaired. A port is tried once per pin. Fallback: `evaluate-next` with `pr` = a PR re-evaluates its newest record or ACCEPT of an earlier pin at the current pin.
-- **Confirmation duels**: a candidate that wins a duel is `confirming` and is evaluated again, first in the queue, against the same record; it takes the record only with `RECORD_WINS` wins (credited with the smallest gain). A confirming entry ignores pushes, closing and drafts (its tag is retained); `hold` keeps it waiting. Tune `MARGIN` and `RECORD_WINS` in `common.py` after calibrating with self-duels (and say so in the core's `AGENTS.md` §8).
-- **Retire a record**: run `evaluate-next` with `retire` = its id. A record whose own run fails in two duels is retired automatically. After a retirement there is no standing record, and the next comparable, attested ACCEPT is the record. Retiring is also the remedy for a near-copy of a record that won both duels by noise.
+  1. Records are per pin: after the move no record stands. The push runs `sync`, which rewrites `data` and `records.json` for the new pin (`record: null`) and dispatches `evaluate-next`. Every run (a forced one included) first evaluates the last standing record's retained commit at the new pin as `<id>-<pin8>`, unpaired, before any other entry, also when that port is re-run after an organiser ERROR or a dead run. A comparable, attested ACCEPT keeps the crown (its own prover binary never blocks it); later entries duel it. Confirmations of the old pin are void and re-queued fresh.
+  2. If that port fails, no record stands, and the first comparable, attested ACCEPT at the new pin is the record, unpaired. There is one port entry per pin (an ERROR in it is retried like any entry's). Fallback: `evaluate-next` with `pr` = a PR re-evaluates its newest record or ACCEPT of an earlier pin at the current pin.
+- **Confirmation duels**: a candidate that wins a duel is `confirming` and is evaluated again, before every other entry, against the same record; it takes the record only with `RECORD_WINS` wins (credited with the smallest gain). A confirming entry ignores pushes, closing and drafts (its tag is retained); `hold` keeps it waiting. Wins and retries are counted per record from the entry's `duels`: when the record is beaten or the pin moves, a pending confirmation is void and the entry is re-queued fresh (`rfqueue.settle`); when the record is retired, it is `accepted` (`rfqueue.void_confirmations`), so a retirement never crowns one win. A confirmation that is not comparable is run once more (`CONFIRM_RETRIES`). Tune `MARGIN` and `RECORD_WINS` in `common.py` after calibrating with self-duels (and say so in the core's `AGENTS.md` §8).
+- **Retire a record**: run `evaluate-next` with `retire` = its id. A record whose own run fails in two duels in a row is retired automatically (a duel it completes resets the count). After a retirement there is no standing record, and the next comparable, attested ACCEPT is the record, unpaired: `hold` any PR you would not want crowned before you retire. Retiring is also the remedy for a near-copy of a record that won both duels by noise.
 - **Hold a PR**: label it `hold`. Its queued entry is withdrawn; removing the label queues it again.
 - **Force an evaluation**: run `evaluate-next` with `pr` = N. This takes its queued entry, its entry left in `error`, or a port of its record from an earlier pin. `hold` and draft are ignored for a forced run.
 - **Re-run the intake** of a PR (e.g. after a bot fix): run `intake` with `pr` = N.
@@ -55,7 +55,7 @@ A submitter controls the PR's title, body, branch name and every byte of its roo
 | Skip the queue | The queue time is the bot's status time; fork tokens cannot write statuses in the base repository. The order is fair by author. Forcing needs write access. Many accounts each get a fair share (residual: use `hold`, blocking, interaction limits). |
 | Re-roll the noise (empty commits, resubmissions, near-copies) | A root tree already evaluated, being evaluated, or queued in another PR is `invalid`. A record needs two duel wins against the same record (`S_cand ≤ 0.97 S_inc`, each in one job), the second on another runner draw. A prover binary of an earlier record never takes the record. Residual: a near-copy (one changed byte in each half) is a fresh candidate; it must win both duels by noise, and the owner retires it if it does. Raising `MARGIN` or `RECORD_WINS` after calibration shrinks the residual. |
 | Win by the record failing on a slow runner | The record's failure in a duel (`entry_failed`) never crowns the candidate: it is evaluated once more (keeping a first win), then `accepted`. A record failing in two duels is retired, and the next ACCEPT is the record unpaired. |
-| Take the record unpaired after a pin move | The port of the standing record runs before any other entry at the new pin, forced runs included. |
+| Take the record unpaired after a pin move | The port of the standing record runs before any other entry at the new pin, forced runs and its own re-runs after an ERROR included; the prover-binary rule exempts the record's own commit. |
 | Steal credit | The earliest entry with a root tree wins; a later copy by another author is `invalid`. The author is the PR's opener. `Builds on:` keeps only PRs the bot knows. Residual: copying a fork's commits before its PR is opened (submitters: open the PR first). |
 | Take a name the organiser keeps on `main` | A root named like a directory under `main:submissions/` that is not a record's root is `invalid`. |
 | Overwrite another's entry | Entries are keyed `pr<N>-<sha12>`. One writer (`sync`) applies the PRs' live state. |
@@ -71,7 +71,9 @@ A submitter controls the PR's title, body, branch name and every byte of its roo
 
 ## Owner setup (once)
 
-Run after the launch PR is merged, in this order. The `data` branch must exist before the bot-only
+Run after the launch PR is merged, in this order. First pin the core's launch head
+(`.github/bot/pin-core.sh <sha>`, its own commit): `pin-core.sh` and `pin-check` refuse a core
+without the duel inputs or with tag-pinned actions, and no evaluation can run before. The `data` branch must exist before the bot-only
 ruleset forbids anyone else to create it: seed it with the bot's empty state (below), or let the
 first `sync` run create it (it does, with or without open PRs; run `sync` by hand). The six action
 SHAs in this repository's workflows were checked against their tags on GitHub

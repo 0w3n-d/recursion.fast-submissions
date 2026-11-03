@@ -306,10 +306,13 @@ def sync(ctx):
                 changed.append(e["id"])
                 if e["status"] in ("superseded", "withdrawn") and before.get(e["id"]) is not None:
                     effects.append(("status", copy.deepcopy(e)))
-        if not changed and ch.empty() and snap.head:
+        stale = bool(st.get("_stale"))
+        if not changed and ch.empty() and snap.head and not stale:
             return None                    # (an absent `data` is created, with an empty state)
         _write_state(ctx, ch, snap, st, extra)
-        effects.append(("queued?", rfqueue.any_queued(st)))
+        effects.append(("queued?", rfqueue.any_queued(st) or rfqueue.due_port(st, ctx.pin) is not None))
+        if stale:
+            effects.append(("main", copy.deepcopy(st)))
         return ch
     git.transact(DATA, mutate, "sync")
     for kind, e in effects:
@@ -321,6 +324,8 @@ def sync(ctx):
             _try(ctx, "comment", ctx.gh.comment, e["pr"], render.intake_comment(e, None, None))
         elif kind == "queued?" and e:
             _try(ctx, "dispatch", ctx.gh.dispatch, "evaluate-next.yml", ctx.default_branch)
+        elif kind == "main":
+            _try(ctx, "sync main", sync_main, ctx, e)
     ctx.log(f"sync: {len(changed)} entries changed")
     return len(changed)
 
@@ -351,25 +356,33 @@ def select(ctx, force_pr=None, retire_id=None):
         picked.clear()
         notify.clear()
         changed = False
+        changed = bool(st.get("_stale"))      # a pin move: rewrite the pin and its record at once
         if retire_id:
             r = rfqueue.find(st, retire_id)
             if r is not None and r["status"] == "record":
                 rfqueue.retire(r, now, "retired by the owner")
+                for i in rfqueue.void_confirmations(st, r["id"], now):
+                    notify[i] = copy.deepcopy(rfqueue.find(st, i))
                 changed = True
-        reaped = rfqueue.reap(st, now)
+        rec0 = rfqueue.current_record(st, ctx.pin)
+        reaped = rfqueue.reap(st, now, rec0["id"] if rec0 else None)
         notify.update({i: copy.deepcopy(rfqueue.find(st, i)) for i in reaped})
-        changed = changed or bool(reaped)
+        settled = rfqueue.settle(st, ctx.pin, now)
+        changed = changed or bool(reaped) or bool(settled)
         cands = rfqueue.order(st)
         due = rfqueue.due_port(st, ctx.pin)
+        ports = [e for e in cands if e.get("port_of") and e["status"] == "queued"]
         if due is not None:
             cands, changed = [rfqueue.port(st, due["pr"], ctx.pin, now, o=due)], True
+        elif ports:
+            cands = ports[:1]                  # a waiting port (re-queued after an ERROR) is still first
         elif force_pr is not None:
             cands = [e for e in cands if e["pr"] == force_pr]
             if not cands:
                 errs = [e for e in rfqueue.of_pr(st, force_pr) if e["status"] == "error"]
                 if errs:
                     e = max(errs, key=lambda e: e.get("finished") or "")
-                    e.update(status=rfqueue.waiting(e), finished=None, attempts=0)
+                    e.update(status=rfqueue.waiting(e, rec0["id"] if rec0 else None), finished=None, attempts=0)
                     cands, changed = [e], True
                 else:
                     port = rfqueue.port(st, force_pr, ctx.pin, now)
@@ -472,14 +485,17 @@ def publish(ctx, eid, result_path):
         if e is None or e["status"] != "running" or e.get("run_url") != ctx.run_url:
             return None
         rec = rfqueue.current_record(st, ctx.pin)
+        # the records of other commits: every port of a record shares its commit, and keeps its crown
         provers = {r["prover_sha256"]: r["id"] for r in rfqueue.records(st)
-                   if r.get("prover_sha256") and r["id"] != e.get("port_of")}   # a port may keep its own crown
+                   if r.get("prover_sha256") and r.get("sha") != e.get("sha")}
         res = result
         if isinstance(result, dict) and (rec or {}).get("id") != e.get("duel_with"):
             res = dict(result, duel=None, incumbent=None)     # measured against another record
-        d = decide(res, ver, ctx.pin, rec, e.get("attempts", 1), provers, duel_retries=e.get("duel_retries", 0),
+        rid = rec["id"] if rec else None
+        d = decide(res, ver, ctx.pin, rec, e.get("attempts", 1), provers,
+                   duel_retries=len(rfqueue.failed_duels(e, rid)) if rec else 0,
                    record_failures=(rec or {}).get("duel_failures", 0),
-                   wins=rfqueue.won_duels(e, rec["id"]) if rec else ())
+                   wins=rfqueue.won_duels(e, rid) if rec else (), confirm_retries=e.get("confirm_retries", 0))
         now = ctx.now()
         ps = result.get("prover_sha256") if isinstance(result, dict) else None
         e["build_manifest"] = build_manifest_sha(result) if d["verified"] else None
@@ -489,9 +505,14 @@ def publish(ctx, eid, result_path):
         if d["record_failed"] and rec is not None:
             rec["duel_failures"] = rec.get("duel_failures", 0) + 1
             if d["retire_record"]:
-                rfqueue.retire(rec, now, f"its own run failed in {rec['duel_failures']} duels")
-        if d["duel_retry"]:
-            e["duel_retries"] = e.get("duel_retries", 0) + 1
+                rfqueue.retire(rec, now, f"its own run failed in {rec['duel_failures']} duels in a row")
+                done["voided"] = rfqueue.void_confirmations(st, rec["id"], now)
+        elif rec is not None and d["duel_now"]:
+            rec["duel_failures"] = 0           # the record completed a duel: failures count in a row
+        if d["confirm_retry"]:
+            e["confirm_retries"] = e.get("confirm_retries", 0) + 1
+        elif (d["duel_now"] or {}).get("won"):
+            e["confirm_retries"] = 0
         ch = Changes()
         keep_raw = raw is not None and len(raw) <= 4 << 20
         if d["duel_now"]:                      # every duel is kept, with its own copy of the result
@@ -507,9 +528,14 @@ def publish(ctx, eid, result_path):
         if d["requeue"] or d["status"] == CONFIRMING:
             if d["verdict"] in ("ERROR", "REJECT") or not d["verified"]:
                 e["record_cache"] = False      # the retry builds clean: a sabotaged cache cannot fail it
-            e.update(status=d["status"] if d["status"] in ("queued", CONFIRMING) else rfqueue.waiting(e), finished=None)
+            cur = rfqueue.current_record(st, ctx.pin)
+            e.update(status=d["status"] if d["status"] in ("queued", CONFIRMING) else rfqueue.waiting(e, cur and cur["id"]),
+                     finished=None)
         else:
             e.update(status=d["status"], finished=now)
+        rfqueue.settle(st, ctx.pin, now)       # wins against a record that no longer stands are void
+        cur = rfqueue.current_record(st, ctx.pin)
+        done["record_changed"] = (cur or {}).get("id") != rid
         if keep_raw:
             ch.put(f"results/{eid}.json", raw)
             e["result"] = f"results/{eid}.json"
@@ -517,6 +543,7 @@ def publish(ctx, eid, result_path):
         done.update(entry=copy.deepcopy(e), state=copy.deepcopy(st))
         return ch
     ctx.git().transact(DATA, mutate, f"publish {eid}")
+    changed_record, voided = done.pop("record_changed", False), done.pop("voided", [])
     if not done:
         ctx.log(f"publish: {eid} is not running under this run; nothing published")
         return None
@@ -526,7 +553,10 @@ def publish(ctx, eid, result_path):
         failed.append("status")
     if not _try(ctx, "comment", ctx.gh.comment, e["pr"], render.publish_comment(e, ctx.run_url)):
         failed.append("comment")
-    if e["status"] == "record" and not _try(ctx, "sync main", sync_main, ctx, st):
+    for i in voided:                           # confirmations voided by this retirement
+        v = rfqueue.find(st, i)
+        _try(ctx, "status", ctx.gh.set_status, v["sha"], *render.status_for(v), v.get("run_url"))
+    if (e["status"] == "record" or changed_record) and not _try(ctx, "sync main", sync_main, ctx, st):
         failed.append("main")
     if rfqueue.any_queued(st) and not _try(ctx, "dispatch", ctx.gh.dispatch, "evaluate-next.yml", ctx.default_branch):
         failed.append("dispatch")

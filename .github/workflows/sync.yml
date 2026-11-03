@@ -3,9 +3,14 @@
 # the retention tag) or invalid, older heads superseded, closed, draft and held (label `hold`) pull
 # requests' entries withdrawn, with their commit statuses; dispatches evaluate-next.yml if anything
 # is queued. Idempotent, so the `rf-data` group may coalesce pending runs (a replaced pending run
-# loses nothing: the next run rescans). The schedule heals a lost dispatch or a failed intake.
+# loses nothing: the next run rescans). The schedule heals a lost dispatch or a failed intake. A push
+# that moves the pin runs it at once: `data` and `records.json` then name the new pin (no record
+# stands yet), and evaluate-next is dispatched for the port of the record.
 name: sync
 on:
+  push:
+    branches: [main]
+    paths: [".contract", ".github/workflows/evaluate-next.yml"]
   workflow_dispatch:
   schedule:
     - cron: "7,37 * * * *"

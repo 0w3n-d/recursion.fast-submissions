@@ -32,8 +32,9 @@ def clean_value(v, depth=0):
     return None
 
 
-DUEL_RETRIES = 1        # a candidate whose duel the record failed is evaluated once more (once per entry)
-RECORD_FAILURES = 2     # a record whose own run fails in this many duels is retired
+DUEL_RETRIES = 1        # a candidate whose duel the record failed is evaluated once more (per record)
+RECORD_FAILURES = 2     # a record whose own run fails in this many duels in a row is retired
+CONFIRM_RETRIES = 1     # a confirmation whose result is not comparable is run once more
 
 
 def duel(result, S, record, margin=MARGIN):
@@ -72,16 +73,18 @@ def duel(result, S, record, margin=MARGIN):
 
 
 def decide(result, verification, pin, record, attempts, record_provers=(), margin=MARGIN, duel_retries=0,
-           record_failures=0, wins=(), record_wins=RECORD_WINS):
+           record_failures=0, wins=(), record_wins=RECORD_WINS, confirm_retries=0):
     """The fields an evaluation sets on its entry, with `requeue` (evaluate it once more) and
     `retire_record` / `record_failed` (what happens to the standing record).
 
     result: the parsed result.json or None; verification: {"attested": bool, "record_ok": bool,
     "reason": str}; record: the standing record's entry (at this pin) or None; attempts: this entry's
     evaluations so far in this round, this one included; record_provers: {prover_sha256: id} of
-    every record; duel_retries: the candidate's evaluations lost to a failure of the record;
-    record_failures: the record's duels it failed so far; wins: the duels this entry already won
-    against `record`. `status` is `confirming` (not `queued`) when the entry waits with a win."""
+    every record (but this commit's own); duel_retries: the candidate's duels against `record` that
+    the record failed; record_failures: the record's consecutive duel failures so far; wins: the
+    duels this entry already won against `record`; confirm_retries: its confirmations already
+    re-run for a non-comparable result. `status` is `confirming` (not `queued`) when the entry
+    waits with a win."""
     if not isinstance(result, dict):
         result = {"verdict": "ERROR", "reasons": ["harness error: the evaluation produced no readable result "
                                                   "(no `result` artifact: a job failed before the attest job)"]}
@@ -93,7 +96,7 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
            "truncated": result.get("truncated") is True,
            "cpu": [clean(m, 100) for m in (result.get("cpu_models") or [])[:4]] if isinstance(result.get("cpu_models"), list) else [],
            "harness_commit": hc, "verified": bool(verification.get("attested")),
-           "record_of": None, "duel": None, "duel_now": None, "requeue": False, "duel_retry": False, "record_failed": False,
+           "record_of": None, "duel": None, "duel_now": None, "requeue": False, "confirm_retry": False, "duel_retry": False, "record_failed": False,
            "retire_record": False}
     reasons = clean_reasons(result.get("reasons"))
     extra = []
@@ -118,6 +121,11 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
         status = "provisional"
     elif hc != pin:
         status = error(f"the result's harness_commit {hc} is not the pin {pin}")
+    elif not out["comparable"] and wins and record is not None and confirm_retries < CONFIRM_RETRIES:
+        # a confirmation the runner made incomparable is not a lost duel: run it once more
+        status, out["requeue"], out["confirm_retry"] = CONFIRMING, True, True
+        extra.append("ACCEPT, not comparable (" + ("truncated stream" if out["truncated"] else "mixed CPU models or plan")
+                     + ") in the confirmation duel: queued once more for it")
     elif not out["comparable"]:
         status = "unranked"
         extra.append("ACCEPT, not comparable (" + ("truncated stream" if out["truncated"] else "mixed CPU models or plan")
@@ -151,10 +159,16 @@ def decide(result, verification, pin, record, attempts, record_provers=(), margi
         elif outcome == "incumbent_failed":
             out["record_failed"] = True
             status = "accepted"
-            if record_failures + 1 >= RECORD_FAILURES:
+            if record_failures + 1 >= RECORD_FAILURES and wins:
+                # a retirement never crowns a candidate on one win: its confirmation is void
+                out["retire_record"] = True
+                extra.append(f"the record {record['id']} failed in {record_failures + 1} duels in a row and is "
+                             "retired during this confirmation: one win is not a record")
+                status = "accepted"
+            elif record_failures + 1 >= RECORD_FAILURES:
                 out["retire_record"] = True
                 out["requeue"] = out["duel_retry"] = True
-                extra.append(f"the record {record['id']} failed in {record_failures + 1} duels and is retired; "
+                extra.append(f"the record {record['id']} failed in {record_failures + 1} duels in a row and is retired; "
                              "this entry is evaluated once more with no standing record")
                 status = "queued"
             elif duel_retries < DUEL_RETRIES:

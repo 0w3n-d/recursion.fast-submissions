@@ -239,6 +239,124 @@ class E2E(unittest.TestCase):
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=40.0, harness=self.w.pin, prover="3" * 64))
         self.assertEqual((e["pr"], p["status"], "incumbent" in e), (3, "record", False))
 
+    def record_at(self, n=1, author="alice", S=10.0, prover="1" * 64):
+        self.g.open_pr(n, author, good_root(f"r{n}", str(n)))
+        self.w.intake(n)
+        _, rec = self.w.evaluate(lambda e, run: make_result(run, S=S, harness=self.w.pin, prover=prover))
+        self.assertEqual(rec["status"], "record")
+        return rec
+
+    def win(self, S=9.0, S_inc=10.0, prover="2" * 64):
+        return lambda e, run: make_result(run, S=S, harness=self.w.pin, prover=prover, incumbent=duel_of(e, S_inc))
+
+    def test_requeued_port_stays_first(self):
+        """A port re-queued after an ERROR still runs before a confirmation and a forced run."""
+        rec = self.record_at()
+        self.g.open_pr(2, "bob", good_root("r2", "2"))
+        self.w.intake(2)
+        _, p = self.w.evaluate(self.win())
+        self.assertEqual(p["status"], "confirming")
+        self.g.open_pr(3, "carol", good_root("r3", "3"))
+        self.w.intake(3)
+        self.w.pin = "c" * 40
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR", harness=self.w.pin))
+        self.assertEqual((e["port_of"], p["status"]), (rec["id"], "queued"))
+        self.assertEqual(self.entry(2)["status"], "queued")          # its win was against the old pin's record
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.2, harness=self.w.pin, prover="1" * 64), force=3)
+        self.assertEqual((e["port_of"], p["status"]), (rec["id"], "record"))
+        e, p = self.w.evaluate(self.win(S=9.0, S_inc=10.2, prover="3" * 64))     # then the fair order: #3 first
+        self.assertEqual((e["pr"], e["incumbent"]["id"], p["status"]), (3, rec["id"] + "-cccccccc", "confirming"))
+
+    def test_ports_of_ports_keep_the_crown(self):
+        rec = self.record_at()
+        for k, pin in enumerate(("b" * 40, "c" * 40, "d" * 40)):
+            self.w.pin = pin
+            e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.0 + k, harness=self.w.pin, prover="1" * 64))
+            self.assertEqual((e["sha"], p["status"]), (rec["sha"], "record"), p["reasons"])
+        # but another commit with that prover binary never takes it
+        self.g.open_pr(2, "bob", good_root("r2", "2"))
+        self.w.intake(2)
+        _, p = self.w.evaluate(lambda e, run: make_result(run, S=1.0, harness=self.w.pin, prover="1" * 64,
+                                                          incumbent=duel_of(e, 13.0)))
+        self.assertEqual(p["status"], "accepted")
+
+    def test_wins_and_retries_are_per_record(self):
+        """A duel the old record failed does not use up the retry against the new one; a retirement
+        voids a win, and main and data name the new state at once."""
+        a = self.record_at()
+        self.g.open_pr(2, "bob", good_root("r2", "2"))
+        self.w.intake(2)
+        fail = lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="2" * 64,  # noqa: E731
+                                          incumbent=duel_of(e, entry_failed=True))
+        _, p = self.w.evaluate(fail)
+        self.assertEqual(p["status"], "queued")
+        # the owner retires A: #2 then runs unpaired
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.0, harness=self.w.pin, prover="2" * 64), retire=a["id"])
+        self.assertEqual((e["pr"], "incumbent" in e, p["status"]), (2, False, "record"))
+        self.g.open_pr(3, "carol", good_root("r3", "3"))
+        self.w.intake(3)
+        b = p
+        self.g.open_pr(4, "dora", good_root("r4", "4"))
+        self.w.intake(4)
+        _, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="3" * 64,
+                                                          incumbent=duel_of(e, 10.0)))
+        self.assertEqual(p["status"], "confirming")
+        # B fails in the confirmation: one retry against B (not used up by A), then B fails again: retired
+        _, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="3" * 64,
+                                                          incumbent=duel_of(e, entry_failed=True)))
+        self.assertEqual((p["pr"], p["status"]), (3, "confirming"))
+        _, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="3" * 64,
+                                                          incumbent=duel_of(e, entry_failed=True)))
+        self.assertEqual(p["status"], "accepted")                        # B retired: one win is not a record
+        st = self.w.state()
+        self.assertEqual((st["record"], next(x for x in st["submissions"] if x["id"] == b["id"])["status"]), (None, "retired"))
+        self.assertIsNone(json.loads(self.w.show("main:records.json"))["record"])   # main follows at once
+
+    def test_owner_retirement_voids_a_pending_confirmation(self):
+        rec = self.record_at()
+        self.g.open_pr(2, "bob", good_root("r2", "2"))
+        self.w.intake(2)
+        _, p = self.w.evaluate(self.win())
+        self.assertEqual(p["status"], "confirming")
+        e, _ = self.w.evaluate(lambda e, run: None, retire=rec["id"])
+        self.assertIsNone(e)                                            # nothing left to run
+        x = self.entry(2)
+        self.assertEqual((x["status"], self.head_status(2)["state"]), ("accepted", "success"))
+        self.assertIn("one win is not a record", x["reasons"][-1])
+
+    def test_duel_failures_count_in_a_row(self):
+        rec = self.record_at()
+        for n in (2, 3):
+            self.g.open_pr(n, f"u{n}", good_root(f"r{n}", str(n)))
+            self.w.intake(n)
+        self.w.evaluate(lambda e, run: make_result(run, S=9.9, harness=self.w.pin, prover="2" * 64,
+                                                   incumbent=duel_of(e, entry_failed=True)))
+        self.w.evaluate(lambda e, run: make_result(run, S=9.9, harness=self.w.pin, prover="3" * 64,
+                                                   incumbent=duel_of(e, 10.0)))       # a completed duel
+        self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == rec["id"])["duel_failures"], 0)
+
+    def test_noncomparable_confirmation_retried_once(self):
+        self.record_at()
+        self.g.open_pr(2, "bob", good_root("r2", "2"))
+        self.w.intake(2)
+        self.w.evaluate(self.win())
+        nc = lambda e, run: make_result(run, S=9.0, comparable=False, harness=self.w.pin, prover="2" * 64)  # noqa: E731
+        _, p = self.w.evaluate(nc)
+        self.assertEqual(p["status"], "confirming")
+        _, p = self.w.evaluate(nc)
+        self.assertEqual(p["status"], "unranked")
+
+    def test_pin_move_refreshes_data_and_main_at_once(self):
+        rec = self.record_at()
+        self.w.pin = "c" * 40
+        n0 = len(self.g.dispatches)
+        flows.sync(self.w.ctx())                                        # run by the push that moves the pin
+        st = json.loads(self.w.show("data:submissions.json"))
+        main = json.loads(self.w.show("main:records.json"))
+        self.assertEqual((st["core"], st["record"], main["core"], main["record"]), ("c" * 40, None, "c" * 40, None))
+        self.assertEqual(main["history"][0]["id"], rec["id"])
+        self.assertIn(("evaluate-next.yml", "main"), self.g.dispatches[n0:])   # for the port
+
     def test_confirmation_lost_and_pushes_meanwhile(self):
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
         self.w.intake(1)

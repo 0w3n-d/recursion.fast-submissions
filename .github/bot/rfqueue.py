@@ -1,9 +1,10 @@
 """The queue in `submissions.json` (TRUSTED; pure functions on the parsed state).
 
-Order: first the entries waiting for a confirmation duel (`confirming`) and the ports of a record
-to a new pin, oldest first; then, among the other queued entries, the author whose most recent
-evaluation started earliest (never-evaluated authors first), then that author's oldest queued
-entry. `queued` is the bot's timestamp, so a push goes to the back of its author's line."""
+Order: first a waiting port of the record to a new pin, then the entries waiting for a
+confirmation duel (`confirming`), each oldest first; then, among the other queued entries, the
+author whose most recent evaluation started earliest (never-evaluated authors first), then that
+author's oldest queued entry. `queued` is the bot's timestamp, so a push goes to the back of its
+author's line."""
 import json
 
 from common import (CONFIRMING, FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR, QUEUED, RECORD_WINS, RUNNING, STATUSES,
@@ -28,11 +29,16 @@ def load(raw, repo, pin):
     for e in st["submissions"]:
         if not isinstance(e, dict) or e.get("status") not in STATUSES or not isinstance(e.get("id"), str):
             raise ValueError(f"submissions.json holds a malformed entry: {str(e)[:200]}")
+    # `stale`: the stored pin or parameters are not the current ones (a pin move); the next writer
+    # rewrites the file even if no entry changed, so readers see the pin and its record at once
+    stale = (st.get("core"), st.get("margin"), st.get("record_wins")) != (pin, MARGIN, RECORD_WINS)
     st["core"], st["margin"], st["record_wins"] = pin, MARGIN, RECORD_WINS
+    st["_stale"] = stale
     return st
 
 
 def dump(st, clock=None):
+    st.pop("_stale", None)
     st["updated"] = now_iso(clock)
     rec = current_record(st, st.get("core"))
     st["record"] = rec["id"] if rec else None      # the standing record at the pin, for readers (the site)
@@ -131,14 +137,14 @@ def duplicate_of(st, eid, pr, author, tree):
 
 
 def order(st):
-    """The waiting entries in evaluation order: confirmations and ports first (oldest first), then
-    the other queued entries in the fair order."""
+    """The waiting entries in evaluation order: waiting ports, then confirmations (each oldest
+    first), then the other queued entries in the fair order."""
     last = {}
     for e in st["submissions"]:
         if e.get("started"):
             a = e["author"]
             last[a] = max(last.get(a, ""), e["started"])
-    key = lambda e: (e["queued"] or "", e["id"])  # noqa: E731
+    key = lambda e: (e["status"] != QUEUED, e["queued"] or "", e["id"])  # noqa: E731  (ports first)
     front = sorted((e for e in st["submissions"] if e["status"] == CONFIRMING
                     or (e["status"] == QUEUED and e.get("port_of"))), key=key)
     queued = sorted((e for e in st["submissions"] if e["status"] == QUEUED and not e.get("port_of")), key=key)
@@ -161,12 +167,48 @@ def won_duels(e, record_id):
     return [d for d in e.get("duels") or [] if isinstance(d, dict) and d.get("won") and d.get("incumbent") == record_id]
 
 
-def waiting(e):
-    """The status an entry waits in: `confirming` once it has won a duel, else `queued`."""
-    return CONFIRMING if any(isinstance(d, dict) and d.get("won") for d in e.get("duels") or []) else QUEUED
+def failed_duels(e, record_id):
+    """The duels of `e` in which the record `record_id` failed on the runner (no comparison)."""
+    return [d for d in e.get("duels") or [] if isinstance(d, dict) and d.get("incumbent_failed")
+            and d.get("incumbent") == record_id]
 
 
-def reap(st, now):
+def waiting(e, record_id):
+    """The status an entry waits in: `confirming` if it won a duel against the standing record
+    `record_id`, else `queued`."""
+    return CONFIRMING if record_id and won_duels(e, record_id) else QUEUED
+
+
+def settle(st, pin, now):
+    """Wins count only against the record they were won against. When that record no longer stands
+    (beaten, retired, or a pin move), a `confirming` entry goes back to `queued`, keeping its queue
+    time, for a fresh duel against whatever stands next: no win carries over, and none crowns an
+    entry. Returns the ids changed."""
+    rec = current_record(st, pin)
+    out = []
+    for e in st["submissions"]:
+        if e["status"] == CONFIRMING and waiting(e, rec["id"] if rec else None) == QUEUED:
+            e["status"] = QUEUED
+            e["reasons"] = (e.get("reasons") or [])[:19] + [
+                "the record it won its duel against no longer stands: queued for a fresh evaluation"]
+            out.append(e["id"])
+    return out
+
+
+def void_confirmations(st, record_id, now):
+    """A retired record's pending confirmations: each entry `confirming` on a win against it is
+    `accepted`, since a retirement must not crown a candidate on one win. Returns the ids."""
+    out = []
+    for e in st["submissions"]:
+        if e["status"] == CONFIRMING and won_duels(e, record_id):
+            _close(e, "accepted", now)
+            e["reasons"] = (e.get("reasons") or [])[:19] + [
+                f"the record {record_id} was retired before this entry's confirmation duel: one win is not a record"]
+            out.append(e["id"])
+    return out
+
+
+def reap(st, now, record_id=None):
     """Entries still `running` when a new evaluation run selects (runs are serialised by the
     concurrency group, so their run ended without publishing): an organiser-side ERROR, waiting
     once more or left as `error`. Returns the ids."""
@@ -176,7 +218,7 @@ def reap(st, now):
             why = "harness error: the evaluation run ended without publishing a verdict"
             e["verdict"] = "ERROR"
             if e.get("attempts", 0) < MAX_ATTEMPTS:
-                e["status"], e["reasons"] = waiting(e), [why + " (queued again)"]
+                e["status"], e["reasons"] = waiting(e, record_id), [why + " (queued again)"]
             else:
                 _close(e, "error", now, why)
             out.append(e["id"])

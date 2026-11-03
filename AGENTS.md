@@ -189,7 +189,7 @@ port, section 10) adds `-<first 8 hex of the pin>`. The commit status has the co
 | `confirming` | pending: `ACCEPT: won a duel, confirmation duel queued, S = …` | won its duel; one more duel of the same commit against the same record runs next, first in the queue (section 10) |
 | `record` | success: `ACCEPT: new record, S = …` | the record (section 10); it keeps this status after it is beaten |
 | `retired` | (unchanged) | a record removed from the throne: its own run failed in two duels, or the owner retired it |
-| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it lost the duel or its confirmation, the record failed in its duels, or it has the same prover binary as an earlier record |
+| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it lost the duel or its confirmation, the record failed in its duels, the record was retired before its confirmation, or it has the same prover binary as an earlier record |
 | `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the CPU models were mixed, the job plan did not match, or there is no positive `S` |
 | `provisional` | failure: `PROVISIONAL: provisional (never ranked), …` | the Lean build succeeded but the certificate did not check (kernel rejection, `sorryAx`, a theorem other than the rendered one, the kernel cap); benchmarked and published |
 | `rejected` | failure: `REJECT: rejected` | the entry broke a rule or a cap; the comment gives the reason |
@@ -236,8 +236,9 @@ them again, and a breach there is a REJECT.
 
 *Why:* one author opening many pull requests should delay only themselves.
 
-- **First, the bot's own work**: the port of the record after a pin move, then the confirmation duels
-  (`confirming`), oldest first (section 10).
+- **First, the bot's own work**: a waiting port of the record after a pin move (even when it is
+  re-run after an organiser error, and before a forced run), then the confirmation duels
+  (`confirming`), each oldest first (section 10).
 - **Fair order.** The next entry belongs to the author whose most recent evaluation *started*
   earliest. Authors never evaluated go first. Within an author, the oldest queued entry goes first.
   So an author's second entry runs only after every other waiting author's first.
@@ -273,7 +274,13 @@ What it means for you:
   to 90 minutes) and a benchmark job that runs two streams (up to 100 minutes); a confirmation runs
   it all again. A candidate REJECTed in seconds can still wait long while a record stands. Check
   locally first.
-- **The record failing on the runner is neither a win nor a loss**: you get one more duel.
+- **The record failing on the runner is neither a win nor a loss**: you get one more duel against
+  that record. A confirmation whose result is not comparable (a truncated stream, mixed CPU models)
+  is also run once more.
+- **A win counts only against the record it was won against.** If that record stops standing
+  before your confirmation (another entry beats it, or the pin moves), the win is void and your
+  entry is queued again for a fresh evaluation. If it is retired, your entry is `accepted`: a
+  retirement never makes a record of one win.
 - **The threshold and the two wins are being calibrated** and may change.
 - `records.json` on `main` names the pin (`core`), the standing record (`record`, null when none
   stands) and every other record, of earlier pins and retired ones (`history`), newest first.

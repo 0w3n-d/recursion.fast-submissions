@@ -83,6 +83,9 @@ by DOMPurify (`render.js`):
 
 The standing record is the bot's `record` field in `submissions.json`; the site never re-derives it.
 
+"Cited by" counts a citing pull request once, by its newest head, and only when that head has a
+verdict and another author: a PR that is re-pushed stops counting until its new head is evaluated.
+
 The two libraries are vendored in `vendor/`, byte for byte the cdnjs files of marked 18.1.1
 (`lib/marked.umd.min.js`, MIT, `LICENSE-marked.md`) and DOMPurify 3.4.17 (`purify.min.js`, Apache
 2.0 or MPL 2.0, `LICENSE-dompurify`; its licence header is in the file). They also carry

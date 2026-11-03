@@ -138,13 +138,16 @@
   </ul>
   <p><strong>One win is not enough.</strong> The noise of one runner can hand a single duel to a copy
     of the record, so a winner becomes <em>confirming</em>: one more duel of the same commit against
-    the same record runs next, before anything else, on whatever runner it gets. Win that one too
+    the same record runs next, before every other entry, on whatever runner it gets. Win that one too
     and your entry is the record, credited with the smaller of its two gains; lose it and it stays
     <em>accepted</em>, with both duels shown. The 3&nbsp;% threshold and the two wins are still being
     calibrated.</p>
   <p><strong>The record failing on that runner is not a win.</strong> Your entry is queued once more
-    for another duel (keeping a win it already has). A record whose own run fails in two duels is
-    <em>retired</em>, and the next evaluation runs with no standing record.</p>
+    for another duel (keeping a win it already has). A record whose own run fails in two duels in a
+    row is <em>retired</em>, and the next evaluation runs with no standing record. A win counts only
+    against the record it was won against: if that record is beaten or the pin moves first, the
+    entry is queued again for a fresh evaluation; if it is retired, the entry stays
+    <em>accepted</em>, since a retirement never makes a record of one win.</p>
   <p>When the contract pin moves, the bot first re-runs the standing record at the new pin, alone; it
     keeps the crown if it passes. With no standing record (at the start, after a retirement, or
     when that re-run fails), the first result that is ACCEPT, comparable and attested becomes the

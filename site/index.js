@@ -244,8 +244,9 @@
   // ---- queue: running first, then confirmations and ports, then the bot's fair order by author ----
   function queueOrder(subs) {
     const running = subs.filter(e => e.status === 'running').sort((a, b) => (a.started || 0) - (b.started || 0));
+    // a waiting port first, then the confirmations, each oldest first (the bot's order)
     const front = subs.filter(e => e.status === 'confirming' || (e.status === 'queued' && e.port_of))
-      .sort((a, b) => (a.queued || 0) - (b.queued || 0));
+      .sort((a, b) => ((a.status === 'confirming') - (b.status === 'confirming')) || (a.queued || 0) - (b.queued || 0));
     const queued = subs.filter(e => e.status === 'queued' && !e.port_of).sort((a, b) => (a.queued || 0) - (b.queued || 0));
     const lastStart = new Map();
     for (const e of subs) if (e.author && e.started) lastStart.set(e.author, Math.max(lastStart.get(e.author) || -Infinity, e.started.getTime()));

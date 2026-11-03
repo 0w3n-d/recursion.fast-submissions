@@ -46,7 +46,7 @@ class Queue(unittest.TestCase):
     def test_confirmations_and_ports_first(self):
         s = self.st(E(1, 1, "a", queued="2026-01-01T00:00:01Z"),
                     E(2, 2, "b", status="confirming", queued="2026-01-01T00:00:05Z"),
-                    E(3, 3, "c", queued="2026-01-01T00:00:02Z", port_of="pr3-000000000009"),
+                    E(3, 3, "c", queued="2026-01-01T00:00:09Z", port_of="pr3-000000000009"),
                     E(4, 4, "d", status="confirming", queued="2026-01-01T00:00:03Z"))
         self.assertEqual([e["pr"] for e in rfqueue.order(s)], [3, 4, 2, 1])
         self.assertTrue(rfqueue.any_queued(self.st(E(5, 5, "e", status="confirming"))))
@@ -78,8 +78,19 @@ class Queue(unittest.TestCase):
     def test_reap_and_attempts(self):
         s = self.st(E(1, 1, "x", status="running", attempts=1), E(2, 2, "y", status="running", attempts=2),
                     E(3, 3, "z", status="running", attempts=1, duels=[{"incumbent": "pr9-000000000009", "won": True}]))
-        self.assertEqual(len(rfqueue.reap(s, "t")), 3)
+        self.assertEqual(len(rfqueue.reap(s, "t", "pr9-000000000009")), 3)
         self.assertEqual([e["status"] for e in s["submissions"]], ["queued", "error", "confirming"])
+        s["submissions"][2].update(status="running", attempts=1)
+        rfqueue.reap(s, "t", "pr8-000000000008")                     # a win against another record is void
+        self.assertEqual(s["submissions"][2]["status"], "queued")
+
+    def test_settle_voids_stale_wins(self):
+        s = self.st(E(1, 1, "a", status="record", finished="2026-01-01", harness_commit=PIN),
+                    E(2, 2, "b", status="confirming", duels=[{"incumbent": "pr1-000000000001", "won": True}]))
+        self.assertEqual(rfqueue.settle(s, PIN, "t"), [])
+        rfqueue.retire(s["submissions"][0], "t", "x")
+        self.assertEqual(rfqueue.settle(s, PIN, "t"), ["pr2-000000000002"])
+        self.assertEqual(s["submissions"][1]["status"], "queued")
 
     def test_duplicates(self):
         s = self.st(E(1, 1, "alice", tree="T", status="withdrawn"), E(2, 2, "bob", tree="U", status="accepted"),
@@ -242,9 +253,14 @@ class Decide(unittest.TestCase):
         d = decide(R(S=9.0, **failed), OK, PIN, self.rec, 1, wins=[first], duel_retries=1)
         self.assertEqual(d["status"], "accepted")
         d = decide(R(S=9.0, **failed), OK, PIN, self.rec, 1, wins=[first], record_failures=1)
-        self.assertEqual((d["status"], d["retire_record"]), ("queued", True))       # retired: evaluated unpaired
+        self.assertEqual((d["status"], d["retire_record"], d["requeue"]), ("accepted", True, False))   # never crowned on one win
         self.assertEqual(decide(R("REJECT"), OK, PIN, self.rec, 1, wins=[first])["status"], "rejected")
         self.assertEqual(decide(R(), OK, PIN, None, 1, wins=[first])["status"], "record")   # no record: unpaired
+        # a confirmation the runner made incomparable is run once more, then it is final
+        d = decide(R(comparable=False), dict(OK, record_ok=False), PIN, self.rec, 1, wins=[first])
+        self.assertEqual((d["status"], d["requeue"], d["confirm_retry"]), ("confirming", True, True))
+        d = decide(R(comparable=False), dict(OK, record_ok=False), PIN, self.rec, 1, wins=[first], confirm_retries=1)
+        self.assertEqual(d["status"], "unranked")
 
     def test_incumbent_failed_never_crowns(self):
         """The record failing on the duel's runner gives no crown; a retry; two failures retire it."""

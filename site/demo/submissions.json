@@ -56,9 +56,9 @@
    "result": "results/pr3-5d84396bc69e.json"
   },
   {
-   "id": "pr4-e218692cf22b",
+   "id": "pr4-cd3a54bbd693",
    "pr": 4,
-   "sha": "e218692cf22beed8bf3daed9b5b91b131031ae71",
+   "sha": "cd3a54bbd69321c5ef63eb3f9d03e1fe759ca7e6",
    "root": "witness-relay",
    "author": "bob-lean",
    "title": "Witness relay: send the chain, prove nothing",
@@ -81,9 +81,9 @@
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/102",
-   "tag": "rf-source/pr4-e218692cf22b",
-   "notes": "notes/pr4-e218692cf22b.md",
-   "readme": "readme/pr4-e218692cf22b.md",
+   "tag": "rf-source/pr4-cd3a54bbd693",
+   "notes": "notes/pr4-cd3a54bbd693.md",
+   "readme": "readme/pr4-cd3a54bbd693.md",
    "record_of": null,
    "tree": "f51fc831dfe0dd2c8487a8f446d2af2cb2a7446a",
    "verified": true,
@@ -93,12 +93,12 @@
    "duel_with": "pr3-5d84396bc69e",
    "build_manifest": null,
    "duel": null,
-   "result": "results/pr4-e218692cf22b.json"
+   "result": "results/pr4-cd3a54bbd693.json"
   },
   {
-   "id": "pr5-279f5ae95f80",
+   "id": "pr5-296b875938f1",
    "pr": 5,
-   "sha": "279f5ae95f80e93f7b9b1ab718f4c57f5c519ef6",
+   "sha": "296b875938f16d412378287a58e43dc68f7651df",
    "root": "blake-avx2-fold",
    "author": "carol-asm",
    "title": "AVX2 BLAKE2s lanes, 8 chains per batch, Ligero nodes",
@@ -134,9 +134,9 @@
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/105",
-   "tag": "rf-source/pr5-279f5ae95f80",
-   "notes": "notes/pr5-279f5ae95f80.md",
-   "readme": "readme/pr5-279f5ae95f80.md",
+   "tag": "rf-source/pr5-296b875938f1",
+   "notes": "notes/pr5-296b875938f1.md",
+   "readme": "readme/pr5-296b875938f1.md",
    "record_of": "pr3-5d84396bc69e-c0dec0de",
    "tree": "c47680f67be147e5c8755a5030c10d3abe9c4986",
    "verified": true,
@@ -153,6 +153,7 @@
     "incumbent_failed": false,
     "won": true
    },
+   "confirm_retries": 0,
    "duels": [
     {
      "incumbent": "pr3-5d84396bc69e-c0dec0de",
@@ -162,7 +163,7 @@
      "incumbent_failed": false,
      "won": true,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/104",
-     "result": "results/pr5-279f5ae95f80.duel1.json"
+     "result": "results/pr5-296b875938f1.duel1.json"
     },
     {
      "incumbent": "pr3-5d84396bc69e-c0dec0de",
@@ -172,10 +173,11 @@
      "incumbent_failed": false,
      "won": true,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/105",
-     "result": "results/pr5-279f5ae95f80.duel2.json"
+     "result": "results/pr5-296b875938f1.duel2.json"
     }
    ],
-   "result": "results/pr5-279f5ae95f80.json"
+   "result": "results/pr5-296b875938f1.json",
+   "duel_failures": 0
   },
   {
    "pr": 3,
@@ -224,12 +226,13 @@
    "duel_with": null,
    "build_manifest": null,
    "duel": null,
-   "result": "results/pr3-5d84396bc69e-c0dec0de.json"
+   "result": "results/pr3-5d84396bc69e-c0dec0de.json",
+   "duel_failures": 0
   },
   {
-   "id": "pr6-1aa7cfa79bca",
+   "id": "pr6-b36f6a22869e",
    "pr": 6,
-   "sha": "1aa7cfa79bcab0c53fabab817b66e23004260c9b",
+   "sha": "b36f6a22869ee276d64381e206d38665c042d5a6",
    "root": "nova-blake",
    "author": "dave-fold",
    "title": "Nova-style folding of BLAKE2s steps (extractor proof in progress)",
@@ -264,24 +267,24 @@
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/106",
-   "tag": "rf-source/pr6-1aa7cfa79bca",
-   "notes": "notes/pr6-1aa7cfa79bca.md",
-   "readme": "readme/pr6-1aa7cfa79bca.md",
+   "tag": "rf-source/pr6-b36f6a22869e",
+   "notes": "notes/pr6-b36f6a22869e.md",
+   "readme": "readme/pr6-b36f6a22869e.md",
    "record_of": null,
    "tree": "83b987b097030fe56f88c0cd22be13ca545007c7",
    "verified": true,
    "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
    "prover_sha256": "000000000000000000000000000000000000000000000000000000000000b99a",
    "run_attempt": 1,
-   "duel_with": "pr5-279f5ae95f80",
+   "duel_with": "pr5-296b875938f1",
    "build_manifest": null,
    "duel": null,
-   "result": "results/pr6-1aa7cfa79bca.json"
+   "result": "results/pr6-b36f6a22869e.json"
   },
   {
-   "id": "pr7-fbf7d6316a43",
+   "id": "pr7-0fb129167efb",
    "pr": 7,
-   "sha": "fbf7d6316a43502ba666fa6222f6db9ff2ef9750",
+   "sha": "0fb129167efb27cf217671d38c1d9f9a2177f28c",
    "root": "basefold-stream",
    "author": "erin-ivc",
    "title": "Basefold over binary towers, one node per step",
@@ -311,25 +314,25 @@
    "comparable": true,
    "truncated": false,
    "reasons": [
-    "S = 4.0900 against the record pr5-279f5ae95f80's S = 4.1520 in the same job (+1.5%; a win needs 3%)"
+    "S = 4.0900 against the record pr5-296b875938f1's S = 4.1520 in the same job (+1.5%; a win needs 3%)"
    ],
    "cpu": [
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/107",
-   "tag": "rf-source/pr7-fbf7d6316a43",
-   "notes": "notes/pr7-fbf7d6316a43.md",
-   "readme": "readme/pr7-fbf7d6316a43.md",
+   "tag": "rf-source/pr7-0fb129167efb",
+   "notes": "notes/pr7-0fb129167efb.md",
+   "readme": "readme/pr7-0fb129167efb.md",
    "record_of": null,
    "tree": "9035e1a4beffc8f5bd73ec9dea2271b5f8e57d15",
    "verified": true,
    "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
    "prover_sha256": "000000000000000000000000000000000000000000000000000000000000d889",
    "run_attempt": 1,
-   "duel_with": "pr5-279f5ae95f80",
+   "duel_with": "pr5-296b875938f1",
    "build_manifest": null,
    "duel": {
-    "incumbent": "pr5-279f5ae95f80",
+    "incumbent": "pr5-296b875938f1",
     "S": 4.09,
     "S_inc": 4.152,
     "gain": 0.014932562620423973,
@@ -338,22 +341,22 @@
    },
    "duels": [
     {
-     "incumbent": "pr5-279f5ae95f80",
+     "incumbent": "pr5-296b875938f1",
      "S": 4.09,
      "S_inc": 4.152,
      "gain": 0.014932562620423973,
      "incumbent_failed": false,
      "won": false,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/107",
-     "result": "results/pr7-fbf7d6316a43.duel1.json"
+     "result": "results/pr7-0fb129167efb.duel1.json"
     }
    ],
-   "result": "results/pr7-fbf7d6316a43.json"
+   "result": "results/pr7-0fb129167efb.json"
   },
   {
-   "id": "pr8-4194d1bc7930",
+   "id": "pr8-15e459267345",
    "pr": 8,
-   "sha": "4194d1bc7930f2c96d8cf8425b78072bbe262c5c",
+   "sha": "15e4592673454242873e3d4767c2d3cf38f597b5",
    "root": "ligero-chain-v2",
    "author": "alice-zk",
    "title": "ligero-chain v2: AVX-512 lanes from #5, Basefold-style nodes from #7",
@@ -384,63 +387,64 @@
    "comparable": true,
    "truncated": false,
    "reasons": [
-    "S = 2.4020 beats the record pr5-279f5ae95f80 (S = 4.0120 in the same job) by 40.1%",
-    "2 duels won against the record pr5-279f5ae95f80: the new record",
-    "its own run failed in 2 duels"
+    "S = 2.4020 beats the record pr5-296b875938f1 (S = 4.0120 in the same job) by 40.1%",
+    "2 duels won against the record pr5-296b875938f1: the new record",
+    "its own run failed in 2 duels in a row"
    ],
    "cpu": [
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/109",
-   "tag": "rf-source/pr8-4194d1bc7930",
-   "notes": "notes/pr8-4194d1bc7930.md",
-   "readme": "readme/pr8-4194d1bc7930.md",
-   "record_of": "pr5-279f5ae95f80",
+   "tag": "rf-source/pr8-15e459267345",
+   "notes": "notes/pr8-15e459267345.md",
+   "readme": "readme/pr8-15e459267345.md",
+   "record_of": "pr5-296b875938f1",
    "tree": "708b85688714c5052a76892ac589d0c5ae2a18ee",
    "verified": true,
    "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
    "prover_sha256": "000000000000000000000000000000000000000000000000000000000000f778",
    "run_attempt": 1,
-   "duel_with": "pr5-279f5ae95f80",
+   "duel_with": "pr5-296b875938f1",
    "build_manifest": null,
    "duel": {
-    "incumbent": "pr5-279f5ae95f80",
+    "incumbent": "pr5-296b875938f1",
     "S": 2.402,
     "S_inc": 4.012,
     "gain": 0.4012961116650049,
     "incumbent_failed": false,
     "won": true
    },
+   "confirm_retries": 0,
    "duels": [
     {
-     "incumbent": "pr5-279f5ae95f80",
+     "incumbent": "pr5-296b875938f1",
      "S": 2.371,
      "S_inc": 4.071,
      "gain": 0.41758781626136077,
      "incumbent_failed": false,
      "won": true,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/108",
-     "result": "results/pr8-4194d1bc7930.duel1.json"
+     "result": "results/pr8-15e459267345.duel1.json"
     },
     {
-     "incumbent": "pr5-279f5ae95f80",
+     "incumbent": "pr5-296b875938f1",
      "S": 2.402,
      "S_inc": 4.012,
      "gain": 0.4012961116650049,
      "incumbent_failed": false,
      "won": true,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/109",
-     "result": "results/pr8-4194d1bc7930.duel2.json"
+     "result": "results/pr8-15e459267345.duel2.json"
     }
    ],
-   "result": "results/pr8-4194d1bc7930.json",
+   "result": "results/pr8-15e459267345.json",
    "duel_failures": 2,
    "retired": "2026-11-01T09:45:08Z"
   },
   {
-   "id": "pr9-0e1445cedfba",
+   "id": "pr9-7636ad9140ad",
    "pr": 9,
-   "sha": "0e1445cedfba2fda7023f043bc6ae7ab1824b4c4",
+   "sha": "7636ad9140ade14679cd7902aca1c219ed2e8d6e",
    "root": "gkr-blake",
    "author": "frank-mm",
    "title": "GKR over the BLAKE2s round circuit",
@@ -476,24 +480,24 @@
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/110",
-   "tag": "rf-source/pr9-0e1445cedfba",
-   "notes": "notes/pr9-0e1445cedfba.md",
-   "readme": "readme/pr9-0e1445cedfba.md",
+   "tag": "rf-source/pr9-7636ad9140ad",
+   "notes": "notes/pr9-7636ad9140ad.md",
+   "readme": "readme/pr9-7636ad9140ad.md",
    "record_of": null,
    "tree": "e9ee65dc055060038add97a8083820b4487ecd6c",
    "verified": true,
    "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
    "prover_sha256": "0000000000000000000000000000000000000000000000000000000000011667",
    "run_attempt": 1,
-   "duel_with": "pr8-4194d1bc7930",
+   "duel_with": "pr8-15e459267345",
    "build_manifest": null,
    "duel": null,
-   "result": "results/pr9-0e1445cedfba.json"
+   "result": "results/pr9-7636ad9140ad.json"
   },
   {
-   "id": "pr10-d5643fce8f11",
+   "id": "pr10-17dd942e6d13",
    "pr": 10,
-   "sha": "d5643fce8f113e6ac2dfd2c60b1b239b3ff69d49",
+   "sha": "17dd942e6d13038a8a010ce7d5455a199f1c1b89",
    "root": "binius-ivc",
    "author": "grace-pq",
    "title": "Binius towers with a recursive FRI-Binius verifier",
@@ -526,25 +530,25 @@
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/112",
-   "tag": "rf-source/pr10-d5643fce8f11",
-   "notes": "notes/pr10-d5643fce8f11.md",
-   "readme": "readme/pr10-d5643fce8f11.md",
+   "tag": "rf-source/pr10-17dd942e6d13",
+   "notes": "notes/pr10-17dd942e6d13.md",
+   "readme": "readme/pr10-17dd942e6d13.md",
    "record_of": null,
    "tree": "2cccd61c8e52f8628f167a22320d033fda30b413",
    "verified": false,
    "harness_commit": "0000000000000000000000000000000000000000",
    "prover_sha256": "0000000000000000000000000000000000000000000000000000000000013556",
    "run_attempt": 1,
-   "duel_with": "pr8-4194d1bc7930",
+   "duel_with": "pr8-15e459267345",
    "build_manifest": null,
    "duel": null,
    "record_cache": false,
-   "result": "results/pr10-d5643fce8f11.json"
+   "result": "results/pr10-17dd942e6d13.json"
   },
   {
-   "id": "pr11-d2420a7aa9db",
+   "id": "pr11-48ba811c24e3",
    "pr": 11,
-   "sha": "d2420a7aa9db636b018ae2c19d8b9f2d898f044b",
+   "sha": "48ba811c24e36d636a9bf972ebb3856bef6af196",
    "root": "fast-blake",
    "author": "heidi-x",
    "title": "Fast BLAKE2s (also updates the workflow)",
@@ -575,9 +579,9 @@
    "prover_sha256": null
   },
   {
-   "id": "pr15-c88283c9d7b9",
+   "id": "pr15-910dfcfd9792",
    "pr": 15,
-   "sha": "c88283c9d7b98006682b4b63f0db0cf10f6389c1",
+   "sha": "910dfcfd9792a2359e700ec1f1a426c96dc4d092",
    "root": "basefold-stream-2",
    "author": "erin-ivc",
    "title": "basefold-stream with the v2 lane layout",
@@ -611,9 +615,9 @@
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/115",
-   "tag": "rf-source/pr15-c88283c9d7b9",
-   "notes": "notes/pr15-c88283c9d7b9.md",
-   "readme": "readme/pr15-c88283c9d7b9.md",
+   "tag": "rf-source/pr15-910dfcfd9792",
+   "notes": "notes/pr15-910dfcfd9792.md",
+   "readme": "readme/pr15-910dfcfd9792.md",
    "record_of": null,
    "tree": "723c771a101d80f2e2e8f72d6182074ce3bcaac9",
    "verified": true,
@@ -623,35 +627,35 @@
    "duel_with": null,
    "build_manifest": null,
    "duel": null,
-   "duel_retries": 2,
    "duels": [
     {
-     "incumbent": "pr8-4194d1bc7930",
+     "incumbent": "pr8-15e459267345",
      "S": 2.402,
      "S_inc": null,
      "gain": null,
      "incumbent_failed": true,
      "won": false,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/113",
-     "result": "results/pr15-c88283c9d7b9.duel1.json"
+     "result": "results/pr15-910dfcfd9792.duel1.json"
     },
     {
-     "incumbent": "pr8-4194d1bc7930",
+     "incumbent": "pr8-15e459267345",
      "S": 2.388,
      "S_inc": null,
      "gain": null,
      "incumbent_failed": true,
      "won": false,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/114",
-     "result": "results/pr15-c88283c9d7b9.duel2.json"
+     "result": "results/pr15-910dfcfd9792.duel2.json"
     }
    ],
-   "result": "results/pr15-c88283c9d7b9.json"
+   "result": "results/pr15-910dfcfd9792.json",
+   "duel_failures": 0
   },
   {
-   "id": "pr17-dc7ebf6fac30",
+   "id": "pr17-7d5681d29740",
    "pr": 17,
-   "sha": "dc7ebf6fac3066c296eb578dfefd388e45ff1df5",
+   "sha": "7d5681d2974039a1de4b66bfefc9c39f4c4ac4a7",
    "root": "basefold-turbo",
    "author": "mallory-x",
    "title": "basefold, turbo",
@@ -678,60 +682,61 @@
    "comparable": true,
    "truncated": false,
    "reasons": [
-    "S = 2.3180 against the record pr15-c88283c9d7b9's S = 2.2900 in the same job (-1.2%; a win needs 3%)",
+    "S = 2.3180 against the record pr15-910dfcfd9792's S = 2.2900 in the same job (-1.2%; a win needs 3%)",
     "the confirmation duel was lost: not the record"
    ],
    "cpu": [
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/117",
-   "tag": "rf-source/pr17-dc7ebf6fac30",
-   "notes": "notes/pr17-dc7ebf6fac30.md",
-   "readme": "readme/pr17-dc7ebf6fac30.md",
+   "tag": "rf-source/pr17-7d5681d29740",
+   "notes": "notes/pr17-7d5681d29740.md",
+   "readme": "readme/pr17-7d5681d29740.md",
    "record_of": null,
    "tree": "bd48a8e215c63e3c12c3da9f17542a282468be4e",
    "verified": true,
    "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
    "prover_sha256": "0000000000000000000000000000000000000000000000000000000000020ddf",
    "run_attempt": 1,
-   "duel_with": "pr15-c88283c9d7b9",
+   "duel_with": "pr15-910dfcfd9792",
    "build_manifest": null,
    "duel": {
-    "incumbent": "pr15-c88283c9d7b9",
+    "incumbent": "pr15-910dfcfd9792",
     "S": 2.318,
     "S_inc": 2.29,
     "gain": -0.012227074235807933,
     "incumbent_failed": false,
     "won": false
    },
+   "confirm_retries": 0,
    "duels": [
     {
-     "incumbent": "pr15-c88283c9d7b9",
+     "incumbent": "pr15-910dfcfd9792",
      "S": 2.214,
      "S_inc": 2.301,
      "gain": 0.03780964797913955,
      "incumbent_failed": false,
      "won": true,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/116",
-     "result": "results/pr17-dc7ebf6fac30.duel1.json"
+     "result": "results/pr17-7d5681d29740.duel1.json"
     },
     {
-     "incumbent": "pr15-c88283c9d7b9",
+     "incumbent": "pr15-910dfcfd9792",
      "S": 2.318,
      "S_inc": 2.29,
      "gain": -0.012227074235807933,
      "incumbent_failed": false,
      "won": false,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/117",
-     "result": "results/pr17-dc7ebf6fac30.duel2.json"
+     "result": "results/pr17-7d5681d29740.duel2.json"
     }
    ],
-   "result": "results/pr17-dc7ebf6fac30.json"
+   "result": "results/pr17-7d5681d29740.json"
   },
   {
-   "id": "pr12-9a71e7228fd3",
+   "id": "pr12-a3ce2e7c5ce2",
    "pr": 12,
-   "sha": "9a71e7228fd369d7e9a6bc3a172eefa843c17121",
+   "sha": "a3ce2e7c5ce2d9725c57d2a901e7d5ccc18975bf",
    "root": "nova-blake",
    "author": "dave-fold",
    "queued": "2026-11-02T09:00:17Z",
@@ -743,9 +748,9 @@
    "tree": "b5109396bbb518a4c141c340e734470e736969f6"
   },
   {
-   "id": "pr12-7cbe673f4d20",
+   "id": "pr12-b188fddaa202",
    "pr": 12,
-   "sha": "7cbe673f4d20f2ffb24a60e308c65f7203390826",
+   "sha": "b188fddaa20244322eca368d8942ae951c0f4d02",
    "root": "nova-blake",
    "author": "dave-fold",
    "title": "nova-blake: extractor proof complete",
@@ -766,9 +771,9 @@
    "reasons": [],
    "cpu": [],
    "run_url": null,
-   "tag": "rf-source/pr12-7cbe673f4d20",
-   "notes": "notes/pr12-7cbe673f4d20.md",
-   "readme": "readme/pr12-7cbe673f4d20.md",
+   "tag": "rf-source/pr12-b188fddaa202",
+   "notes": "notes/pr12-b188fddaa202.md",
+   "readme": "readme/pr12-b188fddaa202.md",
    "record_of": null,
    "tree": "a713980cdb891ee83287e12ba404eeddc5e69302",
    "verified": false,
@@ -776,9 +781,9 @@
    "prover_sha256": null
   },
   {
-   "id": "pr14-a11b8cbe8c27",
+   "id": "pr14-fa5986e669ad",
    "pr": 14,
-   "sha": "a11b8cbe8c27129cb46259c4c105430d688b4ab9",
+   "sha": "fa5986e669adaf99dc56da88ca4a8b5ffa0b5dd5",
    "root": "whir-chain",
    "author": "ivan-sec",
    "title": "WHIR leaves (closed: moving to a new design)",
@@ -799,9 +804,9 @@
    ],
    "cpu": [],
    "run_url": null,
-   "tag": "rf-source/pr14-a11b8cbe8c27",
-   "notes": "notes/pr14-a11b8cbe8c27.md",
-   "readme": "readme/pr14-a11b8cbe8c27.md",
+   "tag": "rf-source/pr14-fa5986e669ad",
+   "notes": "notes/pr14-fa5986e669ad.md",
+   "readme": "readme/pr14-fa5986e669ad.md",
    "record_of": null,
    "tree": "9ea4d45aea34007a35347402c9b141f82117f0df",
    "verified": false,
@@ -809,9 +814,9 @@
    "prover_sha256": null
   },
   {
-   "id": "pr18-ef49e7651733",
+   "id": "pr18-5f71eb3e39ea",
    "pr": 18,
-   "sha": "ef49e7651733f75c58aaf3b9e184e88c69fcb3f5",
+   "sha": "5f71eb3e39ea7cf44b8b77151027a7fa9b14a55d",
    "root": "lean-mle",
    "author": "judy-lean",
    "title": "Multilinear sumcheck leaves, first entry",
@@ -838,50 +843,51 @@
    "comparable": true,
    "truncated": false,
    "reasons": [
-    "S = 1.9040 beats the record pr15-c88283c9d7b9 (S = 2.3110 in the same job) by 17.6%",
-    "duel 1 of 2 won: one more duel of this commit against the record pr15-c88283c9d7b9 runs next, first in the queue"
+    "S = 1.9040 beats the record pr15-910dfcfd9792 (S = 2.3110 in the same job) by 17.6%",
+    "duel 1 of 2 won: one more duel of this commit against the record pr15-910dfcfd9792 runs next, first in the queue"
    ],
    "cpu": [
     "AMD EPYC 9V74 80-Core Processor"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/118",
-   "tag": "rf-source/pr18-ef49e7651733",
-   "notes": "notes/pr18-ef49e7651733.md",
-   "readme": "readme/pr18-ef49e7651733.md",
+   "tag": "rf-source/pr18-5f71eb3e39ea",
+   "notes": "notes/pr18-5f71eb3e39ea.md",
+   "readme": "readme/pr18-5f71eb3e39ea.md",
    "record_of": null,
    "tree": "7b6f5f3040f5192f93e024f9e5490ce766d81dc7",
    "verified": true,
    "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
    "prover_sha256": "0000000000000000000000000000000000000000000000000000000000022cce",
    "run_attempt": 1,
-   "duel_with": "pr15-c88283c9d7b9",
+   "duel_with": "pr15-910dfcfd9792",
    "build_manifest": null,
    "duel": {
-    "incumbent": "pr15-c88283c9d7b9",
+    "incumbent": "pr15-910dfcfd9792",
     "S": 1.904,
     "S_inc": 2.311,
     "gain": 0.1761142362613587,
     "incumbent_failed": false,
     "won": true
    },
+   "confirm_retries": 0,
    "duels": [
     {
-     "incumbent": "pr15-c88283c9d7b9",
+     "incumbent": "pr15-910dfcfd9792",
      "S": 1.904,
      "S_inc": 2.311,
      "gain": 0.1761142362613587,
      "incumbent_failed": false,
      "won": true,
      "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/118",
-     "result": "results/pr18-ef49e7651733.duel1.json"
+     "result": "results/pr18-5f71eb3e39ea.duel1.json"
     }
    ],
-   "result": "results/pr18-ef49e7651733.json"
+   "result": "results/pr18-5f71eb3e39ea.json"
   },
   {
-   "id": "pr13-eff432e6555d",
+   "id": "pr13-b394f4464406",
    "pr": 13,
-   "sha": "eff432e6555d5db4c6ff29d6c085f2996df53deb",
+   "sha": "b394f44644061ac564231316d81e8a9d16ded2ed",
    "root": "blake-avx512",
    "author": "carol-asm",
    "title": "AVX-512 lanes and a 3-step pipelined node",
@@ -902,21 +908,21 @@
    "reasons": [],
    "cpu": [],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/119",
-   "tag": "rf-source/pr13-eff432e6555d",
-   "notes": "notes/pr13-eff432e6555d.md",
-   "readme": "readme/pr13-eff432e6555d.md",
+   "tag": "rf-source/pr13-b394f4464406",
+   "notes": "notes/pr13-b394f4464406.md",
+   "readme": "readme/pr13-b394f4464406.md",
    "record_of": null,
    "tree": "b88b89f681898a2a6fbd5c06d1a38d7699055fcf",
    "verified": false,
    "harness_commit": null,
    "prover_sha256": null,
    "run_attempt": 1,
-   "duel_with": "pr15-c88283c9d7b9"
+   "duel_with": "pr15-910dfcfd9792"
   },
   {
-   "id": "pr16-54e6b1af4796",
+   "id": "pr16-eccf48ebc0ee",
    "pr": 16,
-   "sha": "54e6b1af479648c360f08276362f5c8b23b4b364",
+   "sha": "eccf48ebc0ee97f429cf20a8e5aa617df9e59fdf",
    "root": "lean-mle-gf256",
    "author": "judy-lean",
    "title": "lean-mle with GF(2^256) challenges",
@@ -935,9 +941,9 @@
    "reasons": [],
    "cpu": [],
    "run_url": null,
-   "tag": "rf-source/pr16-54e6b1af4796",
-   "notes": "notes/pr16-54e6b1af4796.md",
-   "readme": "readme/pr16-54e6b1af4796.md",
+   "tag": "rf-source/pr16-eccf48ebc0ee",
+   "notes": "notes/pr16-eccf48ebc0ee.md",
+   "readme": "readme/pr16-eccf48ebc0ee.md",
    "record_of": null,
    "tree": "e722dac99f68f1d6fdc7cb5687c520f9ebeba827",
    "verified": false,
@@ -945,5 +951,5 @@
    "prover_sha256": null
   }
  ],
- "record": "pr15-c88283c9d7b9"
+ "record": "pr15-910dfcfd9792"
 }

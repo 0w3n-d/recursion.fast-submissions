@@ -14,8 +14,8 @@
   const STATUS_INFO = {
     record: ['record', 'Took the record when it was evaluated; it keeps this status in the history after it is beaten.'],
     retired: ['retired', 'A record that stood, then failed in two duels or was retired by the owner.'],
-    confirming: ['confirming', 'Won its duel against the record; one more duel of the same commit against the same record runs next, first in the queue. A record must win both.'],
-    accepted: ['accepted', 'Certified and comparable, but it did not win its duel (or its confirmation duel) by 3 %, the record failed on the runner in its duels, or its prover binary is an earlier record\'s.'],
+    confirming: ['confirming', 'Won its duel against the record; one more duel of the same commit against the same record runs before every other entry. A record must win both.'],
+    accepted: ['accepted', 'Certified and comparable, but it did not win its duel (or its confirmation duel) by 3 %, the record failed on the runner in its duels or was retired before its confirmation, or its prover binary is an earlier record\'s.'],
     unranked: ['unranked', 'Certified, but not comparable (a truncated stream, mixed CPU models, a job plan that did not match, or no positive S).'],
     provisional: ['provisional', 'The Lean builds but the certificate does not check; benchmarked, never ranked.'],
     rejected: ['rejected', 'The certificate or the benchmark failed. The reasons say why.'],

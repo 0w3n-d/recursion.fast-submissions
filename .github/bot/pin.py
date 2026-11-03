@@ -86,7 +86,8 @@ ACTION_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"'#]+)", re.M)
 def tag_problems(core_wf):
     """Actions of the core's evaluate.yml not pinned by a full commit SHA. The submissions repository
     requires SHA pins (`sha_pinning_required`), and that reaches into a called reusable workflow, so
-    one tag there fails every evaluation before it starts."""
+    one tag there fails every evaluation before it starts. Only evaluate.yml itself is scanned: a
+    local action (`./…`) or a further reusable workflow it calls is not (the launch core has none)."""
     out = []
     for ref in ACTION_RE.findall(core_wf):
         if ref.startswith(("./", "docker://")):
