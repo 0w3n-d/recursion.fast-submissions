@@ -47,7 +47,7 @@
   // the duel of an entry, in words, with a link to the incumbent
   function headToHead(e, data, nm) {
     const d = e.duel;
-    if (!d) return e.port_of ? 'ported to this pin, no duel' : 'no standing record at its pin: no duel';
+    if (!d) return e.port_of ? 'none (ported to this pin by the owner)' : 'none (no record stood at its pin)';
     const inc = data.subs.find(x => x.id === d.incumbent);
     const name = el('a', { href: page('submission.html', { id: d.incumbent }) }, inc ? nm(inc) : d.incumbent);
     if (d.incumbent_failed) return ['the record ', name, ' failed on this runner'];
