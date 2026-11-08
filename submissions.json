@@ -1,10 +1,9 @@
 {
  "version": 1,
- "updated": "2026-11-03T11:25:21Z",
+ "updated": "2026-11-08T06:47:02Z",
  "repo": "scaraven/recursion.fast-submissions",
- "core": "df1f3448f9ec181ce1fcae43964fd11301f653bf",
- "margin": 0.03,
- "record_wins": 2,
+ "core": "f3538eb2a198240d864eb773331a88bf16283688",
+ "margin": 0.02,
  "submissions": [],
  "record": null
 }
