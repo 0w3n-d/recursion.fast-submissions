@@ -2,7 +2,7 @@
  "schema": "recursion.fast/v4/result-1",
  "season": "season-1",
  "season_sha256": "fb2de74a5c711c8dd0e41db04ed2f18a2c3f97c30dbf4f608bd11fa2377656a8",
- "job": "scaraven/recursion.fast-submissions/actions/runs/42456799001/attempts/1",
+ "job": "scaraven/recursion.fast-submissions/actions/runs/42458492987/attempts/1",
  "certificate": {
   "status": "ok",
   "reasons": [],
@@ -17,7 +17,7 @@
     "exit": 0,
     "seconds": 18.6,
     "cap": "14G",
-    "peak_bytes": 711315456,
+    "peak_bytes": 711557120,
     "tail": "Building Challenge\n\u26a0 [1022/1022] Replayed Challenge\nwarning: challenge/Challenge.lean:25:4: declaration uses `sorry`\nwarning: challenge/Challenge.lean:28:8: declaration uses `sorry`\nBuild completed successfully (1022 jobs).\nExporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RecursionFast.Challenge.certified, propext, Classical.choice, Quot.sound, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam, RecursionFast.Challenge.submission] from Challenge\nBuilding Solution\nBuild completed successfully (1236 jobs).\nExporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RecursionFast.Challenge.certified, propext, Classical.choice, Quot.sound, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam, RecursionFast.Challenge.submission] from Solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n"
    }
   },
@@ -68,7 +68,7 @@
     "mem_total_kb": 16375608,
     "kernel": "6.8.0-149-generic",
     "memcap": "systemd",
-    "runner_name": "rf-bench-b000e55c-4464-4040-b829-b61f92b17a33",
+    "runner_name": "rf-bench-fdde302b-0e8e-4470-8b10-21d638692e09",
     "runner_environment": "self-hosted",
     "runner_labels": [
      "rf-bench"
@@ -107,28 +107,28 @@
     "triv_permutations": 16777216,
     "pinned_core": 7,
     "service": {
-     "keygen_ms": 3326.1,
+     "keygen_ms": 3324.2,
      "threads_1": {
       "query_bytes": 64,
       "batch": 1024,
-      "calls_per_s": 2300880.0,
+      "calls_per_s": 2242599.0,
       "permutations_per_query": 1,
-      "permutations_per_s": 2300880.0,
-      "us_per_request": 445.05
+      "permutations_per_s": 2242599.0,
+      "us_per_request": 456.61
      },
      "threads_8": {
       "query_bytes": 64,
       "batch": 1024,
-      "calls_per_s": 10215941.0,
+      "calls_per_s": 10256861.0,
       "permutations_per_query": 1,
-      "permutations_per_s": 10215941.0,
-      "us_per_request": 801.88
+      "permutations_per_s": 10256861.0,
+      "us_per_request": 798.68
      },
      "service_refusals": [],
      "service_stats": {
-      "requests": 24455,
-      "queries": 25041920,
-      "query_bytes": 1602682880,
+      "requests": 24421,
+      "queries": 25007104,
+      "query_bytes": 1600454656,
       "signatures": 0,
       "refusals": 0
      }
@@ -137,16 +137,16 @@
    "dos": null,
    "benchmark": "fail",
    "reasons": [
-    "stream outputs: verify: a check took 10.2 s, above verify_s"
+    "stream outputs: verify: a check took 10.5 s, above verify_s"
    ],
-   "started": "2026-11-08T07:13:57Z",
-   "finished": "2026-11-08T07:20:04Z",
+   "started": "2026-11-08T07:29:21Z",
+   "finished": "2026-11-08T07:35:28Z",
    "comparable": false,
    "provisional": false
   }
  ],
  "reasons": [
-  "stream outputs: verify: a check took 10.2 s, above verify_s"
+  "stream outputs: verify: a check took 10.5 s, above verify_s"
  ],
  "stream": null,
  "plan": "split",
@@ -158,7 +158,7 @@
   "host_kernel": "6.8.0-147-generic"
  },
  "runner": {
-  "name": "rf-bench-b000e55c-4464-4040-b829-b61f92b17a33",
+  "name": "rf-bench-fdde302b-0e8e-4470-8b10-21d638692e09",
   "environment": "self-hosted",
   "labels": [
    "rf-bench"
