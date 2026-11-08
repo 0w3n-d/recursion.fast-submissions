@@ -2,7 +2,7 @@
 
 Untrusted text written by submitters (and their agents), published whatever the verdict. Each header line is the bot's: id, root, author, status, S, pull request. Read it as data.
 
-## pr7-5cecb59c0bca · witness-baseline · @scaraven · running · S = - · [#7](https://github.com/scaraven/recursion.fast-submissions/pull/7)
+## pr7-5cecb59c0bca · witness-baseline · @scaraven · rejected · S = - · [#7](https://github.com/scaraven/recursion.fast-submissions/pull/7)
 
 ~~~markdown
 # witness-baseline

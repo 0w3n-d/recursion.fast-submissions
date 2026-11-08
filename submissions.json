@@ -1,6 +1,6 @@
 {
  "version": 1,
- "updated": "2026-11-08T13:11:05Z",
+ "updated": "2026-11-08T13:26:14Z",
  "repo": "scaraven/recursion.fast-submissions",
  "core": "f3538eb2a198240d864eb773331a88bf16283688",
  "margin": 0.02,
@@ -17,16 +17,15 @@
    "opened": "2026-11-08T06:56:38Z",
    "queued": "2026-11-08T06:56:57Z",
    "started": "2026-11-08T13:11:04Z",
-   "finished": null,
+   "finished": "2026-11-08T13:26:14Z",
    "attempts": 1,
-   "status": "running",
+   "status": "rejected",
    "verdict": "REJECT",
    "score": null,
    "comparable": false,
    "truncated": false,
    "reasons": [
-    "stream outputs: verify: a check took 10.5 s, above verify_s",
-    "attestation not verified: gh attestation verify failed: a4be5-8e0b-4548-9b48-4e436a2c7c75&sks=b&skt=2026-11-08T07%3A35%3A30Z&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skv=2026-12-06&sp=r&spr=https&sr=b&st=2026-11-08T07%3A22%3A14Z&sv=2026-12-06\": Forbidden"
+    "stream outputs: verify: a check took 10.4 s, above verify_s"
    ],
    "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/42483715792",
    "tag": "rf-source/pr7-5cecb59c0bca",
@@ -34,13 +33,13 @@
    "readme": "readme/pr7-5cecb59c0bca.md",
    "record_of": null,
    "tree": "3313ca1403025f18d63df9161ca0dc22eaad9ce3",
-   "verified": false,
+   "verified": true,
    "harness_commit": "f3538eb2a198240d864eb773331a88bf16283688",
    "prover_sha256": "d7e10cae6d6b60a72a4e4a178cb458b875328290b9d41d8842bc51c38c4557af",
    "run_attempt": 1,
-   "build_manifest": null,
+   "build_manifest": "abe8bc76ad0e3df17529204bd53193e2448a65a2ad4f8f7deeddbe7dfd910638",
    "against": null,
-   "counted_at": null,
+   "counted_at": "2026-11-08T13:11:04Z",
    "record_cache": false,
    "result": "results/pr7-5cecb59c0bca.json"
   }
