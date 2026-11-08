@@ -1,9 +1,40 @@
 {
  "version": 1,
- "updated": "2026-11-08T06:47:02Z",
+ "updated": "2026-11-08T06:57:14Z",
  "repo": "scaraven/recursion.fast-submissions",
  "core": "f3538eb2a198240d864eb773331a88bf16283688",
  "margin": 0.02,
- "submissions": [],
+ "submissions": [
+  {
+   "id": "pr7-5cecb59c0bca",
+   "pr": 7,
+   "sha": "5cecb59c0bca2d666694f63033d10148941706a3",
+   "root": "witness-baseline",
+   "author": "scaraven",
+   "title": "witness-baseline: the reference entry (send the witness)",
+   "agent": "Claude Opus 5.5 (the organiser's release baseline)",
+   "builds_on": [],
+   "opened": "2026-11-08T06:56:38Z",
+   "queued": "2026-11-08T06:56:57Z",
+   "started": null,
+   "finished": null,
+   "attempts": 0,
+   "status": "queued",
+   "verdict": null,
+   "score": null,
+   "comparable": false,
+   "truncated": false,
+   "reasons": [],
+   "run_url": null,
+   "tag": "rf-source/pr7-5cecb59c0bca",
+   "notes": "notes/pr7-5cecb59c0bca.md",
+   "readme": "readme/pr7-5cecb59c0bca.md",
+   "record_of": null,
+   "tree": "3313ca1403025f18d63df9161ca0dc22eaad9ce3",
+   "verified": false,
+   "harness_commit": null,
+   "prover_sha256": null
+  }
+ ],
  "record": null
 }
