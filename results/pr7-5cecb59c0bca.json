@@ -1,0 +1,175 @@
+{
+ "schema": "recursion.fast/v4/result-1",
+ "season": "season-1",
+ "season_sha256": "fb2de74a5c711c8dd0e41db04ed2f18a2c3f97c30dbf4f608bd11fa2377656a8",
+ "job": "scaraven/recursion.fast-submissions/actions/runs/42456799001/attempts/1",
+ "certificate": {
+  "status": "ok",
+  "reasons": [],
+  "provisional_reasons": [],
+  "kernels": [
+   "lean"
+  ],
+  "second_kernel": "not run (no --nanoda): checked by the Lean kernel only",
+  "kernel_runs": {
+   "lean": {
+    "outcome": "ok",
+    "exit": 0,
+    "seconds": 18.6,
+    "cap": "14G",
+    "peak_bytes": 711315456,
+    "tail": "Building Challenge\n\u26a0 [1022/1022] Replayed Challenge\nwarning: challenge/Challenge.lean:25:4: declaration uses `sorry`\nwarning: challenge/Challenge.lean:28:8: declaration uses `sorry`\nBuild completed successfully (1022 jobs).\nExporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RecursionFast.Challenge.certified, propext, Classical.choice, Quot.sound, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam, RecursionFast.Challenge.submission] from Challenge\nBuilding Solution\nBuild completed successfully (1236 jobs).\nExporting #[Quot, Quot.mk, Quot.lift, Quot.ind, RecursionFast.Challenge.certified, propext, Classical.choice, Quot.sound, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam, RecursionFast.Challenge.submission] from Solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n"
+   }
+  },
+  "gate": [
+   "PASS"
+  ],
+  "badge_sha256": {
+   "verify": "d0e4a626fcf9827af4785637a42c68ac6eca31b5e46cb6f9927ce613ecb6691d",
+   "chaincheck": "03c6817068796dd8d8b19f26b710ca1ad8ff2b02f4209476919d031bf307f67c"
+  },
+  "claim": {
+   "error": "0",
+   "completeness_error": "0",
+   "qV": 0,
+   "fuel_base": 0,
+   "fuel_per_word": 8
+  },
+  "built_modules": [
+   "Challenge",
+   "Solution"
+  ],
+  "environment": {
+   "core_commit": "f3538eb2a198240d864eb773331a88bf16283688",
+   "manifest_sha256": "c336228cc1fb0413af2fd66f7f4528fecea3550bf01dd9e256bd5b45f26c73bb",
+   "allowlist_sha256": "3c30ba27e2050aab769b082a539156776a56cc4cb658c5654ff719f549941e18"
+  },
+  "record_cache": null,
+  "entry_build": {
+   "modules": 1,
+   "files": 4,
+   "bytes": 63262,
+   "manifest_sha256": "abe8bc76ad0e3df17529204bd53193e2448a65a2ad4f8f7deeddbe7dfd910638"
+  }
+ },
+ "parts": [
+  {
+   "parts": [
+    "calibrate",
+    "stream",
+    "dos"
+   ],
+   "machine": {
+    "fingerprint": "d28ff4798f3900a304361e62239bd35575a8b73920dcdb03d97079bde2599927",
+    "fingerprint_status": "ok",
+    "fingerprint_reason": null,
+    "host_kernel": "6.8.0-147-generic",
+    "nproc": 8,
+    "mem_total_kb": 16375608,
+    "kernel": "6.8.0-149-generic",
+    "memcap": "systemd",
+    "runner_name": "rf-bench-b000e55c-4464-4040-b829-b61f92b17a33",
+    "runner_environment": "self-hosted",
+    "runner_labels": [
+     "rf-bench"
+    ]
+   },
+   "harness": {
+    "commit": "f3538eb2a198240d864eb773331a88bf16283688",
+    "service_sha256": "e11073ad20b17d1bb5ca2a1152b04db35e66f86bddd68a3a3798dd350ef043e1",
+    "bench_sha256": "2318c054aa23af6fe6041a83c63ddec7da52b7d3e650ee628773a07b8c4f4563",
+    "badge_sha256": {
+     "verify": "d0e4a626fcf9827af4785637a42c68ac6eca31b5e46cb6f9927ce613ecb6691d",
+     "chaincheck": "03c6817068796dd8d8b19f26b710ca1ad8ff2b02f4209476919d031bf307f67c"
+    }
+   },
+   "prover": {
+    "sources": {
+     "prover.s": "d67cf0c25dc73597ed284d4b661301a847fcf4b11f6c8116048861155cff324c"
+    },
+    "toolchain": {
+     "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+     "as": "GNU assembler (GNU Binutils for Ubuntu) 2.42",
+     "ld": "GNU ld (GNU Binutils for Ubuntu) 2.42",
+     "glibc": "ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39",
+     "bwrap": "bubblewrap 0.9.0"
+    },
+    "command": "/usr/bin/gcc -static -O2 -pthread /build/prover.s -o /build/prover -lm",
+    "log": "",
+    "binary_sha256": "d7e10cae6d6b60a72a4e4a178cb458b875328290b9d41d8842bc51c38c4557af",
+    "binary_bytes": 937880
+   },
+   "calib": {
+    "source_sha256": "6fcfa8404c2ade542742d29541fa95d174ffd9c4ca963249d47135f66fd512a0",
+    "binary_sha256": "1f732768e965be9d8ecdeb3ded5dadf95ddb4b891fc883e089190f9b26969757"
+   },
+   "calibration": {
+    "triv_permutations": 16777216,
+    "pinned_core": 7,
+    "service": {
+     "keygen_ms": 3326.1,
+     "threads_1": {
+      "query_bytes": 64,
+      "batch": 1024,
+      "calls_per_s": 2300880.0,
+      "permutations_per_query": 1,
+      "permutations_per_s": 2300880.0,
+      "us_per_request": 445.05
+     },
+     "threads_8": {
+      "query_bytes": 64,
+      "batch": 1024,
+      "calls_per_s": 10215941.0,
+      "permutations_per_query": 1,
+      "permutations_per_s": 10215941.0,
+      "us_per_request": 801.88
+     },
+     "service_refusals": [],
+     "service_stats": {
+      "requests": 24455,
+      "queries": 25041920,
+      "query_bytes": 1602682880,
+      "signatures": 0,
+      "refusals": 0
+     }
+    }
+   },
+   "dos": null,
+   "benchmark": "fail",
+   "reasons": [
+    "stream outputs: verify: a check took 10.2 s, above verify_s"
+   ],
+   "started": "2026-11-08T07:13:57Z",
+   "finished": "2026-11-08T07:20:04Z",
+   "comparable": false,
+   "provisional": false
+  }
+ ],
+ "reasons": [
+  "stream outputs: verify: a check took 10.2 s, above verify_s"
+ ],
+ "stream": null,
+ "plan": "split",
+ "harness_commit": "f3538eb2a198240d864eb773331a88bf16283688",
+ "machine": {
+  "fingerprint": "d28ff4798f3900a304361e62239bd35575a8b73920dcdb03d97079bde2599927",
+  "expected": "d28ff4798f3900a304361e62239bd35575a8b73920dcdb03d97079bde2599927",
+  "matches": true,
+  "host_kernel": "6.8.0-147-generic"
+ },
+ "runner": {
+  "name": "rf-bench-b000e55c-4464-4040-b829-b61f92b17a33",
+  "environment": "self-hosted",
+  "labels": [
+   "rf-bench"
+  ]
+ },
+ "verdict": "REJECT",
+ "truncated": false,
+ "comparable": false,
+ "prover_sha256": "d7e10cae6d6b60a72a4e4a178cb458b875328290b9d41d8842bc51c38c4557af",
+ "entry": {
+  "name": "scaraven/recursion.fast-submissions:submissions/witness-baseline",
+  "prover_sources_sha256": "1f19a69fb011a544beb8c4870693298ff1d3dc0cda9e43095013f2c8ae67e907"
+ }
+}
