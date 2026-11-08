@@ -3,8 +3,8 @@
 
   python3 -I .github/bot/bot.py intake  --pr N [--force]    prechecks and admits a head (no `data` write)
   python3 -I .github/bot/bot.py sync                        the single writer of new queue entries
-  python3 -I .github/bot/bot.py select  [--pr N] [--retire ID]
-                                    outputs id, sha, path, ref, record_cache, incumbent_* (or nothing)
+  python3 -I .github/bot/bot.py select  [--pr N] [--retire ID] [--resume true]
+                                    outputs id, sha, path, ref, record_cache, record_manifest_sha256 (or nothing)
   python3 -I .github/bot/bot.py publish --id ID [--result result/result.json] [--core core]
   python3 -I .github/bot/bot.py sync-main
 
@@ -61,6 +61,7 @@ def main():
     ap.add_argument("cmd", choices=["intake", "sync", "select", "publish", "sync-main", "record-build"])
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--retire", default="")
+    ap.add_argument("--resume", default="")
     ap.add_argument("--dir", default="")
     ap.add_argument("--pr", default="")
     ap.add_argument("--id", default="")
@@ -86,16 +87,14 @@ def main():
     elif a.cmd == "select":
         if a.retire and not ID_RE.match(a.retire):
             sys.exit("bot: --retire must be an entry id")
-        e = flows.select(ctx, pr, a.retire or None)
+        if a.resume not in ("", "true", "false"):
+            sys.exit("bot: --resume must be true or false")
+        e = flows.select(ctx, pr, a.retire or None, a.resume == "true")
         if e:
             print(f"select: {e['id']} (#{e['pr']}, {e['root']}, attempt {e['attempts']})")
             output(id=e["id"], sha=e["sha"], path=f"submissions/{e['root']}", ref=f"refs/tags/{e['tag']}",
                    record_cache="true" if e.get("record_cache", True) else "false",
                    record_manifest_sha256=e.get("record_manifest") or "")
-            inc = e.get("incumbent")
-            if inc:   # the standing record, re-run in the same benchmark job (the duel)
-                output(incumbent_id=inc["id"], incumbent_sha=inc["sha"], incumbent_path=f"submissions/{inc['root']}",
-                       incumbent_ref=f"refs/tags/{inc['tag']}")
     elif a.cmd == "publish":
         if not ID_RE.match(a.id):
             sys.exit(f"bot: --id must be an entry id, not {a.id[:40]!r}")

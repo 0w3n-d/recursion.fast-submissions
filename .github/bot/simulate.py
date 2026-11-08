@@ -113,6 +113,9 @@ class FakeGitHub:
     def comment(self, n, body):
         self.comments.append((n, body))
 
+    def issue(self, title, body):
+        self.issues = getattr(self, "issues", []) + [(title, body)]
+
     def set_status(self, sha, state, description, target_url=None, creator="github-actions[bot]"):
         self.status_log.append((sha, state, description))
         t = flows.now_iso(self.clock) if self.clock else "2026-11-03T00:00:00Z"
@@ -136,23 +139,27 @@ class FakeGitHub:
         self.cache_keys.remove(key)
 
 
-def duel_of(e, S=10.0, entry_failed=False, cert="ok", verdict="ACCEPT"):
-    """The core's duel fields (aggregate.py pair()) for the incumbent `e` (select's output)."""
-    inc = e["incumbent"]
-    return {"sha": inc["sha"], "path": f"submissions/{inc['root']}", "certificate_status": cert,
-            "verdict": verdict if cert == "ok" else None, "benchmarked": cert == "ok", "comparable": verdict == "ACCEPT"
-            and not entry_failed, "truncated": entry_failed and verdict == "ACCEPT", "entry_failed": entry_failed,
-            "score": {"S": S} if verdict == "ACCEPT" and cert == "ok" else None, "reasons": ["stream cap"] if entry_failed else []}
-
-
-def make_result(run_id, verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, incumbent=None, prover="a" * 64):
-    r = {"schema": "recursion.fast/v4/result-1", "verdict": verdict, "comparable": comparable, "truncated": False,
-         "harness_commit": harness, "job": f"{REPO}/actions/runs/{run_id}/attempts/1", "cpu_models": ["AMD EPYC 9V74"],
-         "reasons": [] if verdict == "ACCEPT" else ["the entry failed: `boom` @someone"], "prover_sha256": prover}
+def make_result(run_id, verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, prover="a" * 64, machine_ok=True,
+                organiser_error=None, stream=True):
+    """A result as the core's aggregate.py writes it (the fields the bot reads). `comparable=False`:
+    a truncated stream; `machine_ok=False`: another machine's fingerprint, the organiser's ERROR;
+    `stream=False`: no stream recorded (a REJECT at the certificate, so no benchmark part, or inside
+    the stream)."""
+    fp = "f" * 64
+    if not machine_ok:
+        verdict, comparable = "ERROR", False
+    r = {"schema": "recursion.fast/v4/result-1", "verdict": verdict, "comparable": comparable,
+         "truncated": not comparable and machine_ok, "harness_commit": harness, "job": f"{REPO}/actions/runs/{run_id}/attempts/1",
+         "machine": {"fingerprint": fp if machine_ok else "e" * 64, "expected": fp, "matches": machine_ok and stream},
+         "stream": {"lengths": [], "truncated": not comparable and machine_ok} if stream else None,
+         "runner": {"name": "rf-bench-1", "environment": "self-hosted", "labels": ["rf-bench"]},
+         "reasons": ([] if verdict == "ACCEPT" else ["the entry failed: `boom` @someone"] if machine_ok else
+                     [f"organiser ERROR: the machine fingerprint is mismatched (fingerprint {'e' * 64}, the season expects {fp})"]),
+         "prover_sha256": prover}
+    if not machine_ok or organiser_error:
+        r["organiser_error"] = organiser_error or "fingerprint"
     if verdict in ("ACCEPT", "PROVISIONAL"):
         r["score"] = {"S": S, "P_bar": S * 0.8, "V_bar": S * 0.2, "M": 96, "c_P": 1.0, "fit": {"a": 1e-6}}
-    if incumbent is not None:
-        r["duel"], r["incumbent"] = True, incumbent
     return r
 
 
@@ -208,11 +215,11 @@ class World:
             flows.sync(self.ctx())
         return k
 
-    def evaluate(self, result=None, force=None, retire=None):
+    def evaluate(self, result=None, force=None, retire=None, resume=False):
         """select → (the core's evaluation, replaced by `result(entry, run_id)`) → publish."""
         self.run += 1
         ctx = self.ctx(self.run)
-        e = flows.select(ctx, force, retire)
+        e = flows.select(ctx, force, retire, resume)
         if e is None:
             return None, None
         path = None
@@ -239,42 +246,47 @@ def main():
             print(f"intake #{n}:", w.intake(n, sync=False))
         print("sync: changed", flows.sync(w.ctx()))
         e, p = w.evaluate(lambda e, run: make_result(run, S=10.0))
-        print("evaluated", e["id"], "->", p["status"], "(no record: unpaired)")
-        # a duel won is confirmed by a second duel of the same commit, first in the queue
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.5, prover="b" * 64, incumbent=duel_of(e, 10.2)))
+        print("evaluated", e["id"], "->", p["status"], "(no record stood at the pin)")
+        # the record rule needs S < (1 - MARGIN) * S_record (MARGIN = 0.02): 9.9 is within the margin
+        # of 10, 9.0 beats it
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.9, prover="b" * 64))
         print("evaluated", e["id"], "->", p["status"], "|", p["reasons"][-1])
         g.open_pr(6, "erin", good_root("zeta", "6"))
         w.intake(6)
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.6, prover="b" * 64, incumbent=duel_of(e, 10.1)))
-        print("confirmation of", e["id"], "->", p["status"], "| credited gain", f"{p['duel']['gain']:+.1%}",
-              "of", [f"{d['gain']:+.1%}" for d in p["duels"]])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, prover="e" * 64))
+        print("evaluated", e["id"], "->", p["status"], "|", p["reasons"][-1])
         print("main records.json:", json.loads(w.show("main:records.json"))["record"]["id"],
               "main roots:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
-        # a near-copy wins its first duel by noise and loses the confirmation
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, prover="f" * 64, incumbent=duel_of(e, 9.5)))
-        print("evaluated", e["id"], "->", p["status"])
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.6, prover="f" * 64, incumbent=duel_of(e, 9.5)))
-        print("confirmation of", e["id"], "->", p["status"], "|", [d["won"] for d in p["duels"]])
-        # the record fails on two runners: no crown, a retry, then retirement
-        g.open_pr(4, "carol", good_root("delta", "4"))
-        w.intake(4)
-        e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64, incumbent=duel_of(e, entry_failed=True)))
-        print("duel, the record failed:", p["status"], "|", p["reasons"][-2:])
-        e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64, incumbent=duel_of(e, entry_failed=True)))
-        print("duel, the record failed again:", p["status"], "|", p["reasons"][-1])
-        e, p = w.evaluate(lambda e, run: make_result(run, S=99.0, prover="c" * 64))
-        print("unpaired after the retirement:", e["id"], "->", p["status"], "incumbent" in e)
-        # the pin moves while #5 waits: the record's port runs first, unpaired, and keeps the crown
+        # a run off the season's machine is the organiser's ERROR, re-queued in its place; a truncated
+        # stream is the entry's `unranked`
+        g.open_pr(7, "frank", good_root("eta", "7"))
+        w.intake(7)
+        e, p = w.evaluate(lambda e, run: make_result(run, S=1.0, prover="f" * 64, machine_ok=False))
+        print("another machine:", e["id"], "->", p["status"], "|", p["reasons"][-2])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=1.0, comparable=False, prover="f" * 64))
+        print("re-run, truncated:", e["id"], "->", p["status"], "|", p["reasons"][-1])
+        # no cap per author: with nobody else waiting, one author's entries run back to back; another
+        # author's entry then goes before that author's next (the fair order)
+        for n in (8, 9, 10, 12):
+            g.open_pr(n, "carol", good_root(f"c{n}", str(n)))
+            w.intake(n)
+        for _ in range(3):
+            e, p = w.evaluate(lambda e, run: make_result(run, "REJECT"))
+            print("carol:", e["id"], "->", p["status"])
+        g.open_pr(11, "dave", good_root("theta", "11"))
+        w.intake(11)
+        e, p = w.evaluate(lambda e, run: make_result(run, "REJECT"))
+        print("fair order: dave's #11 before carol's #12:", e["id"], "->", p["status"])
+        e, p = w.evaluate(lambda e, run: make_result(run, "REJECT"))
+        print("then carol's #12:", e["id"], "->", p["status"])
+        # the pin moves: the record's port runs first and keeps the crown; then an entry beats it
         g.open_pr(5, "dave", good_root("eps", "5"))
         w.intake(5)
         w.pin = "c" * 40
-        e, p = w.evaluate(lambda e, run: make_result(run, S=90.0, harness=w.pin, prover="c" * 64))
-        print("pin moved; the record is ported first:", e["id"], "->", p["status"], "incumbent" in e)
-        win = lambda e, run: make_result(run, S=80.0, harness=w.pin, prover="e" * 64, incumbent=duel_of(e, 90.0))  # noqa: E731
-        e, p = w.evaluate(win)
-        print("then a duel at the new pin:", e["id"], "->", p["status"], "|", p["reasons"][-1])
-        e, p = w.evaluate(win)
-        print("and its confirmation:", e["id"], "->", p["status"])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, harness=w.pin, prover="e" * 64))
+        print("pin moved; the record is ported first:", e["id"], "->", p["status"])
+        e, p = w.evaluate(lambda e, run: make_result(run, S=8.0, harness=w.pin, prover="5" * 64))
+        print("then at the new pin:", e["id"], "->", p["status"], "|", p["reasons"][-1])
         rec = json.loads(w.show("main:records.json"))
         print("records.json:", rec["core"][:8], rec["record"]["id"], "history:", [h["id"] + ":" + h["status"] for h in rec["history"]])
         print("comments:", len(g.comments), "statuses:", len(g.status_log), "dispatches:", len(g.dispatches))

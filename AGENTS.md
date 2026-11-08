@@ -47,7 +47,8 @@ cd recursion.fast-submissions        # if .contract/ is empty: git submodule upd
 - **For the harness** (section 5) you also need Linux x86-64, `bubblewrap` with unprivileged user
   namespaces (on Ubuntu 24.04: `sysctl kernel.apparmor_restrict_unprivileged_userns=0`), a systemd
   user manager for the memory caps (without one the sandbox falls back to `prlimit`), Rust (pinned
-  by `.contract/service/rust-toolchain.toml`), and the runner's GCC 13.3 and binutils 2.42.
+  by `.contract/service/rust-toolchain.toml`), and GCC 13.3 and binutils 2.42 (Ubuntu 24.04's, as
+  on the evaluation machine).
 
 ## 3. The root
 
@@ -67,8 +68,24 @@ interface. One directory, `submissions/<root>/`, with `<root>` matching `[a-z][a
 Only `Solution`'s import closure is built. The source rule still scans every file under `lean/`.
 The rules for the Lean side are in §2 and §10.
 
+**The machine** (the core's `AGENTS.md` §6) is an AMD Ryzen 7 PRO 8700GE (Zen 4, 8 cores /
+16 threads). The benchmark VM has 4 cores / 8 threads pinned at a fixed 3.65 GHz and 16 GB, with
+the host CPU passed through: x86-64-v4 (AVX2, FMA, BMI1/2 and AVX-512 F, CD, BW, DQ, VL), plus ADX, AES-NI, SHA-NI, VAES, VPCLMULQDQ, GFNI and AVX-512 IFMA, VBMI, VBMI2, VNNI, BITALG, VPOPCNTDQ and BF16. The machine may change between seasons
+(records are then re-evaluated), so use `cpuid`, with a portable fallback behind every fast path:
+a `SIGILL` fails the run.
+
+**The chain lengths** are one fixed, published sequence: `[stream] lengths` in
+`.contract/harness/season.toml` (97 values in `[2^17, 2^20]`: step 1's two chains, then one per
+step), the same for every evaluation and every entry. Each chain's start is a fresh secret draw in
+every evaluation. The sequence may change between seasons, so tuning a prover to its exact lengths
+gains nothing lasting.
+
 **A worked example.** The core ships a minimal entry: it is certified at errors 0 and is not
-competitive. Copying it makes a root that runs through the harness:
+competitive. A copy passes the certificate and runs through the benchmark at the smoke shape
+(`harness/smoke.toml`). At the season shape it is REJECTed: its verifier re-checks every chain of
+the stream so far, so its check time grows with the stream's history and exceeds `verify_s` from
+about step 32 on the evaluation machine (with the caps lifted it would also exceed `stream_s` and
+the DoS column's caps). It shows the layout, not a competitive design. To copy it:
 
 ```sh
 mkdir -p submissions/my-entry/prover
@@ -130,8 +147,22 @@ python3 -I harness/evaluate.py all --entry ../submissions/ROOT --org "$PWD" \
 ```
 
 - `evaluate.py cert` and `evaluate.py bench` run the two halves separately. `harness/smoke.toml`
-  is a small shape (6 steps, chains of 16 to 128); run `harness/season.toml`, the real one, before
-  you submit something you expect to rank.
+  is a small shape (6 steps, chains of 16 to 128, its own fixed list).
+- **The season's shape locally.** `harness/season.toml` itself runs only on the evaluation machine:
+  elsewhere its fingerprint check stops the benchmark as an organiser ERROR before your prover is
+  built. Before you submit something you expect to rank, generate a local copy (the season with
+  `[machine] fingerprint = "any"`, `[calibration] ref_provisional = true` and
+  `[dos] item_cap = "verify_s"`, as the smoke has them) and run it:
+
+  ```sh
+  python3 -I harness/local-season.py > /tmp/season-local.toml
+  python3 -I harness/evaluate.py all --entry ../submissions/ROOT --org "$PWD" \
+    --work /tmp/rf-work-season --out /tmp/rf-result-season.json --season /tmp/season-local.toml
+  ```
+
+  Every shape and every other cap is then the season's, but your machine's speed is not the
+  evaluation machine's. The worked example of section 3 REJECTs at this shape (`verify_s`, from
+  about step 32 on the evaluation machine), as expected.
 - Read `verdict` and `reasons` in the result. Set `RF_HARNESS_COMMIT` if `.contract` is not a git
   checkout.
 
@@ -170,12 +201,11 @@ gh pr create --repo scaraven/recursion.fast-submissions --base main --head LOGIN
    the branch `data`. It queues valid heads with a copy of their `NOTES.md`, records invalid ones,
    re-checks copies, supersedes and withdraws, admits any head whose intake failed, and compacts
    stale entries (section 9).
-3. **Evaluation**, one at a time. The bot picks the next entry (section 9) and runs the core's
-   attested `evaluate.yml` at the pin on that tag. When a record stands, the run is a duel against
-   it (section 10).
+3. **Evaluation**, one at a time, on the organiser's server. The bot picks the next entry (section
+   9) and runs the core's attested `evaluate.yml` at the pin on that tag.
 4. **Publish.** The bot verifies the attestation, decides the status, writes `data`
-   (`submissions.json`, `results/<id>.json`, `notes.md`), comments the verdict, `S`, `P̄`, `V̄`,
-   the duel and the CPU, and sets the commit status. On a new record it also copies the root to
+   (`submissions.json`, `results/<id>.json`, `notes.md`), comments the verdict, `S`, `P̄`, `V̄` and
+   the comparison with the standing record, and sets the commit status. On a new record it also copies the root to
    `main`.
 
 An id is `pr<N>-<first 12 hex of the head sha>`. The re-evaluation of a record after a pin move (a
@@ -184,16 +214,15 @@ port, section 10) adds `-<first 8 hex of the pin>`. The commit status has the co
 
 | Status | Commit status | Meaning |
 |---|---|---|
-| `queued` | pending: `queued` | waiting its turn. `ERROR, queued again`: an organiser-side failure, retried once. `ACCEPT, queued again`: the record failed in your duel, so you get one more duel |
+| `queued` | pending: `queued` | waiting its turn (section 9). `ERROR, queued again`: an organiser-side failure, retried once (a machine-fingerprint or chain-lengths failure uses up no attempt) |
 | `running` | pending: `evaluating` | the evaluation is running |
-| `confirming` | pending: `ACCEPT: won a duel, confirmation duel queued, S = …` | won its duel; one more duel of the same commit against the same record runs next, first in the queue (section 10) |
 | `record` | success: `ACCEPT: new record, S = …` | the record (section 10); it keeps this status after it is beaten |
-| `retired` | (unchanged) | a record removed from the throne: its own run failed in two duels, or the owner retired it |
-| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it lost the duel or its confirmation, the record failed in its duels, the record was retired before its confirmation, or it has the same prover binary as an earlier record |
-| `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the CPU models were mixed, the job plan did not match, or there is no positive `S` |
+| `retired` | (unchanged) | a record the owner removed from the throne |
+| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it did not beat the standing record by the margin (section 10), or it has the same prover binary as an earlier record |
+| `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the job plan did not match, or there is no positive `S` |
 | `provisional` | failure: `PROVISIONAL: provisional (never ranked), …` | the Lean build succeeded but the certificate did not check (kernel rejection, `sorryAx`, a theorem other than the rendered one, the kernel cap); benchmarked and published |
 | `rejected` | failure: `REJECT: rejected` | the entry broke a rule or a cap; the comment gives the reason |
-| `error` | error: `ERROR: organiser-side error (left for the owner)` | the organiser's side failed twice; the owner can re-run it |
+| `error` | pending: `ERROR: waiting on the organiser (an organiser-side error)` | the organiser's side failed twice; the owner can re-run it |
 | `invalid` | failure: `invalid submission` | failed the intake checks (section 8); not evaluated. Push a fix |
 | `superseded` | error: `superseded: <reason>` | the PR moved before this commit was evaluated; the new head is queued instead |
 | `withdrawn` | error: `withdrawn: <reason>` | closed, turned into a draft or labelled `hold` before evaluation |
@@ -234,22 +263,39 @@ them again, and a breach there is a REJECT.
 
 ## 9. The queue, and re-submitting
 
-*Why:* one author opening many pull requests should delay only themselves.
+*Why:* one author opening many pull requests should delay others by at most one evaluation per
+round: the next entry goes to the author who waited longest.
 
 - **First, the bot's own work**: a waiting port of the record after a pin move (even when it is
-  re-run after an organiser error, and before a forced run), then the confirmation duels
-  (`confirming`), each oldest first (section 10).
+  re-run after an organiser error, and before a forced run; section 10).
 - **Fair order.** The next entry belongs to the author whose most recent evaluation *started*
   earliest. Authors never evaluated go first. Within an author, the oldest queued entry goes first.
   So an author's second entry runs only after every other waiting author's first.
+- **No cap.** There is no limit on the number of your evaluations: the fair order only decides who
+  goes next, and with nobody else waiting your entries run back to back.
+- **What counts as a start.** A run that ends in a named organiser error (machine fingerprint,
+  chain lengths, `c_P` drift, setup, a missing organiser cache, a result whose attestation fails)
+  never counts against you in the fair order, nor does an entry's first unnamed ERROR; a later one
+  does. An evaluation counts from its first counted start (a retry never moves it), and superseded
+  or withdrawn entries never count. A retried entry keeps its queue time and takes its turn in the
+  fair order.
+- **Paused queue.** Organiser errors (of any kind) since the last run that completed its stream
+  pause the queue: the bot stops evaluating and tells the owner. Two within 7 days are enough
+  (an older one no longer counts), except that the errors of one author's entries
+  that an entry might provoke (a `c_P` drift, a harness or unnamed ERROR, a run that produced no
+  result or died) count once, so no author can pause the queue alone. Only a clean verdict
+  (ACCEPT, PROVISIONAL or REJECT) of a run whose stream ran to the end on the evaluation machine
+  ends the row and, after the owner's fix, resumes the queue; a REJECT at the certificate or
+  inside the stream neither counts nor resumes. Nothing is charged meanwhile, and an entry left in
+  `error` is the owner's to re-run.
 - **Queue time** is the time of the bot's `queued` commit status on your head, never your commit
   date.
 - **Re-submit** by pushing to the same branch. The push supersedes the queued entry and queues the
   new head under a new id, at the back. After a verdict, push a changed root, because an unchanged
   tree is refused (section 8). There is no need to retry an ERROR yourself: the bot does it once.
 - **Withdraw** by closing the PR or turning it into a draft. Reopening it, or marking it ready,
-  queues it again. An entry already `running` or `confirming` is evaluated to its verdict whatever
-  the PR does meanwhile.
+  queues it again. An entry already `running` is evaluated to its verdict whatever the PR does
+  meanwhile.
 - **Compaction.** A superseded, withdrawn or invalid entry that is not its PR's newest is cut down
   to a stub, and its copied NOTES is deleted. A PR keeps at most 50 such stubs. Evaluated entries
   are kept whole.
@@ -257,31 +303,30 @@ them again, and a breach there is a REJECT.
 
 ## 10. The record rule
 
-*Why:* GitHub runners differ by up to about 18 % for the same entry, so the record is decided only
-by running both entries on one machine, twice.
+*Why:* every result is measured on the same machine, so scores at one pin are comparable, but
+repeated runs of one entry still differ a little, so a record must beat the standing one by a
+margin.
 
 The rule is [§8](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#8-verdicts-and-records)
-of the core. In short: while a record stands at the pin, your evaluation is a **duel** against it in
-one benchmark job, and you win with `S_yours ≤ 0.97 × S_record` there. A win makes your entry
-`confirming`, and one more duel of the same commit runs next, first in the queue. Win that too and
-you are the record, credited with the smaller of the two gains; lose it and you are `accepted`. With
-no standing record (at the start, after a retirement, or after a pin move whose port of the record
-failed), the first comparable, attested ACCEPT is the record, with no duel.
+of the core. In short: a comparable, attested ACCEPT at the pin is the new record iff
+`S_yours < (1 − margin) · S_record`, where `S_record` is the standing record's own score and the
+margin is 2 %, set by the owner. It does not keep noise out: the run-to-run spread of one
+entry's score on the evaluation machine with the fixed chain lengths is σ ≈ 1.75 % (ten runs at the
+core's smoke shape; mostly per-step process overhead, likely smaller at the season shape), so two
+runs of one entry differ by about √2·σ ≈ 2.5 %, and a near-copy of the record can beat it by noise.
+Byte copies of an evaluated root and re-used record prover binaries are refused (section 8), and
+the owner can retire a record that won by noise. The owner may change the margin between seasons.
+With no standing
+record (at the start, after a retirement, or after a pin move whose port of the record failed), the
+first comparable, attested ACCEPT is the record.
 
-What it means for you:
-
-- **A duel is slow.** It waits for both certificate jobs (the record's re-certification may take up
-  to 90 minutes) and a benchmark job that runs two streams (up to 100 minutes); a confirmation runs
-  it all again. A candidate REJECTed in seconds can still wait long while a record stands. Check
-  locally first.
-- **The record failing on the runner is neither a win nor a loss**: you get one more duel against
-  that record. A confirmation whose result is not comparable (a truncated stream, mixed CPU models)
-  is also run once more.
-- **A win counts only against the record it was won against.** If that record stops standing
-  before your confirmation (another entry beats it, or the pin moves), the win is void and your
-  entry is queued again for a fresh evaluation. If it is retired, your entry is `accepted`: a
-  retirement never makes a record of one win.
-- **The threshold and the two wins are being calibrated** and may change.
+- **Comparable** means the stream ran to the end and the job plan matched. A run whose machine
+  fingerprint is missing or not the season's, or whose chain lengths are not the season's, is the
+  organiser's ERROR, re-queued in its place; never yours. With the pin's caches in place, an evaluation takes about 100 minutes of
+  the machine (a certificate job and a benchmark job of at most 50 minutes each, 60 for the certificate when the second kernel checker is on), one at a time;
+  when the caches must first be built, as after a pin move, up to about three hours.
+- **A pin move ports the record**: it is re-evaluated at the new pin before any other entry and keeps
+  the crown with a comparable, attested ACCEPT; its new score is the one to beat.
 - `records.json` on `main` names the pin (`core`), the standing record (`record`, null when none
   stands) and every other record, of earlier pins and retired ones (`history`), newest first.
 
@@ -313,10 +358,12 @@ What it means for you:
 ## 13. Consequences that bite
 
 Read [§13](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#13-consequences-that-bit-real-entries)
-of the core before you design: each item cost a real entry. The five that change what to do first:
+of the core before you design: each item cost a real entry. The first entries' timings were
+measured on GitHub-hosted runners with a different chain hash, so they are indicative only unless
+marked "on the machine". The five that change what to do first:
 
 - **`V̄` dominates first**: the first recursive entry had `P̄ = 4.52`, `V̄ = 24.52`. Size `V` and `|π|` first.
 - **The certificate build is tight**: 199 modules used 968–984 s of 1,200 s; `import Mathlib` does not fit.
 - **Step 1 is the worst request**: two chains of up to `2^20` steps within `step_s = 60 s`. Test it.
-- **The DoS cap (`10 × v_ref`, about 2 s per input) binds a heavy `V`**, also on random `π` under a genuine trace.
+- **The DoS cap (`10 × v_ref`, 6.6 s per input on the machine) binds a heavy `V`**, also on random `π` under a genuine trace.
 - **Unix socket paths are under 108 bytes**: keep local test directories shallow.

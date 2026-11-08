@@ -9,7 +9,9 @@ import tests  # noqa: F401  (puts the bot on sys.path)
 import flows
 import gitdata
 import render
-from simulate import PIN, World, duel_of, git, good_root, make_result
+import common
+import rfqueue
+from simulate import PIN, World, commit_tree, git, good_root, make_result
 
 
 class E2E(unittest.TestCase):
@@ -27,7 +29,7 @@ class E2E(unittest.TestCase):
     def head_status(self, n):
         return self.g.statuses(self.g.prs[n]["head"]["sha"])[0]
 
-    def test_record_progression_duel_and_main(self):
+    def test_record_progression_and_main(self):
         for n, who in ((1, "alice"), (2, "bob"), (3, "carol")):
             self.g.open_pr(n, who, good_root(f"r{n}", str(n)))
             self.assertEqual(flows.intake(self.w.ctx(), n), "valid")
@@ -45,21 +47,18 @@ class E2E(unittest.TestCase):
         self.assertEqual((e["pr"], p["status"], "incumbent" in e, e["record_manifest"]), (1, "record", False, ""))
         rec = json.loads(self.w.show("main:records.json"))["record"]
         self.assertEqual(git(self.w.bare, "rev-parse", "main:submissions/r1"), p["tree"])
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.8, prover="2" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual((e["incumbent"]["id"], p["status"], e["record_manifest"]), (rec["id"], "accepted", "f" * 64))
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.5, prover="3" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual((p["status"], p["record_of"], p["duels"][0]["won"]), ("confirming", None, True))
-        self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["id"], rec["id"])   # not yet
-        self.assertEqual(self.head_status(3)["state"], "pending")
-        self.g.open_pr(4, "dora", good_root("r4", "4"))                   # queued now, but the confirmation goes first
-        self.w.intake(4)
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.6, prover="3" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual((e["pr"], e["incumbent"]["id"], p["status"], p["record_of"]), (3, rec["id"], "record", rec["id"]))
-        self.assertAlmostEqual(p["duel"]["gain"], 0.04)                  # the smaller of 5 % and 4 %
-        self.assertEqual([d["won"] for d in p["duels"]], [True, True])
-        self.assertIsNotNone(self.w.show(f"data:{p['duels'][0]['result']}"))
+        # the record rule: S < (1 - MARGIN) * S_record; exactly (1 - MARGIN) * 10 is not a record
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=(1 - common.MARGIN) * 10.0, prover="2" * 64))
+        self.assertEqual((p["status"], e["record_manifest"], p["against"]["record"]), ("accepted", "f" * 64, rec["id"]))
+        self.assertNotIn("incumbent", e)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="3" * 64))
+        self.assertEqual((e["pr"], p["status"], p["record_of"]), (3, "record", rec["id"]))
+        self.assertAlmostEqual(p["against"]["gain"], 0.1)
+        self.assertEqual(self.head_status(3)["state"], "success")
+        self.assertFalse(any(k in p for k in ("duel", "duels", "duel_with", "cpu")))
+        self.assertTrue(any("Against the record" in c[1] for c in self.g.comments))
         r2 = json.loads(self.w.show("main:records.json"))
-        self.assertEqual(([r2["record"]["pr"]] + [h["pr"] for h in r2["history"]], r2["margin"]), ([3, 1], 0.03))
+        self.assertEqual(([r2["record"]["pr"]] + [h["pr"] for h in r2["history"]], r2["margin"]), ([3, 1], 0.02))
         self.assertEqual(git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split(),
                          ["submissions/README.md", "submissions/example", "submissions/r3"])
         self.assertTrue(self.w.show(f"data:notes/{p['id']}.md").startswith(b"# r3"))
@@ -178,26 +177,21 @@ class E2E(unittest.TestCase):
         self.assertIsNone(flows.publish(self.w.ctx(dead["run_url"].rsplit("/", 1)[1]), dead["id"], None))
         self.g.open_pr(3, "carol", good_root("gamma"))
         self.w.intake(3)
-        e, p = self.w.evaluate(lambda e, run: dict(make_result(run, S=0.1, incumbent=duel_of(e, 3.0)), harness_commit="b" * 40))
+        e, p = self.w.evaluate(lambda e, run: dict(make_result(run, S=0.1), harness_commit="b" * 40))
         self.assertEqual((p["status"], p["verified"]), ("queued", False))
 
-    def test_incumbent_failure_retirement_and_pin_move(self):
+    def test_retirement_and_pin_move(self):
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
         self.w.intake(1)
         _, rec = self.w.evaluate(lambda e, run: make_result(run, S=10.0, prover="1" * 64))
         self.g.open_pr(2, "bob", good_root("beta", "2"))
         self.w.intake(2)
-        fail = lambda e, run: make_result(run, S=99.0, prover="2" * 64, incumbent=duel_of(e, entry_failed=True))  # noqa: E731
-        e, p = self.w.evaluate(fail)
-        self.assertEqual((p["status"], p["record_of"]), ("queued", None))   # never a crown
-        e, p = self.w.evaluate(fail)
-        self.assertEqual(p["status"], "queued")
-        st = self.w.state()
-        self.assertEqual(next(x for x in st["submissions"] if x["id"] == rec["id"])["status"], "retired")
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=99.0, prover="2" * 64))
-        self.assertEqual((p["status"], "incumbent" in e), ("record", False))
+        # the owner retires the record: no record stands, so #2's ACCEPT is the record whatever its S
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=99.0, prover="2" * 64), retire=rec["id"])
+        self.assertEqual((e["pr"], p["status"], p["record_of"], p["against"]), (2, "record", None, None))
+        self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == rec["id"])["status"], "retired")
         self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["id"], p["id"])
-        # the owner retires a record by hand
+        # the owner retires a record by hand with nothing queued
         e, p2 = self.w.evaluate(lambda e, run: None, retire=p["id"])
         self.assertIsNone(e)
         self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == p["id"])["status"], "retired")
@@ -205,14 +199,11 @@ class E2E(unittest.TestCase):
         self.w.pin = "c" * 40
         self.assertIsNone(self.w.evaluate(lambda e, run: None)[0])
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=80.0, harness=self.w.pin, prover="2" * 64), force=2)
-        self.assertEqual((e["port_of"], p["status"], "incumbent" in e), (self.entry(2)["id"], "record", False))
+        self.assertEqual((e["port_of"], p["status"]), (self.entry(2)["id"], "record"))
         self.g.open_pr(3, "carol", good_root("gamma", "3"))
         self.w.intake(3)
-        win = lambda e, run: make_result(run, S=70.0, harness=self.w.pin, prover="3" * 64, incumbent=duel_of(e, 80.0))  # noqa: E731
-        e, p = self.w.evaluate(win)
-        self.assertEqual((e["incumbent"]["tag"], p["status"]), (self.entry(2)["tag"], "confirming"))
-        e, p = self.w.evaluate(win)
-        self.assertEqual(p["status"], "record")
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=70.0, harness=self.w.pin, prover="3" * 64))
+        self.assertEqual((p["status"], p["record_of"]), ("record", self.entry(2)["id"] + "-cccccccc"))
 
     def test_pin_move_ports_the_record_first(self):
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
@@ -224,9 +215,8 @@ class E2E(unittest.TestCase):
         # even a forced run of #2 evaluates the record's port first, unpaired
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=11.0, harness=self.w.pin, prover="1" * 64), force=2)
         self.assertEqual((e["id"], e["port_of"], "incumbent" in e, p["status"]), (rec["id"] + "-cccccccc", rec["id"], False, "record"))
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=50.0, harness=self.w.pin, prover="2" * 64,
-                                                          incumbent=duel_of(e, 11.0)))
-        self.assertEqual((e["pr"], e["incumbent"]["id"], p["status"]), (2, rec["id"] + "-cccccccc", "accepted"))
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=50.0, harness=self.w.pin, prover="2" * 64))
+        self.assertEqual((e["pr"], p["against"]["record"], p["status"]), (2, rec["id"] + "-cccccccc", "accepted"))
         # the next pin: the port fails, so no record stands; main says so, and the queue proceeds
         self.w.pin = "d" * 40
         e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT", harness=self.w.pin))
@@ -246,26 +236,22 @@ class E2E(unittest.TestCase):
         self.assertEqual(rec["status"], "record")
         return rec
 
-    def win(self, S=9.0, S_inc=10.0, prover="2" * 64):
-        return lambda e, run: make_result(run, S=S, harness=self.w.pin, prover=prover, incumbent=duel_of(e, S_inc))
+    def win(self, S=9.0, prover="2" * 64):
+        return lambda e, run: make_result(run, S=S, harness=self.w.pin, prover=prover)
 
     def test_requeued_port_stays_first(self):
-        """A port re-queued after an ERROR still runs before a confirmation and a forced run."""
+        """A port re-queued after an ERROR still runs before the queue and a forced run."""
         rec = self.record_at()
-        self.g.open_pr(2, "bob", good_root("r2", "2"))
-        self.w.intake(2)
-        _, p = self.w.evaluate(self.win())
-        self.assertEqual(p["status"], "confirming")
-        self.g.open_pr(3, "carol", good_root("r3", "3"))
-        self.w.intake(3)
+        for n, who in ((2, "bob"), (3, "carol")):
+            self.g.open_pr(n, who, good_root(f"r{n}", str(n)))
+            self.w.intake(n)
         self.w.pin = "c" * 40
         e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR", harness=self.w.pin))
         self.assertEqual((e["port_of"], p["status"]), (rec["id"], "queued"))
-        self.assertEqual(self.entry(2)["status"], "queued")          # its win was against the old pin's record
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.2, harness=self.w.pin, prover="1" * 64), force=3)
         self.assertEqual((e["port_of"], p["status"]), (rec["id"], "record"))
-        e, p = self.w.evaluate(self.win(S=9.0, S_inc=10.2, prover="3" * 64))     # then the fair order: #3 first
-        self.assertEqual((e["pr"], e["incumbent"]["id"], p["status"]), (3, rec["id"] + "-cccccccc", "confirming"))
+        e, p = self.w.evaluate(self.win(S=9.0))                       # then the fair order: #2 first
+        self.assertEqual((e["pr"], p["against"]["record"], p["status"]), (2, rec["id"] + "-cccccccc", "record"))
 
     def test_ports_of_ports_keep_the_crown(self):
         rec = self.record_at()
@@ -276,75 +262,283 @@ class E2E(unittest.TestCase):
         # but another commit with that prover binary never takes it
         self.g.open_pr(2, "bob", good_root("r2", "2"))
         self.w.intake(2)
-        _, p = self.w.evaluate(lambda e, run: make_result(run, S=1.0, harness=self.w.pin, prover="1" * 64,
-                                                          incumbent=duel_of(e, 13.0)))
+        _, p = self.w.evaluate(lambda e, run: make_result(run, S=1.0, harness=self.w.pin, prover="1" * 64))
         self.assertEqual(p["status"], "accepted")
 
-    def test_wins_and_retries_are_per_record(self):
-        """A duel the old record failed does not use up the retry against the new one; a retirement
-        voids a win, and main and data name the new state at once."""
-        a = self.record_at()
+    def test_truncated_never_a_record(self):
+        """A truncated stream (the entry's own condition) is unranked."""
+        rec = self.record_at()
         self.g.open_pr(2, "bob", good_root("r2", "2"))
         self.w.intake(2)
-        fail = lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="2" * 64,  # noqa: E731
-                                          incumbent=duel_of(e, entry_failed=True))
-        _, p = self.w.evaluate(fail)
-        self.assertEqual(p["status"], "queued")
-        # the owner retires A: #2 then runs unpaired
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.0, harness=self.w.pin, prover="2" * 64), retire=a["id"])
-        self.assertEqual((e["pr"], "incumbent" in e, p["status"]), (2, False, "record"))
+        _, p = self.w.evaluate(lambda e, run: make_result(run, S=1.0, comparable=False, harness=self.w.pin, prover="2" * 64))
+        self.assertEqual((p["status"], p["record_of"]), ("unranked", None))
+        self.assertEqual(self.w.state()["record"], rec["id"])
+
+    def test_intake_runs_the_workflow_check(self):
+        """The intake (main's code) runs wfcheck on every head touching `.github/`."""
+        bad = ("on: pull_request_target\njobs:\n  a:\n    runs-on: rf-light\n    steps:\n"
+               "      - run: echo \"${{ github.event.pull_request.title }}\"\n").encode()
+        good = b"on: workflow_dispatch\njobs:\n  a:\n    runs-on: rf-light\n    steps:\n      - run: echo ok\n"
+        self.g.perms["owner"] = "admin"
+        self.g.open_pr(1, "owner", {".github/workflows/x.yml": bad})                # an organiser's PR
+        self.assertEqual(self.w.intake(1), "organiser")
+        self.assertEqual(self.head_status(1)["state"], "failure")
+        self.assertIn("workflow check failed", self.head_status(1)["description"])
+        self.assertTrue(any(n == 1 and "workflow check failed" in body and "github.event.pull_request.title" in body
+                            for n, body in self.g.comments))
+        self.g.open_pr(2, "owner", {".github/workflows/y.yml": good})
+        self.assertEqual(self.w.intake(2), "organiser")
+        self.assertEqual(self.g.statuses(self.g.prs[2]["head"]["sha"]), [])        # a clean change: no status
+        self.g.open_pr(3, "mallory", {**good_root("m3", "3"), ".github/workflows/z.yml": bad})
+        self.assertEqual(self.w.intake(3), "invalid")
+        self.assertTrue(any(r.startswith("workflow check:") for r in self.entry(3)["reasons"]))
+
+    def test_unverified_results_are_the_organisers(self):
+        """A result whose attestation fails is a named organiser error (it never counts against the
+        author: no place lost), two in a row pause the queue (nothing an entry runs reaches the attestation),
+        and it never clears a pause."""
+        self.g.open_pr(1, "ann", good_root("a1", "1"))
+        self.w.intake(1)
+        unverified = lambda e, run: make_result(run, S=1.0, harness="b" * 40)   # noqa: E731  (fake: not attested)
+        _, p = self.w.evaluate(unverified)
+        self.assertEqual((p["status"], p["counted_at"]), ("queued", None))
+        _, p = self.w.evaluate(unverified)
+        self.assertEqual((p["status"], p["counted_at"], p.get("generic_errors", 0)), ("error", None, 0))
+        import rfqueue
+        self.assertEqual([x for x in self.w.state()["submissions"] if rfqueue.counted_start(x)], [])
+        st = self.w.state()
+        self.assertEqual(([x["kind"] for x in st["error_streak"]], bool(st.get("paused"))), (["attestation"] * 2, True))
+        self.assertEqual(len(self.g.issues), 1)
+        # a pause is not lifted by an unverified result
+        self.g.open_pr(2, "bob", good_root("b2", "2"))
+        self.w.intake(2)
+        self.assertIsNone(self.w.evaluate(unverified)[0])                   # paused: nothing runs
+        self.w.evaluate(unverified, force=2)
+        self.assertTrue(self.w.state().get("paused"))
+        self.assertEqual(len(self.g.issues), 1)
+        self.w.evaluate(lambda e, run: make_result(run, S=1.0, prover="2" * 64), force=2)
+        self.assertIsNone(self.w.state().get("paused"))
+
+    def test_machine_mismatch_is_an_organiser_error_that_keeps_its_place(self):
+        """Another machine's fingerprint is the organiser's ERROR: re-queued in its place
+        without using up an attempt, never counted; two in a row pause the queue with one owner
+        notice; a forced run with a clean result resumes it."""
+        rec = self.record_at()
+        self.g.open_pr(2, "bob", good_root("r2", "2"))
+        self.w.intake(2)
         self.g.open_pr(3, "carol", good_root("r3", "3"))
         self.w.intake(3)
-        b = p
-        self.g.open_pr(4, "dora", good_root("r4", "4"))
-        self.w.intake(4)
-        _, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="3" * 64,
-                                                          incumbent=duel_of(e, 10.0)))
-        self.assertEqual(p["status"], "confirming")
-        # B fails in the confirmation: one retry against B (not used up by A), then B fails again: retired
-        _, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="3" * 64,
-                                                          incumbent=duel_of(e, entry_failed=True)))
-        self.assertEqual((p["pr"], p["status"]), (3, "confirming"))
-        _, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, harness=self.w.pin, prover="3" * 64,
-                                                          incumbent=duel_of(e, entry_failed=True)))
-        self.assertEqual(p["status"], "accepted")                        # B retired: one win is not a record
+        off = lambda e, run: make_result(run, S=1.0, harness=self.w.pin, prover="2" * 64, machine_ok=False)  # noqa: E731
+        e, p = self.w.evaluate(off)
+        self.assertEqual((e["pr"], p["status"], p["verdict"], p["attempts"]), (2, "queued", "ERROR", 0))
+        self.assertTrue(any("machine fingerprint is mismatched" in r for r in p["reasons"]))
+        import rfqueue
         st = self.w.state()
-        self.assertEqual((st["record"], next(x for x in st["submissions"] if x["id"] == b["id"])["status"]), (None, "retired"))
-        self.assertIsNone(json.loads(self.w.show("main:records.json"))["record"])   # main follows at once
+        self.assertEqual([x["pr"] for x in rfqueue.order(st)], [2, 3])      # bob's ERROR run does not move him back
+        self.assertIsNone(rfqueue.counted_start(self.entry(2)))
+        self.assertEqual((len(st["error_streak"]), st.get("paused")), (1, None))
+        self.assertEqual(self.head_status(2)["state"], "pending")
+        e, p = self.w.evaluate(off)
+        self.assertEqual((e["pr"], p["status"], p["attempts"]), (2, "queued", 0))     # still no attempt used
+        st = self.w.state()
+        self.assertEqual(rfqueue.pause_count(st["error_streak"]), 2)
+        self.assertTrue(st["paused"]["reason"].startswith("organiser ERROR: the machine fingerprint"))
+        self.assertEqual(len(getattr(self.g, "issues", [])), 1)
+        self.assertIn("paused", self.g.issues[0][0])
+        n = len(self.g.dispatches)
+        self.assertIsNone(self.w.evaluate(off)[0])                          # paused: nothing runs
+        self.assertEqual(len(self.g.dispatches), n)
+        e, p = self.w.evaluate(off, force=3)                                # the owner's test run, still broken
+        self.assertEqual((p["status"], len(self.g.issues)), ("queued", 1))  # no second notice
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=5.0, harness=self.w.pin, prover="2" * 64), force=2)
+        self.assertEqual((e["pr"], p["status"], p["record_of"]), (2, "record", rec["id"]))
+        st = self.w.state()
+        self.assertEqual((st["error_streak"], st.get("paused")), ([], None))
+        e, _ = self.w.evaluate(lambda e, run: make_result(run, "REJECT", harness=self.w.pin))
+        self.assertEqual(e["pr"], 3)                                        # resumed
 
-    def test_owner_retirement_voids_a_pending_confirmation(self):
-        rec = self.record_at()
-        self.g.open_pr(2, "bob", good_root("r2", "2"))
+    def test_lengths_error_pauses_like_a_fingerprint_error(self):
+        """A stream that did not use the season's fixed chain lengths is the core's named organiser
+        ERROR `lengths`: an organiser bug, the same at every retry at one pin. Like a fingerprint
+        error it is re-queued in its place without using up an attempt, never counted for the
+        author, and two in a row pause the queue with one owner notice; a clean forced run resumes."""
+        self.g.open_pr(1, "ann", good_root("a1", "1"))
+        self.w.intake(1)
+        self.g.open_pr(2, "bob", good_root("b2", "2"))
         self.w.intake(2)
-        _, p = self.w.evaluate(self.win())
-        self.assertEqual(p["status"], "confirming")
-        e, _ = self.w.evaluate(lambda e, run: None, retire=rec["id"])
-        self.assertIsNone(e)                                            # nothing left to run
-        x = self.entry(2)
-        self.assertEqual((x["status"], self.head_status(2)["state"]), ("accepted", "success"))
-        self.assertIn("one win is not a record", x["reasons"][-1])
+        bad = lambda e, run: make_result(run, "ERROR", harness=self.w.pin, organiser_error="lengths")  # noqa: E731
+        e, p = self.w.evaluate(bad)
+        self.assertEqual((e["pr"], p["status"], p["attempts"], p["counted_at"]), (1, "queued", 0, None))
+        self.assertTrue(any("the season's chain lengths" in r for r in p["reasons"]))
+        import rfqueue
+        st = self.w.state()
+        self.assertEqual([x["pr"] for x in rfqueue.order(st)], [1, 2])      # ann keeps her place
+        self.assertIsNone(rfqueue.counted_start(self.entry(1)))
+        self.assertEqual((len(st["error_streak"]), st.get("paused")), (1, None))
+        e, p = self.w.evaluate(bad)
+        self.assertEqual((e["pr"], p["status"], p["attempts"], p.get("generic_errors", 0)), (1, "queued", 0, 0))
+        st = self.w.state()
+        self.assertEqual([x["kind"] for x in st["error_streak"]], ["lengths", "lengths"])
+        self.assertTrue(st["paused"])
+        self.assertEqual(len(getattr(self.g, "issues", [])), 1)
+        self.assertIn("paused", self.g.issues[0][0])
+        self.assertIn("chain lengths", self.g.issues[0][1])
+        n = len(self.g.dispatches)
+        self.assertIsNone(self.w.evaluate(bad)[0])                          # paused: nothing runs
+        self.assertEqual(len(self.g.dispatches), n)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT", harness=self.w.pin), force=1)
+        self.assertEqual((e["pr"], p["status"]), (1, "rejected"))
+        st = self.w.state()
+        self.assertEqual((st["error_streak"], st.get("paused")), ([], None))
 
-    def test_duel_failures_count_in_a_row(self):
-        rec = self.record_at()
-        for n in (2, 3):
-            self.g.open_pr(n, f"u{n}", good_root(f"r{n}", str(n)))
+    def test_named_and_unnamed_errors(self):
+        """A named organiser error (setup, cache, drift) never counts against the author and uses the
+        retry; an unnamed ERROR is not counted the first time, then counts; after two ERRORs the status says the entry is
+        waiting on the organiser (pending, not red). Two entry-proof errors in a row (setup, cache)
+        pause the queue."""
+        self.g.open_pr(1, "ann", good_root("a1", "1"))
+        self.w.intake(1)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR", organiser_error="setup"))
+        self.assertEqual((p["status"], p["attempts"], p["counted_at"]), ("queued", 1, None))
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR", organiser_error="cache"))
+        self.assertEqual((p["status"], p["counted_at"]), ("error", None))
+        self.assertEqual(self.head_status(1)["state"], "pending")
+        self.assertIn("waiting on the organiser", self.head_status(1)["description"])
+        self.assertTrue(self.w.state()["paused"])
+        self.assertIn(e["id"], self.g.issues[0][1].split("Left in `error`")[1])
+        self.g.open_pr(2, "ann", good_root("a2", "2"))
+        self.w.intake(2)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR"), force=2)   # unnamed: not counted the first time
+        self.assertEqual((p["status"], p["counted_at"], p["generic_errors"]), ("queued", None, 1))
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR"), force=2)   # the retry's ERROR counts
+        self.assertEqual((p["status"], p["generic_errors"]), ("error", 2))
+        self.assertIsNotNone(p["counted_at"])
+        self.assertEqual((len(self.w.state()["error_streak"]), len(self.g.issues)), (4, 1))
+
+    def test_mixed_organiser_errors_pause_and_resume(self):
+        """Every run that ends on the organiser's side joins the error streak. One author's
+        entry, whatever it provokes (drift, harness: kinds an entry might cause), counts once, so no
+        author can pause the queue alone; the next author's organiser error (setup) pauses it with
+        one notice that lists the runs and the entry left in `error`. A REJECT that never reached
+        the benchmark (at the certificate) neither counts nor clears the streak, before or during
+        the pause. While paused only forced runs run, an ERROR in one keeps the pause, and a clean
+        verdict whose stream ran on the season's machine resumes the queue."""
+        for n, who in ((1, "alice"), (2, "bob"), (3, "carol"), (4, "dave"), (5, "erin")):
+            self.g.open_pr(n, who, good_root(f"m{n}", str(n)))
             self.w.intake(n)
-        self.w.evaluate(lambda e, run: make_result(run, S=9.9, harness=self.w.pin, prover="2" * 64,
-                                                   incumbent=duel_of(e, entry_failed=True)))
-        self.w.evaluate(lambda e, run: make_result(run, S=9.9, harness=self.w.pin, prover="3" * 64,
-                                                   incumbent=duel_of(e, 10.0)))       # a completed duel
-        self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == rec["id"])["duel_failures"], 0)
+        err = lambda kind: (lambda e, run: make_result(run, "ERROR", organiser_error=kind))  # noqa: E731
+        cert_reject = lambda e, run: make_result(run, "REJECT", stream=False)  # noqa: E731
+        e, p = self.w.evaluate(err("drift"), force=1)
+        self.assertEqual((e["pr"], p["status"], p["attempts"]), (1, "queued", 1))
+        e, p = self.w.evaluate(cert_reject, force=3)                          # interleaved: not a reset
+        self.assertEqual((e["pr"], p["status"]), (3, "rejected"))
+        self.assertEqual([x["kind"] for x in self.w.state()["error_streak"]], ["drift"])
+        e, p = self.w.evaluate(err("harness"), force=1)                       # alice's retry: still one author
+        self.assertEqual((e["pr"], p["status"]), (1, "error"))
+        st = self.w.state()
+        self.assertEqual(([x["kind"] for x in st["error_streak"]], rfqueue.pause_count(st["error_streak"]),
+                          st.get("paused")), (["drift", "harness"], 1, None))
+        self.assertEqual(getattr(self.g, "issues", []), [])
+        alice = e["id"]
+        e, p = self.w.evaluate(err("setup"), force=2)                         # bob's run: the second author
+        self.assertEqual((e["pr"], p["status"], p["attempts"]), (2, "queued", 1))  # his retry is kept
+        st = self.w.state()
+        self.assertTrue(st["paused"]["reason"])
+        self.assertEqual(len(self.g.issues), 1)
+        title, body = self.g.issues[0]
+        self.assertEqual(title, render.PAUSE_TITLE)
+        for k in ("drift", "harness", "setup"):
+            self.assertIn(f"`{k}`", body)
+        self.assertIn(alice, body.split("Left in `error`")[1])
+        self.assertTrue(all(b.count("`") % 2 == 0 for _, b in self.g.issues))
+        n = len(self.g.dispatches)
+        self.assertIsNone(self.w.evaluate(err("setup"))[0])                  # paused: nothing runs
+        self.assertEqual(len(self.g.dispatches), n)
+        e, p = self.w.evaluate(cert_reject, force=4)                          # a forced cert-stage REJECT
+        self.assertEqual((e["pr"], p["status"], bool(self.w.state().get("paused")), len(self.w.state()["error_streak"])),
+                         (4, "rejected", True, 3))                            # does not resume
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR"), force=5)   # an unnamed ERROR keeps it
+        self.assertEqual((e["pr"], p["status"], bool(self.w.state().get("paused")), len(self.g.issues)),
+                         (5, "queued", True, 1))
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT"), force=2)  # a REJECT after the stream
+        self.assertEqual((e["pr"], p["status"]), (2, "rejected"))
+        st = self.w.state()
+        self.assertEqual((st["error_streak"], st.get("paused")), ([], None))
+        self.assertEqual(self.g.dispatches[-1][0], "evaluate-next.yml")    # the queue goes on
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT"))
+        self.assertEqual(e["pr"], 5)
+        self.assertIsNone(self.w.evaluate(lambda e, run: make_result(run, "REJECT"))[0])
+        # the entry left in error is the owner's to force
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT"), force=1)
+        self.assertEqual((e["id"], p["status"]), (alice, "rejected"))
 
-    def test_noncomparable_confirmation_retried_once(self):
-        self.record_at()
-        self.g.open_pr(2, "bob", good_root("r2", "2"))
+    def test_an_outage_between_certificate_rejects_still_pauses(self):
+        """A benchmark-side outage (an evicted service cache, a drifting machine) interleaved with
+        certificate-stage REJECTs: those REJECTs never reach the benchmark, so they do not reset
+        the streak, and the outage pauses the queue at the second author's entry. A missing result
+        (no result artifact) counts once per author. The owner can also clear a pause by hand
+        (`resume`)."""
+        for n, who in ((1, "alice"), (2, "bob"), (3, "carol"), (4, "dave")):
+            self.g.open_pr(n, who, good_root(f"o{n}", str(n)))
+            self.w.intake(n)
+        cert_reject = lambda e, run: make_result(run, "REJECT", stream=False)  # noqa: E731
+        self.w.evaluate(lambda e, run: None, force=1)                         # no result: alice, once
+        self.w.evaluate(cert_reject, force=3)
+        self.w.evaluate(lambda e, run: None, force=1)                         # alice again: still one
+        st = self.w.state()
+        self.assertEqual(([x["kind"] for x in st["error_streak"]], rfqueue.pause_count(st["error_streak"]),
+                          st.get("paused")), (["noresult", "noresult"], 1, None))
+        self.w.evaluate(cert_reject, force=4)
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR", organiser_error="drift"), force=2)
+        st = self.w.state()
+        self.assertEqual((e["pr"], [x["kind"] for x in st["error_streak"]], bool(st.get("paused"))),
+                         (2, ["noresult", "noresult", "drift"], True))
+        self.assertIn("`noresult`", self.g.issues[0][1])
+        self.assertIsNone(self.w.evaluate(lambda e, run: make_result(run, "REJECT"))[0])   # paused
+        # the owner clears the pause by hand; the queue runs bob's retry unforced
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT", stream=False), resume=True)
+        self.assertEqual((e["pr"], p["status"]), (2, "rejected"))
+        st = self.w.state()
+        self.assertEqual((st["error_streak"], st.get("paused")), ([], None))
+
+    def test_a_reaped_run_joins_the_streak_and_select_pauses(self):
+        """A run that died (reaped by the next select) is an organiser-side ERROR of the streak; if
+        it completes a pause, `select` pauses the queue, opens the notice and starts nothing."""
+        self.g.open_pr(1, "alice", good_root("a1", "1"))
+        self.w.intake(1)
+        self.g.open_pr(2, "bob", good_root("b2", "2"))
         self.w.intake(2)
-        self.w.evaluate(self.win())
-        nc = lambda e, run: make_result(run, S=9.0, comparable=False, harness=self.w.pin, prover="2" * 64)  # noqa: E731
-        _, p = self.w.evaluate(nc)
-        self.assertEqual(p["status"], "confirming")
-        _, p = self.w.evaluate(nc)
-        self.assertEqual(p["status"], "unranked")
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "ERROR", organiser_error="cache"))
+        self.assertEqual((e["pr"], p["status"]), (1, "queued"))
+        self.w.run += 1
+        dead = flows.select(self.w.ctx(self.w.run))                        # alice's retry dies
+        self.assertEqual(dead["pr"], 1)
+        self.assertIsNone(self.w.evaluate(lambda e, run: make_result(run, "REJECT"))[0])   # reaped, then paused
+        st = self.w.state()
+        self.assertEqual(([x["kind"] for x in st["error_streak"]], bool(st.get("paused"))), (["cache", "reaped"], True))
+        self.assertEqual(self.entry(1)["status"], "error")
+        self.assertEqual(len(self.g.issues), 1)
+        self.assertIn("`reaped`", self.g.issues[0][1])
+        e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT"), force=2)
+        self.assertEqual((e["pr"], p["status"], self.w.state().get("paused")), (2, "rejected", None))
+
+    def test_one_author_runs_back_to_back_with_no_cap(self):
+        """There is no cap on an author's evaluations: with nobody else waiting, one author's entries
+        run back to back, as many as there are; another author's entry, once queued, goes before that
+        author's next (the fair order caps nothing, it only decides who goes next)."""
+        for n in range(1, 7):
+            self.g.open_pr(n, "carol", good_root(f"c{n}", str(n)))
+            self.w.intake(n)
+        for n in range(1, 6):
+            e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT"))
+            self.assertEqual((e["pr"], p["status"]), (n, "rejected"))
+        self.g.open_pr(7, "dave", good_root("d7", "7"))
+        self.w.intake(7)
+        e, _ = self.w.evaluate(lambda e, run: make_result(run, "REJECT"))
+        self.assertEqual(e["pr"], 7)
+        e, _ = self.w.evaluate(lambda e, run: make_result(run, "REJECT"))
+        self.assertEqual(e["pr"], 6)
+        self.assertIsNone(self.w.evaluate(lambda e, run: make_result(run, "REJECT"))[0])
 
     def test_pin_move_refreshes_data_and_main_at_once(self):
         rec = self.record_at()
@@ -357,30 +551,67 @@ class E2E(unittest.TestCase):
         self.assertEqual(main["history"][0]["id"], rec["id"])
         self.assertIn(("evaluate-next.yml", "main"), self.g.dispatches[n0:])   # for the port
 
-    def test_confirmation_lost_and_pushes_meanwhile(self):
+    # what the launch left on the live branches: an earlier pin, another margin and the removed
+    # `record_wins`, with no submission evaluated
+    LAUNCH_DATA = (b'{\n "version": 1,\n "updated": "2026-11-03T11:25:21Z",\n "repo": "scaraven/recursion.fast-submissions",\n'
+                   b' "core": "df1f3448f9ec181ce1fcae43964fd11301f653bf",\n "margin": 0.03,\n "record_wins": 2,\n'
+                   b' "submissions": [],\n "record": null\n}\n')
+    LAUNCH_RECORDS = (b'{\n "version": 1,\n "core": "df1f3448f9ec181ce1fcae43964fd11301f653bf",\n "margin": 0.03,\n'
+                      b' "record_wins": 2,\n "record": null,\n "history": []\n}\n')
+
+    def seed(self, data, records):
+        b = self.w.bare
+        git(b, "update-ref", "refs/heads/data", commit_tree(b, None, {"submissions.json": data, "notes.md": b"# notes\n"}, "data"))
+        git(b, "update-ref", "refs/heads/main", commit_tree(b, git(b, "rev-parse", "main"), {"records.json": records}, "records"))
+
+    def test_launch_state_is_rewritten_for_the_new_pin_and_margin(self):
+        """The state of an earlier launch (another pin and margin, `record_wins`) loads without an
+        error and is rewritten by the first sync, on `data` and `main`; nothing else is lost."""
+        self.seed(self.LAUNCH_DATA, self.LAUNCH_RECORDS)
+        self.assertTrue(self.w.state()["_stale"])
+        flows.sync(self.w.ctx())
+        st = json.loads(self.w.show("data:submissions.json"))
+        self.assertEqual((st["core"], st["margin"], st["submissions"], st["record"], "record_wins" in st),
+                         (PIN, common.MARGIN, [], None, False))
+        self.assertEqual(self.w.show("main:records.json"), render.records_json(rfqueue.empty("o/r", PIN), PIN))
+        self.assertFalse(self.w.state()["_stale"])
+        self.assertEqual(flows.sync(self.w.ctx()), 0)                       # then idempotent
+        self.assertEqual(json.loads(self.w.show("data:submissions.json"))["updated"], st["updated"])
+        rec = self.record_at()                                              # the first ACCEPT is the record
+        self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["id"], rec["id"])
+
+    def test_margin_change_alone_rewrites_the_state(self):
+        """At the same pin, a stored state with another margin is rewritten (the evaluated entries kept)."""
+        rec = self.record_at()
+        raw = json.loads(self.w.show("data:submissions.json"))
+        raw["margin"] = 0.05
+        self.seed(json.dumps(raw).encode(), self.w.show("main:records.json").replace(
+            b'"margin": %s' % str(common.MARGIN).encode(), b'"margin": 0.05'))
+        self.assertIn(b'"margin": 0.05', self.w.show("main:records.json"))
+        flows.sync(self.w.ctx())
+        st = json.loads(self.w.show("data:submissions.json"))
+        self.assertEqual((st["margin"], st["record"], [e["id"] for e in st["submissions"]]), (common.MARGIN, rec["id"], [rec["id"]]))
+        self.assertEqual(json.loads(self.w.show("main:records.json"))["margin"], common.MARGIN)
+
+    def test_pushes_while_running(self):
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
         self.w.intake(1)
         _, rec = self.w.evaluate(lambda e, run: make_result(run, S=10.0, prover="1" * 64))
         self.g.open_pr(2, "bob", good_root("beta", "2"))
         self.w.intake(2)
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="2" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual(p["status"], "confirming")
-        first = p["id"]
-        # the author pushes an empty commit (refused: being evaluated), then a real change (queued
-        # behind); neither touches the confirmation, nor does a run that dies
+        self.w.run += 1
+        dead = flows.select(self.w.ctx(self.w.run))                   # a run that dies with #2 running
+        # the author pushes an empty commit (refused: being evaluated), then a real change (queued)
         self.g.push(2, {})
         self.assertEqual(self.w.intake(2), "invalid")
         self.assertIn("being evaluated", self.entry(2)["reasons"][0])
         self.g.push(2, {"submissions/beta/lean/Solution.lean": b"-- v2\n"})
         self.assertEqual(self.w.intake(2), "valid")
-        self.w.run += 1
-        dead = flows.select(self.w.ctx(self.w.run))
-        self.assertEqual(dead["id"], first)
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.9, prover="2" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual((e["id"], p["status"], [d["won"] for d in p["duels"]]), (first, "accepted", [True, False]))
-        self.assertEqual(json.loads(self.w.show("data:submissions.json"))["record"], rec["id"])
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="4" * 64, incumbent=duel_of(e, 10.0)))
-        self.assertEqual((e["pr"], e["id"] != first, p["status"]), (2, True, "confirming"))
+        # the next run reaps the dead one; its commit is no longer the head, so it is superseded
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="4" * 64))
+        self.assertEqual((e["pr"], e["id"] != dead["id"], p["status"]), (2, True, "record"))
+        old = next(x for x in self.w.state()["submissions"] if x["id"] == dead["id"])
+        self.assertEqual(old["status"], "superseded")
 
     def test_record_cache_retry_and_build(self):
         self.g.open_pr(1, "alice", good_root("alpha"))

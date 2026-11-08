@@ -74,6 +74,10 @@ class GitHub:
     def comment(self, n, body):
         self._req("POST", self._repo(f"issues/{int(n)}/comments"), {"body": body})
 
+    def issue(self, title, body):
+        """An owner-facing notice (a new issue)."""
+        self._req("POST", self._repo("issues"), {"title": title, "body": body})
+
     def set_status(self, sha, state, description, target_url=None):
         body = {"state": state, "context": STATUS_CONTEXT, "description": description[:140]}
         if target_url:

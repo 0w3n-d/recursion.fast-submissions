@@ -6,9 +6,11 @@ working tree and no hook or filter runs.
 
 The token, if any, goes to git as an HTTP header through `GIT_CONFIG_*` variables (never argv, a
 config file or a URL)."""
+import atexit
 import base64
 import os
 import random
+import shutil
 import subprocess
 import tempfile
 import time
@@ -26,7 +28,12 @@ class Repo:
 
     def __init__(self, url, token=None, workdir=None):
         self.url = url
-        self.dir = workdir or tempfile.mkdtemp(prefix="rf-git-")
+        if workdir is None:
+            # a private repository of this process, removed when it exits (the tests create
+            # thousands; leaked ones exhausted the inodes of a shared /tmp)
+            workdir = tempfile.mkdtemp(prefix="rf-git-")
+            atexit.register(shutil.rmtree, workdir, True)
+        self.dir = workdir
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         self.env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
                          "GIT_AUTHOR_NAME": BOT_NAME, "GIT_AUTHOR_EMAIL": BOT_EMAIL,

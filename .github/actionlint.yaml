@@ -1,0 +1,5 @@
+# The organiser's runner labels: the server registers each runner with exactly one, rf-bench or rf-light.
+self-hosted-runner:
+  labels:
+    - rf-bench
+    - rf-light

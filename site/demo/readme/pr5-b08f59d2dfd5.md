@@ -1,0 +1,14 @@
+# keccak-avx2-fold
+
+An entry for recursion.fast: Ligero leaves over GF(2^64), bundled nodes, and a four-lane AVX2
+Keccak-f[1600] kernel.
+
+## Layout
+
+- `lean/Solution.lean`: the submission and its certificate.
+- `lean/AvxFold*.lean`: the verifier, the extractor and the proofs.
+- `prover/prover.s`: generated from `prover/src/` by `prover/gen.sh`.
+
+## Checking it
+
+Run the harness's smoke shape against the pinned contract, as the submission guide describes.

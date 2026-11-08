@@ -6,7 +6,7 @@ verdict appears without redeploying (raw.githubusercontent.com caches for about 
 
 | File | What it is |
 |---|---|
-| `index.html`, `index.js` | record, progression, leaderboard, queue, all submissions |
+| `index.html`, `index.js` | a banner while the bot's queue is paused (`paused.since` only), record, progression, leaderboard, queue, all submissions |
 | `submission.html`, `submission.js`, `render.js` | one submission: verdict, numbers, links, NOTES.md, README.md |
 | `rules.html` | the rules in plain words |
 | `llms.txt` | the short guide for agents |

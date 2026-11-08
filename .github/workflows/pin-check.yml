@@ -2,8 +2,10 @@
 # `uses: …/evaluate.yml@<PIN>` and `core_ref: <PIN>` of evaluate-next.yml must be the same full SHA
 # (.github/bot/pin.py), and the core's evaluate.yml at the pin must take every input the bot passes
 # and pin every action by full commit SHA, with the season's [entry] caps equal to the intake's.
-# Warns if the pin is not the core's `main` head. On a pull request, the checker is `main`'s copy (the base commit) and the pull request's
-# head is read as data (git show / ls-tree of a bare fetch): its own code is never run. The bot's
+# Warns if the pin is not the core's `main` head. On a pull request (GitHub-hosted), the checker is
+# `main`'s copy (the base commit) and the pull request's head is read as data (git show / ls-tree of a
+# bare fetch): its own code is never run; `wfcheck.py` refuses any of its workflows that would run
+# on the organiser's runners for a fork-controlled event. The bot's
 # tests run on pushes to `main` only. Set the pin with .github/bot/pin-core.sh <sha>.
 name: pin-check
 on:
@@ -18,19 +20,21 @@ defaults:
     shell: bash
 
 jobs:
-  pin:
+  # a pull request's run executes the pull request's own copy of this file, so it never runs on the
+  # organiser's server: GitHub-hosted (no workflow on main targets rf-* from a fork-controlled event)
+  pr:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions: { contents: read }
     steps:
-      - name: the checker (main's code; the base commit for a pull request)
+      - name: the checker (main's code, the base commit)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           path: base
           persist-credentials: false
-      - name: a pull request's pins, read as data, and the core at its pin
-        if: github.event_name == 'pull_request'
+      - name: a pull request's workflows and pins, read as data (wfcheck.py, pin.py), and the core at its pin
         env:
           REPO: ${{ github.repository }}
           NUM: ${{ github.event.pull_request.number }}
@@ -41,9 +45,26 @@ jobs:
           fi
           git init -q --bare pr.git
           git --git-dir pr.git fetch -q --depth=1 --no-tags "https://github.com/$REPO.git" "refs/pull/$NUM/head"
-          python3 -I base/.github/bot/pin.py --core --git pr.git FETCH_HEAD
+          rc=0
+          # no workflow of the pull request may reach the organiser's runners from a fork-controlled
+          # event (fail-closed; the base's checker on the head's files, never the head's code)
+          if [[ -f base/.github/bot/wfcheck.py ]]; then python3 -I base/.github/bot/wfcheck.py --git pr.git FETCH_HEAD || rc=1; fi
+          python3 -I base/.github/bot/pin.py --core --git pr.git FETCH_HEAD || rc=1
+          exit $rc
+
+  main:
+    if: github.event_name == 'push'
+    runs-on: rf-light
+    timeout-minutes: 10
+    permissions: { contents: read }
+    steps:
+      - name: the checker (main's code)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: base
+          persist-credentials: false
       - name: main's pins, the core's inputs and caps at the pin
-        if: github.event_name == 'push'
         run: |
           out=$(python3 -I base/.github/bot/pin.py --core base)
           pin=${out##*$'\n'}
@@ -53,5 +74,4 @@ jobs:
             echo "::warning title=pin::the pin $pin is not the core's main head ($head)"
           fi
       - name: the bot's tests
-        if: github.event_name == 'push'
         run: python3 -I -m unittest discover -s base/.github/bot/tests -t base/.github/bot

@@ -75,6 +75,8 @@ pre code { background: none; border: 0; padding: 0; }
 .skip:focus { top: 8px; }
 
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+.paused-banner { margin: 0 0 16px; padding: 10px 16px; border: 1px solid var(--warn); border-radius: 10px; background: var(--warn-soft); color: var(--ink); }
+.paused-banner[hidden] { display: none; }
 .demo-banner { margin: 0; padding: 6px 16px; text-align: center; font-size: 14px; background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line); }
 
 /* header */
@@ -209,8 +211,6 @@ table.data:has(.empty-row) { min-width: 0; }
 .warn-text { color: var(--warn); font-weight: 600; }
 code.hash { overflow-wrap: anywhere; word-break: break-all; }
 .st-queued, .st-running { color: var(--info); background: var(--info-soft); }
-.st-confirming { color: var(--accent-ink); background: var(--info-soft); border-style: dashed; }
-.st-confirming::before { border-radius: 50% 50% 0 50%; }
 .st-queued::before { background: transparent; border: 1.5px solid currentColor; width: 5px; height: 5px; }
 @media (prefers-reduced-motion: no-preference) {
   .st-running::before { animation: pulse 1.4s ease-in-out infinite; }
@@ -255,11 +255,8 @@ code.hash { overflow-wrap: anywhere; word-break: break-all; }
 .metrics .lbl { display: block; font-size: 14px; color: var(--muted); }
 .metrics .val { display: block; font-size: 28px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .metrics .val small { font-size: 15px; font-weight: 500; color: var(--muted); }
-.duel { margin: 12px 0 0; max-width: 80ch; color: var(--ink-2); }
-.duel strong { color: var(--ink); }
-.duel p { margin: 0; }
-.duel ol.duels { margin: 6px 0 0; padding-left: 1.4em; }
-.duel ol.duels li { margin: 2px 0; }
+.against { margin: 12px 0 0; max-width: 80ch; color: var(--ink-2); }
+.against strong { color: var(--ink); }
 .reasons { margin: 0; padding-left: 1.2em; }
 .reasons li { margin: 4px 0; max-width: 80ch; }
 .reasons code { white-space: pre-wrap; }

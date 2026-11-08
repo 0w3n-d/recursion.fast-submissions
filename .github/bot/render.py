@@ -4,17 +4,17 @@ code spans (comments) or inside a fence longer than any it contains (notes.md)."
 import json
 import re
 
-from common import MARGIN, RECORD_WINS, ascii_line, code_span, is_num
+from common import MARGIN, STREAK_WINDOW_S, ascii_line, code_span, is_num
 import rfqueue
 
 STATE = {"record": "success", "accepted": "success", "unranked": "success", "provisional": "failure",
-         "rejected": "failure", "invalid": "failure", "error": "error", "queued": "pending", "running": "pending",
-         "confirming": "pending", "retired": "success"}
+         "rejected": "failure", "invalid": "failure", "error": "pending", "queued": "pending", "running": "pending",
+         "retired": "success"}
 WORDS = {"record": "new record", "accepted": "accepted (did not beat the record)",
          "unranked": "accepted, not comparable (not ranked)", "provisional": "provisional (never ranked)",
-         "rejected": "rejected", "error": "organiser-side error (left for the owner)", "invalid": "invalid submission",
+         "rejected": "rejected", "error": "waiting on the organiser (an organiser-side error)", "invalid": "invalid submission",
          "queued": "queued", "running": "evaluating", "superseded": "superseded", "withdrawn": "withdrawn",
-         "retired": "a record, retired", "confirming": "won a duel, confirmation duel queued"}
+         "retired": "a record, retired"}
 
 
 def num(x, nd=4):
@@ -31,7 +31,7 @@ def status_for(e):
         return "error", ascii_line(f"{st}: {why}" if why else st, 140)
     if e.get("verdict") and st not in ("queued", "running"):
         d = f"{e['verdict']}: {d}"
-    if is_num(s) and st in ("record", "accepted", "unranked", "provisional", "confirming"):
+    if is_num(s) and st in ("record", "accepted", "unranked", "provisional"):
         d += f", S = {s:.4f} s"
     if st == "queued" and e.get("verdict"):
         d = f"{e['verdict']}, queued again"
@@ -56,28 +56,15 @@ def publish_comment(e, run_url):
     lines = [head, ""]
     if e.get("verdict") in ("ACCEPT", "PROVISIONAL") and s:
         lines.append(f"S = {num(s.get('S'))} s (P̄ = {num(s.get('P_bar'))} s, V̄ = {num(s.get('V_bar'))} s), "
-                     f"M = {s.get('M') if is_num(s.get('M')) else '-'}, c_P = {num(s.get('c_P'))}"
+                     f"M = {s.get('M') if is_num(s.get('M')) else '-'}"
                      + (", truncated stream" if e.get("truncated") else ""))
-    duels = [x for x in e.get("duels") or [] if isinstance(x, dict) and x.get("incumbent")]
-    if not duels and (e.get("duel") or {}).get("incumbent"):
-        duels = [e["duel"]]
-    for k, d in enumerate(duels, 1):
-        lines.append((f"Duel {k}" if len(duels) > 1 else "Head-to-head") + f" with the record `{d['incumbent']}` in the same job: "
-                     + ("it failed for an entry reason on this runner" if d.get("incumbent_failed") else
-                        f"S = {num(d.get('S'))} s against S_inc = {num(d.get('S_inc'))} s, gain {d['gain']:+.1%} "
-                        f"({'won' if d.get('won') else 'lost'}; a win needs {MARGIN:.0%})"
-                        if is_num(d.get("gain")) else "-"))
-    if e.get("cpu"):
-        lines.append("CPU: " + ", ".join(code_span(m, 80) for m in e["cpu"]))
+    d = e.get("against") or {}
+    if d.get("record") and is_num(d.get("gain")):
+        lines.append(f"Against the record `{d['record']}`: S = {num(d.get('S'))} s against S_record = "
+                     f"{num(d.get('S_record'))} s, gain {d['gain']:+.1%} (a new record needs more than {MARGIN:.0%})")
     if st == "record":
         lines.append("This root is now the record" + (f" (it beats `{e['record_of']}`)" if e.get("record_of") else
-                                                     " (no record stood at the pin: no duel)") + "; it is copied to `main`.")
-        if e.get("record_of") and len(duels) > 1 and is_num((e.get("duel") or {}).get("gain")):
-            lines.append(f"Its credited gain is the smaller of its winning duels: {e['duel']['gain']:+.1%}.")
-    if st == "confirming":
-        lines.append(f"This entry won its duel. A record must win {RECORD_WINS} duels against the same record, so "
-                     "one more duel of this same commit runs next, first in the queue, on whatever runner it gets. "
-                     "The verdict follows it.")
+                                                     " (no record stood at the pin)") + "; it is copied to `main`.")
     lines.append(f"Attestation: {'verified' if e.get('verified') else 'not verified'}.")
     for r in e.get("reasons", [])[:8]:
         lines.append("- " + code_span(r))
@@ -121,5 +108,51 @@ def records_json(st, pin):
     every other record (earlier pins', retired ones), newest first."""
     cur = rfqueue.current_record(st, pin)
     rs = [r for r in rfqueue.records(st) if cur is None or r["id"] != cur["id"]]
-    return (json.dumps({"version": 1, "core": pin, "margin": MARGIN, "record_wins": RECORD_WINS, "record": cur,
+    return (json.dumps({"version": 1, "core": pin, "margin": MARGIN, "record": cur,
                         "history": rs}, indent=1, ensure_ascii=False) + "\n").encode()
+
+
+def workflow_comment(sha, problems):
+    """The workflow check's refusal of a pull request's head (organiser text; problems in code spans)."""
+    return "\n".join([f"**recursion.fast: workflow check failed** on `{sha[:12]}` (`.github/bot/wfcheck.py`, main's code)", ""]
+                     + ["- " + code_span(p, 300) for p in problems[:10]]
+                     + ["", "No workflow may run on the organiser's runners for a fork-controlled event, nor give a "
+                        "`pull_request_target` job the pull request's head as code. Fix the workflows and push again."])
+
+
+PAUSE_TITLE = "recursion.fast: evaluation paused (organiser errors since the last completed benchmark)"
+ERROR_KINDS = {"fingerprint": "the machine fingerprint is not the season's",
+               "lengths": "the stream did not use the season's chain lengths",
+               "drift": "c_P drifted beyond c_P_drift", "setup": "a setup job did not complete",
+               "cache": "an organiser cache was missing", "attestation": "the result's provenance did not verify",
+               "harness": "the certificate job ended without a certificate", "unnamed": "an unnamed harness ERROR",
+               "noresult": "no readable result (the attest job did not finish, or its result.json could not be read)",
+               "reaped": "the run ended without publishing a verdict"}
+
+
+def pause_notice(st, run_url):
+    """The one owner-facing notice when the queue pauses (organiser text; reasons in code spans)."""
+    streak = st.get("error_streak") or []
+    left = [e["id"] for e in st["submissions"] if e["status"] == "error"
+            and any(x.get("id") == e["id"] for x in streak)]
+    lines = [f"The evaluation queue is **paused**: {rfqueue.pause_count(streak)} organiser errors counted since the last "
+             f"run that completed its benchmark on the season's machine (the last: [run]({run_url})); {len(streak)} runs "
+             "ended on the organiser's side in that time. One author's repeated errors of a kind an entry might provoke "
+             f"count once, and an error more than {STREAK_WINDOW_S // 86400} days before the newest does not count. "
+             "Nothing runs until you force a run.", "", "The runs, oldest first:", ""]
+    lines += [f"- {code_span(x.get('at') or '', 20)} {code_span(x.get('id'), 60)} ({code_span(x.get('kind'), 40)}, "
+              f"{ERROR_KINDS.get(x.get('kind'), 'an organiser-side ERROR')}): {code_span(x.get('reason'), 300)}"
+              for x in streak[-10:]]
+    lines += ["", "No entry was charged for these runs (a fingerprint or lengths ERROR uses up no attempt; the "
+              "others use the entry's one retry). Fix the cause: the machine or the image (then the season's "
+              "`[machine] fingerprint` in the core, and the pin), the harness at the pin, the setup or a cache. "
+              "Then run `evaluate-next` with `pr` = a queued pull request (a port of the record due at the pin runs "
+              "first). Its clean verdict resumes the queue only if its stream ran to the end on the season's "
+              "machine (an ACCEPT, a PROVISIONAL, or a REJECT after the stream): a REJECT at the certificate or "
+              "inside the stream does not, so pick an entry likely to get that far (the record's port, or one "
+              "whose earlier commit was ACCEPTed). With none, run `evaluate-next` with `resume` = true. The bot "
+              "README's \"Owner setup\" has the procedure for a changed image or machine."]
+    if left:
+        lines += ["", "Left in `error` (force each with `evaluate-next`, `pr` = its pull request): "
+                  + ", ".join(code_span(i, 60) for i in left[:20])]
+    return "\n".join(lines)

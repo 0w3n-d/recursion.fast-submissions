@@ -19,7 +19,8 @@ import time
 import precheck
 import render
 import rfqueue
-from common import CONFIRMING, ID_RE, LOGIN_RE, MAX_TEXT_BYTES, ROOT_RE, SHA_RE, STATUS_CONTEXT, clean, entry_id, now_iso
+import wfcheck
+from common import ID_RE, LOGIN_RE, PAUSING_ERRORS, MAX_TEXT_BYTES, ROOT_RE, SHA_RE, STATUS_CONTEXT, clean, entry_id, now_iso
 from decide import build_manifest_sha, cache_retry, decide
 from gitdata import Changes, Repo
 
@@ -132,11 +133,15 @@ def examine(ctx, git, pr, st, reserved=()):
              "title": clean(pr.get("title"), 200), "agent": agent, "builds_on": builds,
              "opened": pr.get("created_at"), "queued": None, "started": None, "finished": None, "attempts": 0,
              "status": "queued", "verdict": None, "score": None, "comparable": False, "truncated": False,
-             "reasons": [], "cpu": [], "run_url": None, "tag": f"rf-source/{eid}",
+             "reasons": [], "run_url": None, "tag": f"rf-source/{eid}",
              "notes": f"notes/{eid}.md" if info.get("notes") else None,
              "readme": f"readme/{eid}.md" if info.get("readme") else None,
              "record_of": None, "tree": info.get("tree"), "verified": False, "harness_commit": None,
              "prover_sha256": None}
+    if files is None or any(str(f.get(k) or "").startswith(".github/") for f in files
+                            for k in ("filename", "previous_filename")):
+        # main's workflow check on the head's workflows, read as data
+        reasons += [f"workflow check: {p}" for p in wfcheck.check_git(git.dir, sha)][:10]
     if not reasons:
         dup = rfqueue.duplicate_of(st, eid, n, entry["author"], entry["tree"])
         if dup:
@@ -178,12 +183,37 @@ def intake(ctx, pr_n, force=False):
     git = ctx.git()
     st = _state(ctx, git.snapshot(DATA))       # fails closed: an unreadable `data` stops the intake
     x = examine(ctx, git, pr, st, _reserved(git, st))
+    wf = workflow_problems(ctx, git, pr) if x["kind"] == "organiser" else []
+    if wf:              # an organiser's pull request: status and comment (a submission's head: examine)
+        sha = pr["head"]["sha"]
+        _try(ctx, "status", ctx.gh.set_status, sha, "failure", "workflow check failed (wfcheck.py)",
+             f"{ctx.server}/{ctx.repo}/pull/{pr_n}")
+        _try(ctx, "comment", ctx.gh.comment, pr_n, render.workflow_comment(sha, wf))
     if x["kind"] in ("valid", "invalid"):
         admit(ctx, git, x, force)
     if x["kind"] not in ("ignored", "organiser"):
         _try(ctx, "dispatch sync", ctx.gh.dispatch, "sync.yml", ctx.default_branch)
     ctx.log(f"intake: #{pr_n}: {x['kind']}")
     return x["kind"]
+
+
+def workflow_problems(ctx, git, pr):
+    """The workflow check (`wfcheck.check_git`, `main`'s code) on the head of an open pull
+    request into `main` whose files touch `.github/`, read as data; its problems, or [] (a PR whose
+    file list the API cannot give is checked too). It cannot be edited away by the pull request,
+    unlike pin-check's PR job."""
+    n = pr["number"]
+    if pr.get("state") != "open" or (pr.get("base") or {}).get("ref") != ctx.default_branch:
+        return []
+    files = ctx.gh.pr_files(n) if (pr.get("changed_files") or 0) <= 3000 else None
+    touches = files is None or any(str(f.get(k) or "").startswith(".github/")
+                                   for f in files for k in ("filename", "previous_filename"))
+    if not touches:
+        return []
+    sha = (pr.get("head") or {}).get("sha") or ""
+    if not SHA_RE.match(sha) or git.fetch(f"refs/pull/{n}/head") != sha:
+        return []                          # it moved: the next event checks the new head
+    return wfcheck.check_git(git.dir, sha)
 
 
 def intake_failed(ctx, pr_n):
@@ -331,14 +361,14 @@ def sync(ctx):
 
 
 # ---- select -------------------------------------------------------------------------------------
-def select(ctx, force_pr=None, retire_id=None):
-    """Picks the next entry (`rfqueue.order`; `force_pr`: that pull request's waiting or errored
-    entry), marks it running, and returns a copy of it with the standing record as `incumbent`
-    (None: nothing to evaluate). Entries a previous run left running are reaped first (runs are
-    serialised by `rf-eval`). `retire_id`: the owner retires that record first. When no record
-    stands at the pin and the last record is of an earlier pin, its port to this pin is created
-    and evaluated before anything else, forced runs included, so no other entry can take the
-    record unpaired before it."""
+def select(ctx, force_pr=None, retire_id=None, resume=False):
+    """Picks the next entry (`rfqueue.order`, AGENTS.md §9; `force_pr`: that pull request's waiting
+    or errored entry), marks it running, and returns a copy of it (None: nothing to evaluate). Entries a
+    previous run left running are reaped first (runs are serialised by `rf-eval`). `retire_id`: the
+    owner retires that record first. When no record stands at the pin and the last record is of an
+    earlier pin, its port to this pin is created and evaluated before anything else, forced runs
+    included, so no other entry can take the record before it. `resume`: the owner clears a pause
+    (and the error streak) first."""
     live, picked, notify, final = {}, {}, {}, {}
 
     def live_pr(n):
@@ -361,16 +391,22 @@ def select(ctx, force_pr=None, retire_id=None):
             r = rfqueue.find(st, retire_id)
             if r is not None and r["status"] == "record":
                 rfqueue.retire(r, now, "retired by the owner")
-                for i in rfqueue.void_confirmations(st, r["id"], now):
-                    notify[i] = copy.deepcopy(rfqueue.find(st, i))
                 changed = True
-        rec0 = rfqueue.current_record(st, ctx.pin)
-        reaped = rfqueue.reap(st, now, rec0["id"] if rec0 else None)
+        if resume and (st.get("paused") or st.get("error_streak")):
+            rfqueue.clear_errors(st)
+            ctx.log("select: the owner cleared the pause")
+            changed = True
+        reaped, paused = rfqueue.reap(st, now)
         notify.update({i: copy.deepcopy(rfqueue.find(st, i)) for i in reaped})
-        settled = rfqueue.settle(st, ctx.pin, now)
-        changed = changed or bool(reaped) or bool(settled)
+        changed = changed or bool(reaped)
+        final["paused"] = paused
         cands = rfqueue.order(st)
         due = rfqueue.due_port(st, ctx.pin)
+        if st.get("paused") and force_pr is None:
+            # the error streak paused the queue (common.py): nothing runs until the owner forces a
+            # run, whose clean verdict resumes it
+            cands, due = [], None
+            ctx.log(f"select: the queue is paused since {st['paused'].get('since')}: {st['paused'].get('reason')}")
         ports = [e for e in cands if e.get("port_of") and e["status"] == "queued"]
         if due is not None:
             cands, changed = [rfqueue.port(st, due["pr"], ctx.pin, now, o=due)], True
@@ -382,7 +418,7 @@ def select(ctx, force_pr=None, retire_id=None):
                 errs = [e for e in rfqueue.of_pr(st, force_pr) if e["status"] == "error"]
                 if errs:
                     e = max(errs, key=lambda e: e.get("finished") or "")
-                    e.update(status=rfqueue.waiting(e, rec0["id"] if rec0 else None), finished=None, attempts=0)
+                    e.update(status="queued", finished=None, attempts=0)
                     cands, changed = [e], True
                 else:
                     port = rfqueue.port(st, force_pr, ctx.pin, now)
@@ -392,33 +428,24 @@ def select(ctx, force_pr=None, retire_id=None):
             p = live_pr(e["pr"]) if not e.get("port_of") else {"state": "open", "head": {"sha": e["sha"]}}
             if p is None:
                 continue
-            if e["status"] == CONFIRMING:
-                # mid-evaluation: its retained commit is confirmed whatever the PR did since; only
-                # the owner's `hold` keeps it waiting
-                if force_pr is None and "hold" in _labels(p):
-                    continue
-            else:
-                if p.get("state") != "open":
-                    e.update(status="withdrawn", finished=now, reasons=["the pull request was closed before its evaluation"])
-                    notify[e["id"]] = copy.deepcopy(e)
-                    changed = True
-                    continue
-                if (p.get("head") or {}).get("sha") != e["sha"]:
-                    e.update(status="superseded", finished=now,
-                             reasons=["the pull request moved before this commit was evaluated"])
-                    notify[e["id"]] = copy.deepcopy(e)
-                    changed = True
-                    continue
-                if force_pr is None and (p.get("draft") or "hold" in _labels(p)):
-                    continue
+            if p.get("state") != "open":
+                e.update(status="withdrawn", finished=now, reasons=["the pull request was closed before its evaluation"])
+                notify[e["id"]] = copy.deepcopy(e)
+                changed = True
+                continue
+            if (p.get("head") or {}).get("sha") != e["sha"]:
+                e.update(status="superseded", finished=now,
+                         reasons=["the pull request moved before this commit was evaluated"])
+                notify[e["id"]] = copy.deepcopy(e)
+                changed = True
+                continue
+            if force_pr is None and (p.get("draft") or "hold" in _labels(p)):
+                continue
             rfqueue.mark_running(e, now, ctx.run_url)
             e["run_attempt"] = ctx.run_attempt
             rec = rfqueue.current_record(st, ctx.pin)
-            e["duel_with"] = rec["id"] if rec else None      # the incumbent this run measures
             picked.update(copy.deepcopy(e))
             picked["record_cache"] = e.get("record_cache") is not False
-            if rec:
-                picked["incumbent"] = {k: rec[k] for k in ("id", "sha", "root", "tag")}
             # the record build cache may only be restored with the standing record's attested manifest
             picked["record_manifest"] = (rec or {}).get("build_manifest") or ""
             changed = True
@@ -437,6 +464,9 @@ def select(ctx, force_pr=None, retire_id=None):
     for e in notify.values():
         st_, desc = render.status_for(e)
         _try(ctx, "status", ctx.gh.set_status, e["sha"], st_, desc, e.get("run_url"))
+    if final.get("paused") and not _try(ctx, "notice", ctx.gh.issue, render.PAUSE_TITLE,
+                                        render.pause_notice(final["state"], ctx.run_url)) and not picked:
+        raise RuntimeError("select: the queue paused after a reaped run, but the owner's notice failed")
     if not picked:
         ctx.log("select: nothing to evaluate")
         return None
@@ -444,9 +474,8 @@ def select(ctx, force_pr=None, retire_id=None):
     if not (ID_RE.match(e["id"]) and SHA_RE.match(e["sha"]) and ROOT_RE.match(e["root"])):
         raise ValueError(f"select: a malformed entry {e['id']!r}")
     git = ctx.git()
-    for t, s in [(e["tag"], e["sha"])] + ([(e["incumbent"]["tag"], e["incumbent"]["sha"])] if e.get("incumbent") else []):
-        if git.remote_ref(f"refs/tags/{t}") != s:
-            raise RuntimeError(f"select: the retention tag {t} is not at {s}")
+    if git.remote_ref(f"refs/tags/{e['tag']}") != e["sha"]:
+        raise RuntimeError(f"select: the retention tag {e['tag']} is not at {e['sha']}")
     _try(ctx, "status", ctx.gh.set_status, e["sha"], "pending", "evaluating", ctx.run_url)
     return e
 
@@ -488,52 +517,42 @@ def publish(ctx, eid, result_path):
         # the records of other commits: every port of a record shares its commit, and keeps its crown
         provers = {r["prover_sha256"]: r["id"] for r in rfqueue.records(st)
                    if r.get("prover_sha256") and r.get("sha") != e.get("sha")}
-        res = result
-        if isinstance(result, dict) and (rec or {}).get("id") != e.get("duel_with"):
-            res = dict(result, duel=None, incumbent=None)     # measured against another record
         rid = rec["id"] if rec else None
-        d = decide(res, ver, ctx.pin, rec, e.get("attempts", 1), provers,
-                   duel_retries=len(rfqueue.failed_duels(e, rid)) if rec else 0,
-                   record_failures=(rec or {}).get("duel_failures", 0),
-                   wins=rfqueue.won_duels(e, rid) if rec else (), confirm_retries=e.get("confirm_retries", 0))
+        d = decide(result, ver, ctx.pin, rec, e.get("attempts", 1), provers)
         now = ctx.now()
         ps = result.get("prover_sha256") if isinstance(result, dict) else None
         e["build_manifest"] = build_manifest_sha(result) if d["verified"] else None
-        e.update({k: d[k] for k in ("verdict", "score", "comparable", "truncated", "cpu", "harness_commit",
-                                    "verified", "record_of", "duel", "reasons")},
+        e.update({k: d[k] for k in ("verdict", "score", "comparable", "truncated", "harness_commit",
+                                    "verified", "record_of", "against", "reasons")},
                  prover_sha256=ps if isinstance(ps, str) and len(ps) == 64 and ps.isalnum() else None)
-        if d["record_failed"] and rec is not None:
-            rec["duel_failures"] = rec.get("duel_failures", 0) + 1
-            if d["retire_record"]:
-                rfqueue.retire(rec, now, f"its own run failed in {rec['duel_failures']} duels in a row")
-                done["voided"] = rfqueue.void_confirmations(st, rec["id"], now)
-        elif rec is not None and d["duel_now"]:
-            rec["duel_failures"] = 0           # the record completed a duel: failures count in a row
-        if d["confirm_retry"]:
-            e["confirm_retries"] = e.get("confirm_retries", 0) + 1
-        elif (d["duel_now"] or {}).get("won"):
-            e["confirm_retries"] = 0
+        # does this run count as the author's start in the fair order? a named organiser error never does
+        rfqueue.settle_run(e, d["organiser_error"], error=d["verdict"] == "ERROR" or not d["verified"])
+        if d["organiser_error"] in PAUSING_ERRORS:
+            e["attempts"] = max(0, e.get("attempts", 1) - 1)      # the organiser's fault: not an attempt
+        if d["organiser_side"]:
+            # any run that ended on the organiser's side joins the error streak (common.py: the pause);
+            # no readable result (the attest job did not finish after entry code ran, or result.json
+            # could not be read: too large, not JSON, not an object) counts once per author, like
+            # `harness`
+            kind = "noresult" if result is None else d["organiser_error"] or "unnamed"
+            if rfqueue.note_error(st, e, kind, now, d["error_reason"] or kind, ctx.run_url):
+                done["paused"] = True
+        elif d["benchmarked"] and rfqueue.clear_errors(st):
+            # only a clean verdict whose stream ran on the season's machine clears the streak and
+            # resumes: a REJECT before or inside the stream never reached the benchmark-side checks
+            # (the service cache, the stream harness, the lengths, the drift) and leaves it as it is
+            done["resumed"] = True
         ch = Changes()
         keep_raw = raw is not None and len(raw) <= 4 << 20
-        if d["duel_now"]:                      # every duel is kept, with its own copy of the result
-            e["duels"] = (e.get("duels") or [])[-9:] + [dict(d["duel_now"], run_url=ctx.run_url)]
-            if keep_raw:
-                e["duels"][-1]["result"] = f"results/{eid}.duel{len(e['duels'])}.json"
-                ch.put(e["duels"][-1]["result"], raw)
-            if d["duel_now"].get("won") and d["status"] == CONFIRMING:
-                e["attempts"] = 0              # the confirmation has its own organiser-error retry
-        if d["status"] not in ("queued", CONFIRMING) and cache_retry(result, e):
+        if d["status"] != "queued" and cache_retry(result, e):
             d["requeue"] = True
             e["reasons"] = e["reasons"][:19] + ["the record build cache was used: evaluated once more without it"]
-        if d["requeue"] or d["status"] == CONFIRMING:
+        if d["requeue"]:
             if d["verdict"] in ("ERROR", "REJECT") or not d["verified"]:
                 e["record_cache"] = False      # the retry builds clean: a sabotaged cache cannot fail it
-            cur = rfqueue.current_record(st, ctx.pin)
-            e.update(status=d["status"] if d["status"] in ("queued", CONFIRMING) else rfqueue.waiting(e, cur and cur["id"]),
-                     finished=None)
+            e.update(status="queued", finished=None)
         else:
             e.update(status=d["status"], finished=now)
-        rfqueue.settle(st, ctx.pin, now)       # wins against a record that no longer stands are void
         cur = rfqueue.current_record(st, ctx.pin)
         done["record_changed"] = (cur or {}).get("id") != rid
         if keep_raw:
@@ -543,7 +562,8 @@ def publish(ctx, eid, result_path):
         done.update(entry=copy.deepcopy(e), state=copy.deepcopy(st))
         return ch
     ctx.git().transact(DATA, mutate, f"publish {eid}")
-    changed_record, voided = done.pop("record_changed", False), done.pop("voided", [])
+    changed_record = done.pop("record_changed", False)
+    paused, resumed = done.pop("paused", False), done.pop("resumed", False)
     if not done:
         ctx.log(f"publish: {eid} is not running under this run; nothing published")
         return None
@@ -553,12 +573,14 @@ def publish(ctx, eid, result_path):
         failed.append("status")
     if not _try(ctx, "comment", ctx.gh.comment, e["pr"], render.publish_comment(e, ctx.run_url)):
         failed.append("comment")
-    for i in voided:                           # confirmations voided by this retirement
-        v = rfqueue.find(st, i)
-        _try(ctx, "status", ctx.gh.set_status, v["sha"], *render.status_for(v), v.get("run_url"))
     if (e["status"] == "record" or changed_record) and not _try(ctx, "sync main", sync_main, ctx, st):
         failed.append("main")
-    if rfqueue.any_queued(st) and not _try(ctx, "dispatch", ctx.gh.dispatch, "evaluate-next.yml", ctx.default_branch):
+    if paused and not _try(ctx, "notice", ctx.gh.issue, render.PAUSE_TITLE, render.pause_notice(st, ctx.run_url)):
+        failed.append("notice")
+    if resumed:
+        ctx.log("publish: the queue is no longer paused")
+    if rfqueue.any_queued(st) and not st.get("paused") and not _try(ctx, "dispatch", ctx.gh.dispatch, "evaluate-next.yml",
+                                                                    ctx.default_branch):
         failed.append("dispatch")
     if failed:
         raise RuntimeError(f"publish: {eid} is published on data, but these failed: {', '.join(failed)}")

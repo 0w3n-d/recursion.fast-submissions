@@ -2,7 +2,7 @@
 'use strict';
 (function () {
   const RF = window.RF;
-  const { el, ext, page, link, fmtS, timeEl, badge, duelGain, pct, unverified } = RF;
+  const { el, ext, page, link, fmtS, timeEl, badge, gainOf, marginText, pct, unverified } = RF;
   const MAX_MD = 70000; // the bot copies at most 64 KiB; a little slack for encoding
 
   function message(title, body, retry) {
@@ -52,41 +52,20 @@
     if (sc && sc.S !== null) {
       const m = (lbl, v, note) => el('div', null, el('span', { class: 'lbl' }, lbl), el('span', { class: 'val' }, fmtS(v), ' ', el('small', null, 's')), note ? el('span', { class: 'lbl' }, note) : null);
       parts.push(el('div', { class: 'metrics', role: 'group', 'aria-label': 'Score' },
-        m('Score S', sc.S, 'per 2¹⁸ compressions'),
-        m('Prover P̄', sc.P_bar, 'calibrated time'),
+        m('Score S', sc.S, 'per 2¹⁸ permutations'),
+        m('Prover P̄', sc.P_bar, 'cubic mean over the steps'),
         m('Verifier V̄', sc.V_bar, 'check time and proof size')));
-      const duels = e.duels.length ? e.duels : e.duel ? [e.duel] : [];
-      const incOf = d => { const inc = rel.byId.get(d.incumbent); return inc ? subLink(inc) : el('code', null, d.incumbent); };
-      const need = `A win needs ${pct(-data.margin * 100)} or better; a record must win ${data.wins === 1 ? 'one duel' : data.wins + ' duels'} against the same record.`;
-      if (duels.length === 1 && e.status !== 'confirming') {
-        const d = duels[0];
-        if (d.incumbent_failed) {
-          parts.push(el('p', { class: 'duel' }, el('strong', null, 'Head-to-head: the record failed on this runner.'), ' ',
-            'The incumbent record (', incOf(d), ') was run in the same job and failed for a reason of its own. That does not crown a challenger: this entry is evaluated once more for another duel. A record that fails two duels is retired.'));
-        } else {
-          const g = duelGain(e, d);
-          parts.push(el('p', { class: 'duel' }, el('strong', null, 'Head-to-head: ' + (g !== null ? pct(g) : '\u2013') + '.'), ' ',
-            `This entry scored ${fmtS(d.S !== null ? d.S : sc.S)} s and the incumbent record (`, incOf(d),
-            `) ${fmtS(d.S_inc)} s, on the same runner in the same job, with the same chain lengths. ${need}`));
-        }
-      } else if (duels.length) {
-        const won = duels.filter(d => d.won).length;
-        const g = duelGain(e);
-        const head = e.status === 'confirming'
-          ? [el('strong', null, 'Won its duel; the confirmation duel is next.'), ` One more duel of this same commit against the same record runs before any other entry, on whatever runner it gets. ${need}`]
-          : (e.status === 'record' || e.status === 'retired') && e.record_of
-            ? [el('strong', null, `Head-to-head: ${g !== null ? pct(g) : '\u2013'}`), won > 1 ? `, the smaller of the ${won} duels it won. ${need}` : `. ${need}`]
-            : e.status === 'record' || e.status === 'retired'
-              ? [el('strong', null, 'No duel decided it.'), ' The record it faced was retired, so it took the record when it was evaluated again with no standing record. Its duels:']
-              : [el('strong', null, won ? 'Won a duel, but not its confirmation.' : 'Head-to-head.'), ' ', need];
-        const item = (d, i) => el('li', null, `Duel ${i + 1} against `, incOf(d), ': ',
-          d.incumbent_failed ? 'the record failed on this runner (no comparison)'
-            : [`${fmtS(d.S)} s against ${fmtS(d.S_inc)} s, ${pct(duelGain(e, d))}, `, el('strong', null, d.won ? 'won' : 'lost')],
-          d.run_url ? [' (', ext(d.run_url, 'run'), d.result ? [', ', el('a', { href: link.resultAt(d.result), rel: 'noopener noreferrer' }, 'result')] : null, ')'] : null);
-        parts.push(el('div', { class: 'duel' }, el('p', null, head), el('ol', { class: 'duels' }, duels.map(item))));
+      const a = e.against;
+      const recOf = id => { const r = rel.byId.get(id); return r ? subLink(r) : el('code', null, id); };
+      if (a) {
+        const g = gainOf(e);
+        parts.push(el('p', { class: 'against' },
+          el('strong', null, a.beats ? 'Beat the standing record.' : 'Did not beat the standing record.'), ' ',
+          `S = ${fmtS(a.S !== null ? a.S : sc.S)} s against S_record = ${fmtS(a.S_record)} s of the record `, recOf(a.record),
+          `, at the same contract pin: gain 1 \u2212 S / S_record = ${pct(g)}. A record needs a gain of more than ${marginText(data)}.`));
       } else if ((e.status === 'record' || e.status === 'retired') && !e.record_of) {
-        parts.push(el('p', { class: 'duel' }, e.port_of ? 'The previous pin\'s record, re-run at a new contract pin before any other entry: no duel.'
-          : 'No record stood at its contract pin when it was evaluated, so it took the record without a duel.'));
+        parts.push(el('p', { class: 'against' }, e.port_of ? 'The previous pin\'s record, re-run at a new contract pin before any other entry.'
+          : 'No record stood at its contract pin when it was evaluated, so it took the record.'));
       }
     }
 
@@ -112,13 +91,10 @@
       e.attempts ? dt('Attempts', String(e.attempts)) : null,
       e.verdict ? dt('Comparable', e.comparable ? 'yes' : 'no') : null,
       e.truncated ? dt('Stream', 'truncated at the cap') : null,
-      e.cpu.length ? dt('CPU', e.cpu.join('; ')) : null,
       e.verdict ? dt('Attestation', e.verified ? 'verified' : el('strong', { class: 'warn-text' }, 'not verified: this result can never be a record')) : null,
       e.harness_commit ? dt('Harness commit', ext(link.harness(e.harness_commit), e.harness_commit.slice(0, 12))) : null,
       e.prover_sha256 ? dt('Prover sha256', el('code', { class: 'hash' }, e.prover_sha256)) : null,
-      e.duel_with && !e.duel ? dt('Measured against', rel.byId.get(e.duel_with) ? subLink(rel.byId.get(e.duel_with)) : el('code', null, e.duel_with)) : null,
       e.status === 'record' || e.status === 'retired' ? dt('Previous record', recOf ? subLink(recOf) : (e.record_of ? el('code', null, e.record_of) : 'none at its pin')) : null,
-      e.duel_failures ? dt('Duel failures', `${e.duel_failures} (a record that fails two duels is retired)`) : null,
       e.retired ? dt('Retired', timeEl(e.retired, true)) : null,
       e.port_of ? dt('Port of', rel.byId.get(e.port_of) ? subLink(rel.byId.get(e.port_of)) : el('code', null, e.port_of)) : null);
     const links = el('ul', { class: 'links' },

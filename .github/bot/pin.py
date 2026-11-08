@@ -4,7 +4,8 @@
   python3 -I .github/bot/pin.py [REPO_DIR]          the checkout (its index); prints the pin or exits 1
   python3 -I .github/bot/pin.py --git GIT_DIR REV   a commit read as data (a pull request's head)
   --core (with either)                              also: the core's evaluate.yml at the pin takes every
-                                                    input the bot passes and pins every action by full
+                                                    input the bot passes, the bot passes every input the
+                                                    core requires, and it pins every action by full
                                                     commit SHA, and its season's [entry] caps are the
                                                     bot's (fetches the pin, read-only)
   python3 -I .github/bot/pin.py --records FILE PIN  prints records.json re-pinned to PIN (no record stands
@@ -18,6 +19,7 @@ import sys
 WORKFLOW = ".github/workflows/evaluate-next.yml"
 USES_RE = re.compile(r"^\s*uses:\s*scaraven/recursion\.fast/\.github/workflows/evaluate\.yml@(\S+)", re.M)
 CORE_REF_RE = re.compile(r"^\s*core_ref:\s*[\"']?([^\s\"'#]+)", re.M)
+CHECKOUT_PIN_RE = re.compile(r"^\s*ref:\s*([^\s#]+)\s*# THE PIN\b", re.M)
 ANY_CORE_RE = re.compile(r"^\s*uses:\s*['\"]?scaraven/recursion\.fast/", re.M)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -25,12 +27,15 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 def pins_of(text, gitlink):
     """(pin or None, problems) from the workflow's text and the gitlink's SHA."""
     problems = []
-    uses, refs = USES_RE.findall(text), CORE_REF_RE.findall(text)
+    uses, refs, cos = USES_RE.findall(text), CORE_REF_RE.findall(text), CHECKOUT_PIN_RE.findall(text)
+    if len(cos) != 1:
+        problems.append(f"{WORKFLOW} must have exactly one core checkout `ref: <PIN>  # THE PIN`")
     if len(uses) != 1 or len(ANY_CORE_RE.findall(text)) != 1:
         problems.append(f"{WORKFLOW} must name scaraven/recursion.fast exactly once, in `uses: …/evaluate.yml@<PIN>`")
     if len(refs) != 1:
         problems.append(f"{WORKFLOW} must have exactly one `core_ref:`")
-    vals = {"gitlink .contract": gitlink, "uses @": uses[0] if uses else None, "core_ref": refs[0] if refs else None}
+    vals = {"gitlink .contract": gitlink, "uses @": uses[0] if uses else None, "core_ref": refs[0] if refs else None,
+            "core checkout ref": cos[0] if cos else None}
     for k, v in vals.items():
         if not isinstance(v, str) or not SHA.match(v):
             problems.append(f"{k} is not a full lowercase SHA: {v}")
@@ -67,17 +72,24 @@ def read_git(git_dir, rev):
 
 WITH_RE = re.compile(r"^    uses: scaraven/recursion\.fast/[^\n]*\n(?:    (?!with:).*\n)*    with:\n((?:      .*\n|\s*\n)*)", re.M)
 INPUTS_RE = re.compile(r"^\s{6}([a-z_]+):\s*\{\s*type:", re.M)
+REQUIRED_RE = re.compile(r"^\s{6}([a-z_]+):\s*\{[^}\n]*\brequired:\s*true\b", re.M)
+# the inputs the bot passes (none names an incumbent)
+OUR_INPUTS = ("entry_repo", "entry_sha", "entry_path", "pr_ref", "core_ref", "record_cache", "record_manifest_sha256")
 
 
 def inputs_problems(ours, core):
-    """The `with:` keys of our `evaluate` job that the core's evaluate.yml (at the pin) does not take."""
+    """The `with:` keys of our `evaluate` job that the core's evaluate.yml (at the pin) does not take,
+    the core's required inputs we do not pass, and any key outside `OUR_INPUTS`."""
     m = WITH_RE.search(ours)
     keys = set(re.findall(r"^      ([a-z_]+):", m.group(1), re.M)) if m else set()
-    core_inputs = set(INPUTS_RE.findall(core.split("outputs:", 1)[0]))
+    head = core.split("outputs:", 1)[0]
+    core_inputs, required = set(INPUTS_RE.findall(head)), set(REQUIRED_RE.findall(head))
     if not keys:
         return ["no `with:` block found in the evaluate job"]
-    missing = sorted(keys - core_inputs)
-    return [f"the core's evaluate.yml at the pin has no input {k}" for k in missing]
+    return ([f"the core's evaluate.yml at the pin has no input {k}" for k in sorted(keys - core_inputs)]
+            + [f"the core's evaluate.yml at the pin requires the input {k}, which the bot does not pass"
+               for k in sorted(required - keys)]
+            + [f"the evaluate job passes {k}, not an input of the bot's" for k in sorted(keys - set(OUR_INPUTS))])
 
 
 ACTION_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"'#]+)", re.M)
@@ -127,7 +139,10 @@ def core_problems(ours, pin):
 
 def repin_records(raw, pin):
     """records.json at a new pin, as the bot writes it there before any evaluation: `core` is the
-    pin, no record stands (`record: null`), and the old record heads the history."""
+    pin, `margin` the bot's (common.MARGIN), no record stands (`record: null`), and the old record
+    heads the history."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from common import MARGIN
     j = json.loads(raw)
     if not isinstance(j, dict) or j.get("version") != 1:
         raise ValueError("records.json is not version 1 of the bot's format")
@@ -135,7 +150,8 @@ def repin_records(raw, pin):
     if isinstance(rec, dict) and j.get("core") != pin:
         hist = [rec] + [h for h in hist if h.get("id") != rec.get("id")]
         rec = None
-    j.update(core=pin, record=rec, history=hist)
+    j.pop("record_wins", None)      # not a parameter of the record rule
+    j.update(core=pin, margin=MARGIN, record=rec, history=hist)
     return (json.dumps(j, indent=1, ensure_ascii=False) + "\n").encode()
 
 

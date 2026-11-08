@@ -2,13 +2,17 @@
 this run, and that script itself for an ACCEPT.
 
 1. `gh attestation verify RESULT --repo THIS_REPO --signer-workflow
-   scaraven/recursion.fast/.github/workflows/evaluate.yml --deny-self-hosted-runners`: attested by
-   the core's reusable workflow, in this repository, on a GitHub-hosted runner;
+   scaraven/recursion.fast/.github/workflows/evaluate.yml`: attested by the core's reusable
+   workflow, in this repository, on a self-hosted runner (the certificate's `runnerEnvironment`:
+   the organiser's server is the trust anchor, the core's AGENTS.md §8; GitHub attests the
+   workflow and commit);
 2. every attestation's signer digest (the commit the reusable workflow ran at) is the result's
    `harness_commit` (as verify-record.sh);
 3. the attestation was made by this workflow run (`runInvocationURI`) and the result names this
    run (`job`): a genuine result of another evaluation, replayed as this run's artifact, fails;
-4. for a comparable ACCEPT, the core's `harness/verify-record.sh` at the pin must pass as well.
+4. for a comparable ACCEPT, the core's `harness/verify-record.sh` at the pin must pass as well (it
+   also requires the result to record the organiser's runner: name `rf-…`, the one label
+   `rf-bench`; the server's runners carry exactly one label, `rf-bench` or `rf-light`).
 
 `attested` is 1-3; `record_ok` is 4."""
 import json
@@ -43,7 +47,7 @@ def verify(path, result, repo, run_id, core_dir=None, run=subprocess.run, min_at
         return out
     try:
         r = run(["gh", "attestation", "verify", path, "--repo", repo, "--signer-workflow", SIGNER_WORKFLOW,
-                 "--deny-self-hosted-runners", "--format", "json"], capture_output=True, timeout=300)
+                 "--format", "json"], capture_output=True, timeout=300)
     except (OSError, subprocess.TimeoutExpired) as e:
         out["reason"] = f"gh attestation verify did not run: {e.__class__.__name__}"
         return out
@@ -59,6 +63,10 @@ def verify(path, result, repo, run_id, core_dir=None, run=subprocess.run, min_at
     digests = {c.get("buildSignerDigest") for c in certs}
     if not certs or digests != {hc}:
         out["reason"] = f"the attesting workflow ran at {sorted(map(str, digests))}, the result says {hc}"
+        return out
+    envs = {c.get("runnerEnvironment") for c in certs}
+    if envs != {"self-hosted"}:
+        out["reason"] = f"attested on {sorted(map(str, envs))}, not the organiser's self-hosted runner"
         return out
     runs = {c.get("runInvocationURI") or "" for c in certs}
     if not all(f"/{repo}/actions/runs/{run_id}/" in u and (_attempt(u, run_id) or 0) >= min_attempt for u in runs):

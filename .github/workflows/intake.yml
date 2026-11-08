@@ -14,7 +14,7 @@
 name: intake
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed, labeled, unlabeled, edited]
   workflow_dispatch:
     inputs:
       pr: { description: "pull request number (the owner's re-intake)", required: true }
@@ -29,7 +29,7 @@ jobs:
     # the default branch's code only (an event of a pull request into another branch is read,
     # and ignored, by the same code)
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: rf-light
     timeout-minutes: 15
     permissions:
       contents: write        # the rf-source/<id> tag (and reading `data`)

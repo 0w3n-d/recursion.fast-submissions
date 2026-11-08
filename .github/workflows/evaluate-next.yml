@@ -1,26 +1,30 @@
 # The evaluation of the next queued submission (TRUSTED). One run at a time (the `rf-eval`
 # concurrency group; a pending run is never cancelled by a running one, and since every run picks
-# from the queue a replaced pending run loses nothing).
+# from the queue a replaced pending scheduled run loses nothing, but an owner's dispatch with `pr`,
+# `retire` or `resume` that is replaced is lost: .github/bot/README.md, "An owner dispatch can be
+# cancelled"). Every job runs on the organiser's server:
+# select and publish on `rf-light`, the core's evaluation on its own labels (`rf-bench`, `rf-light`).
 #
 #   select    picks the next entry (.github/bot/rfqueue.py: a due port of the record to a new pin,
-#             then confirmation duels, then the fair order), marks it running on `data`, reaps any
-#             entry a previous run left running, and names the standing record at the pin as the
-#             duel's incumbent; no entry code
+#             then the fair order by author), marks it running on `data`, reaps any entry a
+#             previous run left running (a reaped run joins the error streak and may pause the
+#             queue); no entry code
 #   evaluate  the core's reusable workflow at the PIN, with the entry fetched from its retention tag
 #   publish   no entry code: verifies the attestation (.github/bot/attest.py, the checks of the
 #             core's harness/verify-record.sh, which it also runs for an ACCEPT), decides the status
 #             and the record (.github/bot/decide.py), updates `data`, comments, sets the commit
 #             status, copies a new record's root to `main`, and dispatches the next run
 #
-# THE PIN: the `uses: …@<PIN>` and `core_ref: <PIN>` below and the `.contract` gitlink are one
-# value, set only with .github/bot/pin-core.sh; pin-check.yml and the bot (pin.py) refuse a
-# disagreement.
+# THE PIN: the `uses: …@<PIN>`, `core_ref: <PIN>` and the publish job's core checkout `ref: <PIN>`
+# below and the `.contract` gitlink are one value, set only with .github/bot/pin-core.sh;
+# pin-check.yml and the bot (pin.py) refuse a disagreement.
 name: evaluate-next
 on:
   workflow_dispatch:
     inputs:
       pr: { description: "force this pull request's waiting or errored entry, or re-evaluate its record of an earlier pin (a due port runs first)", required: false, default: "" }
       retire: { description: "retire this record id first (the owner's)", required: false, default: "" }
+      resume: { description: "clear a paused queue first (the owner's, once the cause is fixed)", required: false, type: boolean, default: false }
   schedule:
     - cron: "17,47 * * * *"   # fallback: a lost dispatch delays the queue by at most 30 minutes
 permissions: {}
@@ -35,20 +39,18 @@ defaults:
 jobs:
   select:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: rf-light
     timeout-minutes: 10
     permissions:
       contents: write        # branch `data`; main (a record a failed publish left off it)
       pull-requests: read
+      issues: write          # the one owner-facing notice when a reaped run pauses the queue
       statuses: write
     outputs:
       id: ${{ steps.sel.outputs.id }}
       sha: ${{ steps.sel.outputs.sha }}
       path: ${{ steps.sel.outputs.path }}
       ref: ${{ steps.sel.outputs.ref }}
-      incumbent_sha: ${{ steps.sel.outputs.incumbent_sha }}
-      incumbent_path: ${{ steps.sel.outputs.incumbent_path }}
-      incumbent_ref: ${{ steps.sel.outputs.incumbent_ref }}
       record_cache: ${{ steps.sel.outputs.record_cache }}
       record_manifest_sha256: ${{ steps.sel.outputs.record_manifest_sha256 }}
     steps:
@@ -60,25 +62,22 @@ jobs:
           RF_CHECKOUT: ${{ github.workspace }}/bot-src
           PR: ${{ inputs.pr }}
           RETIRE: ${{ inputs.retire }}
-        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR" --retire "$RETIRE"
+          RESUME: ${{ inputs.resume }}
+        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR" --retire "$RETIRE" --resume "$RESUME"
 
   evaluate:
     needs: select
     if: needs.select.outputs.id != ''
     # the core's evaluation, pinned by commit (THE PIN)
-    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@df1f3448f9ec181ce1fcae43964fd11301f653bf
+    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@f3538eb2a198240d864eb773331a88bf16283688
     permissions: { contents: read, id-token: write, attestations: write }
     with:
       entry_repo: ${{ github.repository }}
       entry_sha: ${{ needs.select.outputs.sha }}
       entry_path: ${{ needs.select.outputs.path }}
       pr_ref: ${{ needs.select.outputs.ref }}
-      core_ref: df1f3448f9ec181ce1fcae43964fd11301f653bf
-      # the duel: the standing record at the pin, re-run in the same benchmark job (all three empty
-      # when there is none); the record build cache (false after a failure that used it)
-      incumbent_sha: ${{ needs.select.outputs.incumbent_sha }}
-      incumbent_path: ${{ needs.select.outputs.incumbent_path }}
-      incumbent_ref: ${{ needs.select.outputs.incumbent_ref }}
+      core_ref: f3538eb2a198240d864eb773331a88bf16283688
+      # the record build cache (false after a failure that used it)
       record_cache: ${{ needs.select.outputs.record_cache != 'false' }}
       # the standing record's attested entry_build.manifest_sha256 ("" if none): the core refuses a
       # record cache whose manifest differs
@@ -87,11 +86,12 @@ jobs:
   publish:
     needs: [select, evaluate]
     if: always() && needs.select.result == 'success' && needs.select.outputs.id != ''
-    runs-on: ubuntu-24.04
+    runs-on: rf-light
     timeout-minutes: 20
     permissions:
       contents: write        # branch `data`; main for a record
       pull-requests: write   # the comment
+      issues: write          # the one owner-facing notice when the queue pauses
       statuses: write
       actions: write         # dispatch the next run; the record's build cache
       attestations: read
@@ -107,7 +107,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: scaraven/recursion.fast
-          ref: ${{ steps.pin.outputs.pin }}
+          ref: f3538eb2a198240d864eb773331a88bf16283688   # THE PIN (a literal: wfcheck rule 4)
           path: core
           persist-credentials: false
           sparse-checkout: harness

@@ -9,17 +9,16 @@
   const dataKey = rawKey && Object.prototype.hasOwnProperty.call(CFG.FIXTURES, rawKey) ? rawKey : null;
   const BASE = dataKey ? CFG.FIXTURES[dataKey] : CFG.DATA_BASE;
 
-  const STATUSES = ['record', 'retired', 'confirming', 'accepted', 'unranked', 'provisional', 'rejected', 'error',
+  const STATUSES = ['record', 'retired', 'accepted', 'unranked', 'provisional', 'rejected', 'error',
     'invalid', 'queued', 'running', 'superseded', 'withdrawn'];
   const STATUS_INFO = {
     record: ['record', 'Took the record when it was evaluated; it keeps this status in the history after it is beaten.'],
-    retired: ['retired', 'A record that stood, then failed in two duels or was retired by the owner.'],
-    confirming: ['confirming', 'Won its duel against the record; one more duel of the same commit against the same record runs before every other entry. A record must win both.'],
-    accepted: ['accepted', 'Certified and comparable, but it did not win its duel (or its confirmation duel) by 3 %, the record failed on the runner in its duels or was retired before its confirmation, or its prover binary is an earlier record\'s.'],
-    unranked: ['unranked', 'Certified, but not comparable (a truncated stream, mixed CPU models, a job plan that did not match, or no positive S).'],
+    retired: ['retired', 'A record that stood, then was retired by the owner; it never stands again.'],
+    accepted: ['accepted', 'Certified, comparable and attested, but not a new record: it did not beat the standing record by more than the margin, or its prover binary is an earlier record\'s.'],
+    unranked: ['unranked', 'Certified, but not comparable (a truncated stream, a job plan that did not match, or no positive S).'],
     provisional: ['provisional', 'The Lean builds but the certificate does not check; benchmarked, never ranked.'],
     rejected: ['rejected', 'The certificate or the benchmark failed. The reasons say why.'],
-    error: ['error', 'An organiser-side fault, not the entry\'s. Requeued once, then left for the owner.'],
+    error: ['error', 'Waiting on the organiser: an organiser-side fault, not the entry\'s. Requeued once, then left for the owner.'],
     invalid: ['invalid', 'Failed the intake check; not evaluated.'],
     queued: ['queued', 'Waiting for the evaluator.'],
     running: ['running', 'Being evaluated now.'],
@@ -40,7 +39,7 @@
     tag: new RegExp('^rf-source/' + ID + '$'),
     run: new RegExp('^https://github\\.com/' + reEsc(CFG.REPO) + '/actions/runs/\\d{1,20}(?:/job/\\d{1,20}|/attempts/\\d{1,4})?$'),
     key: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/,
-    result: new RegExp('^results/' + ID + '(?:\\.duel[1-9][0-9]?)?\\.json$')
+    result: new RegExp('^results/' + ID + '\\.json$')
   };
   const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf']);
 
@@ -72,18 +71,14 @@
     return (out.S === null && out.P_bar === null && out.V_bar === null && n === 0) ? null : out;
   }
 
-  // A head-to-head duel as the bot records it: the incumbent record's id, both scores in the same
-  // job, the gain 1 - S/S_inc, whether it was won, whether the incumbent failed on that runner, and
-  // the run and the result of that evaluation.
-  function cleanDuel(d) {
-    if (!d || typeof d !== 'object' || typeof d.incumbent !== 'string' || !RE.id.test(d.incumbent)) return null;
-    const sInc = num(d.S_inc), s = num(d.S), gain = num(d.gain);
-    return {
-      incumbent: d.incumbent, S: s !== null && s >= 0 ? s : null, S_inc: sInc !== null && sInc > 0 ? sInc : null, gain,
-      won: d.won === true, incumbent_failed: d.incumbent_failed === true,
-      run_url: typeof d.run_url === 'string' && RE.run.test(d.run_url) ? d.run_url : null,
-      result: typeof d.result === 'string' && RE.result.test(d.result) ? d.result : null
-    };
+  // The comparison with the standing record as the bot records it (`against`): the record's id, this
+  // entry's S, the record's own S at the pin, the gain 1 - S/S_record and whether it beat the record.
+  function cleanAgainst(a) {
+    if (!a || typeof a !== 'object' || typeof a.record !== 'string' || !RE.id.test(a.record)) return null;
+    const s0 = num(a.S), r0 = num(a.S_record);
+    const S = s0 !== null && s0 >= 0 ? s0 : null, S_record = r0 !== null && r0 > 0 ? r0 : null;
+    const gain = num(a.gain) !== null ? a.gain : S !== null && S_record !== null ? 1 - S / S_record : null;
+    return { record: a.record, S, S_record, gain, beats: a.beats === true };
   }
 
   function cleanEntry(r) {
@@ -102,27 +97,23 @@
       id: r.id, pr, sha, root, author, builds_on: builds,
       title: text(r.title, 200),
       agent: text(r.agent, 160),
-      opened: date(r.opened), queued: date(r.queued), started: date(r.started), finished: date(r.finished),
+      opened: date(r.opened), queued: date(r.queued), started: date(r.started), counted_at: r.counted_at === null ? null : date(r.counted_at), has_counted: Object.prototype.hasOwnProperty.call(r, 'counted_at'), finished: date(r.finished),
       attempts: int(r.attempts),
       status: r.status,
       verdict: VERDICTS.includes(r.verdict) ? r.verdict : null,
       score: cleanScore(r.score),
       comparable: r.comparable === true, truncated: r.truncated === true,
       reasons: strList(r.reasons, 20, 300),
-      cpu: strList(r.cpu, 8, 120),
       run_url: typeof r.run_url === 'string' && RE.run.test(r.run_url) ? r.run_url : null,
       tag: typeof r.tag === 'string' && RE.tag.test(r.tag) ? r.tag : null,
       notes: typeof r.notes === 'string' && RE.md.test(r.notes) && r.notes.startsWith('notes/') ? r.notes : null,
       readme: typeof r.readme === 'string' && RE.md.test(r.readme) && r.readme.startsWith('readme/') ? r.readme : null,
       record_of: typeof r.record_of === 'string' && RE.id.test(r.record_of) ? r.record_of : null,
-      duel: cleanDuel(r.duel),
-      duels: Array.isArray(r.duels) ? r.duels.slice(0, 10).map(cleanDuel).filter(Boolean) : [],
-      duel_with: typeof r.duel_with === 'string' && RE.id.test(r.duel_with) ? r.duel_with : null,
+      against: cleanAgainst(r.against),
       verified: r.verified === true,
       harness_commit: typeof r.harness_commit === 'string' && RE.sha.test(r.harness_commit) ? r.harness_commit : null,
       prover_sha256: typeof r.prover_sha256 === 'string' && /^[0-9a-f]{64}$/.test(r.prover_sha256) ? r.prover_sha256 : null,
       result: typeof r.result === 'string' && RE.result.test(r.result) ? r.result : null,
-      duel_failures: int(r.duel_failures),
       retired: date(r.retired),
       port_of: typeof r.port_of === 'string' && RE.id.test(r.port_of) ? r.port_of : null
     };
@@ -148,7 +139,7 @@
       let res;
       try { res = await fetchWithTimeout(BASE + 'submissions.json', 15000); } catch (err) {
         // the branch `data` does not exist yet: nothing has been published, which is not an error
-        if (err.status === 404) return { updated: null, core: await mainPin(), margin: 0.03, wins: 2, subs: [], skipped: 0, notShown: 0, record: null, unpublished: true };
+        if (err.status === 404) return { updated: null, core: await mainPin(), margin: 0.02, subs: [], skipped: 0, notShown: 0, record: null, unpublished: true };
         throw err;
       }
       const raw = await res.json().catch(() => { throw new Error('submissions.json is not valid JSON'); });
@@ -160,18 +151,19 @@
         const e = cleanEntry(r);
         if (e && !seen.has(e.id)) { seen.add(e.id); subs.push(e); }
       }
-      const margin = num(raw.margin), wins = int(raw.record_wins);
+      const margin = num(raw.margin);
       // the standing record is the bot's statement (`record`), never re-derived here
       const rec = typeof raw.record === 'string' && RE.id.test(raw.record) ? subs.find(e => e.id === raw.record) : null;
       return {
         updated: date(raw.updated),
         core: typeof raw.core === 'string' && RE.sha.test(raw.core) ? raw.core : null,
-        margin: margin !== null && margin >= 0 && margin < 1 ? margin : 0.03,
-        wins: wins !== null && wins >= 1 && wins <= 9 ? wins : 2,
+        margin: margin !== null && margin >= 0 && margin < 1 ? margin : 0.02,
         subs,
         skipped: Math.min(raw.submissions.length, CAP) - subs.length,
         notShown: Math.max(0, raw.submissions.length - CAP),
-        record: rec && rec.status === 'record' && rec.score && rec.score.S !== null && evaluatedAt(rec) ? rec : null
+        record: rec && rec.status === 'record' && rec.score && rec.score.S !== null && evaluatedAt(rec) ? rec : null,
+        // the bot's pause (organiser errors since the last completed benchmark): only its time is shown, never its reason
+        paused: raw.paused && typeof raw.paused === 'object' ? { since: date(raw.paused.since) } : null
       };
     })();
     dataPromise.catch(() => { dataPromise = null; });
@@ -267,15 +259,9 @@
     return el('span', { class: 'badge st-' + status, title: desc }, label);
   }
   const shortSha = s => s ? s.slice(0, 7) : '';
-  // Head-to-head change of S against the incumbent in the same job, in percent (negative = faster);
-  // for a record confirmed by two duels, the smaller gain (the bot's `duel`).
-  const duelGain = (e, d0) => {
-    const d = d0 || e.duel;
-    if (!d || d.incumbent_failed) return null;
-    if (d.gain !== null) return -d.gain * 100;
-    const s = d.S !== null ? d.S : !d0 && e.score ? e.score.S : null;
-    return d.S_inc && s !== null ? (s - d.S_inc) / d.S_inc * 100 : null;
-  };
+  // The gain 1 - S/S_record against the standing record, in percent (positive = faster), or null.
+  const gainOf = e => e.against && e.against.gain !== null ? e.against.gain * 100 : null;
+  const marginText = data => Math.round(data.margin * 1000) / 10 + '\u00a0%';
   // A verdict whose attestation did not verify is shown as such everywhere.
   const unverified = e => e.verdict && !e.verified ? el('span', { class: 'badge st-unverified', title: 'The attestation of this result did not verify; it can never be a record.' }, 'unverified') : null;
   const pct = v => typeof v !== 'number' || !Number.isFinite(v) ? '\u2013' : (v < 0 ? '\u2212' : '+') + Math.abs(v).toFixed(1) + '\u00a0%';
@@ -394,7 +380,7 @@
   window.RF = {
     CFG, BASE, dataKey, STATUSES, STATUS_INFO, RE,
     loadData, loadText, el, svg, ext, page, link, fmtS, fmtDate, fmtDateTime, timeEl, ago, badge,
-    shortSha, duelGain, pct, unverified, evaluatedAt, relations, records, nameOf, section, chrome, footer
+    shortSha, gainOf, marginText, pct, unverified, evaluatedAt, relations, records, nameOf, section, chrome, footer
   };
   document.addEventListener('DOMContentLoaded', chrome);
 })();

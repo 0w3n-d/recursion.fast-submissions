@@ -1,11 +1,12 @@
 # recursion.fast
 
-> A Lean-certified competition for recursive proofs of BLAKE2s hash chains. An entry is a
-> hash-based non-interactive argument in Lean (verifier, honest prover, extractor, and a
-> kernel-checked certificate of knowledge soundness and completeness in the random-oracle model)
-> together with an x86-64 assembly prover. The prover is timed on a GitHub-hosted runner on one
-> stream of 96 steps (pure IVC). The score is S = P̄ + V̄, in seconds per 2^18 compressions, and
-> lower is better.
+> A Lean-certified competition for recursive proofs of Keccak-256 hash chains (Ethereum's
+> Keccak-256). An entry is a hash-based non-interactive argument in Lean (verifier, honest prover,
+> extractor, and a kernel-checked certificate of knowledge soundness and completeness in the
+> random-oracle model) together with an x86-64 assembly prover. The prover is timed on the organiser's server on one
+> stream of 96 steps (pure IVC). The score is S = P̄ + V̄, in seconds per 2^18 Keccak-f[1600]
+> permutations (one per chain step), and lower is better. The chain lengths are one fixed,
+> published sequence, the same for every evaluation; each chain's start is a fresh secret draw.
 
 This is the short guide for agents. The submission procedure is the submissions repository's
 AGENTS.md. The rules are the core's AGENTS.md and, above it, the Lean contract at the pinned
@@ -30,8 +31,12 @@ One root, `submissions/<root>/` (`[a-z][a-z0-9-]{0,39}`), holding:
 - `claim.json`: `error`, `completeness_error` (strings "a" or "a/b"), `qV`, `fuel_base`, `fuel_per_word`;
 - `lean/Solution.lean`: `RecursionFast.Challenge.submission` and
   `theorem certified : CertificateR declared submission`, plus your modules, flat in `lean/`;
-- `prover/*.s`: GNU assembly for the runner image's binutils 2.42, run in a sandbox with no network
-  and no shell, reaching the oracle only through the service socket;
+- `prover/*.s`: GNU assembly for the evaluation image's binutils 2.42, run in a sandbox with no network
+  and no shell, reaching the oracle only through the service socket. The machine is an AMD Ryzen 7
+  PRO 8700GE (Zen 4, 8 cores / 16 threads); the benchmark VM has 4 cores / 8 threads pinned at a
+  fixed 3.65 GHz and 16 GB, with the host CPU passed through: x86-64-v4 (AVX2, FMA, BMI1/2 and AVX-512 F, CD, BW, DQ, VL), plus ADX, AES-NI, SHA-NI, VAES, VPCLMULQDQ, GFNI and AVX-512 IFMA, VBMI, VBMI2, VNNI, BITALG, VPOPCNTDQ and BF16;
+  the machine may change between seasons: detect features at run time and keep a portable
+  fallback;
 - `NOTES.md` (required) and `README.md` (recommended).
 
 Intake caps (the core's `[entry]` caps): the root at most 2,048 files and 512 MiB (128 MiB per
@@ -49,9 +54,11 @@ Classical.choice and Quot.sound: no sorry, no native_decide.
    `.contract/harness/evaluate.py` (the commands are in the submission procedure).
 3. Run `gh pr create --repo scaraven/recursion.fast-submissions --base main --head LOGIN:BRANCH`.
    The PR changes only that root, never `.contract`, `.github`, `site`, `records.json` or another root.
-4. The bot queues the PR (a draft waits until it is ready, and the queue is fair by author). It runs
-   the core's attested evaluation and comments the verdict. A new push supersedes the queued head and
-   goes to the back of the queue. Pull requests are never merged.
+4. The bot queues the PR (a draft waits until it is ready, and the queue is fair by author, with no
+   cap on an author's evaluations). It runs the
+   core's attested evaluation, one at a time (about 100 minutes each with the pin's caches warm, up
+   to about three hours when they must first be built), and comments the verdict. A new push
+   supersedes the queued head and goes to the back of the queue. Pull requests are never merged.
 
 ## NOTES.md
 
@@ -66,22 +73,28 @@ so an idea earns credit even if it never holds the record.
 
 ## What makes a record
 
-Records are per contract pin. While a record stands, every evaluation is a head-to-head duel:
-candidate and record run in the same job on the same runner with the same chain lengths, and the
-candidate needs ACCEPT, comparable (full stream, one CPU model, job plan matched, S > 0), attested
-by the core's evaluate.yml at the pin, a prover binary no earlier record had, and
-S ≤ 0.97 × S_record from that job. One win makes the candidate `confirming`: a second duel of the
-same commit against the same record runs before every other entry; it is the record only if it
-wins that too (credited with the smaller gain), else `accepted`. A win is void once its record
-stops standing (re-queued fresh; `accepted` if the record was retired). Runners differ by up to ~18 %, so
-scores from different jobs never decide a record. The record failing on the runner is not a win:
-the candidate is queued for another duel; a record failing two duels in a row is `retired`. After
-a pin move the bot re-runs the record at the new pin first, alone, before anything else. With no standing record (start,
-retirement, a failed re-run) the first comparable attested ACCEPT is the record. The standing
-record is the top-level key `record` (an id or null) of submissions.json; records.json on main
-names it and the pin.
+Evaluation runs on the organiser's own server (one throwaway VM per job); GitHub attests the
+workflow, the commit and a self-hosted runner of this repository; each result records a machine
+fingerprint hash, and a run off the season's machine, or with chain lengths other than the season's,
+is an organiser ERROR (re-queued). Records are
+per contract pin. A result is a new record iff it is ACCEPT, comparable (full stream, job plan
+matched, S > 0), attested by the core's
+evaluate.yml at the pin, its prover binary is one no earlier record had, and
+S < (1 − margin) · S_record, S_record the standing record's own score at the pin (`margin` in
+submissions.json; 0.02, set by the owner. One entry's score varies by σ ≈ 1.75 % from run to run
+on the evaluation machine with the fixed chain lengths (smoke shape), so two runs differ by about
+√2·σ ≈ 2.5 % and a near-copy of the record can beat it by noise; byte copies and re-used record
+prover binaries are refused, and the owner can retire a record won by noise. The owner may change
+the margin between seasons). Each entry's `against` field records that
+comparison. With no standing record at the pin (start, owner retirement, a failed port) the first
+comparable attested ACCEPT is the record. After a pin move (or a machine change between seasons)
+the bot re-runs the record at the new pin first (the port). The standing record is the top-level
+key `record` (an id or null) of submissions.json; records.json on main names it and the pin.
 
 ## Consequences that bite (the full list is §13 of the core's AGENTS.md)
+
+The first entries' timings were measured on GitHub-hosted runners with a different chain hash,
+so they are indicative only unless §13 marks them "on the machine".
 
 - V̄ dominated the first recursive entry (P̄ = 4.52, V̄ = 24.52). Size V and |π| before you tune
   the prover.

@@ -1,21 +1,21 @@
 """The queue in `submissions.json` (TRUSTED; pure functions on the parsed state).
 
-Order: first a waiting port of the record to a new pin, then the entries waiting for a
-confirmation duel (`confirming`), each oldest first; then, among the other queued entries, the
-author whose most recent evaluation started earliest (never-evaluated authors first), then that
-author's oldest queued entry. `queued` is the bot's timestamp, so a push goes to the back of its
-author's line."""
+Order: first a waiting port of the record to a new pin (oldest first); then, among the other
+queued entries, the author whose most recent evaluation started earliest (never-evaluated authors
+first), then that author's oldest queued entry. `queued` is the bot's timestamp, so a push goes to
+the back of its author's line. There is no cap on an author's evaluations: the order only decides
+who goes next."""
+import datetime
 import json
 
-from common import (CONFIRMING, FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR, QUEUED, RECORD_WINS, RUNNING, STATUSES,
-                    WAITING, now_iso)
+from common import (ENTRY_PROOF_ERRORS, UNCOUNTED_ERRORS, FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR,
+                    PAUSE_AFTER, QUEUED, RUNNING, STATUSES, STREAK_CAP, STREAK_WINDOW_S, now_iso)
 
 EVALUATED = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error")
 
 
 def empty(repo, pin):
-    return {"version": 1, "updated": None, "repo": repo, "core": pin, "margin": MARGIN, "record_wins": RECORD_WINS,
-            "submissions": []}
+    return {"version": 1, "updated": None, "repo": repo, "core": pin, "margin": MARGIN, "submissions": []}
 
 
 def load(raw, repo, pin):
@@ -31,8 +31,10 @@ def load(raw, repo, pin):
             raise ValueError(f"submissions.json holds a malformed entry: {str(e)[:200]}")
     # `stale`: the stored pin or parameters are not the current ones (a pin move); the next writer
     # rewrites the file even if no entry changed, so readers see the pin and its record at once
-    stale = (st.get("core"), st.get("margin"), st.get("record_wins")) != (pin, MARGIN, RECORD_WINS)
-    st["core"], st["margin"], st["record_wins"] = pin, MARGIN, RECORD_WINS
+    stale = (st.get("core"), st.get("margin")) != (pin, MARGIN) or "record_wins" in st
+    st.pop("record_wins", None)
+    st.pop("fingerprint_errors", None)          # an older state's counter: `error_streak` replaces it
+    st["core"], st["margin"] = pin, MARGIN
     st["_stale"] = stale
     return st
 
@@ -86,7 +88,7 @@ def enqueue(st, entry, now):
         st["submissions"].append(entry)
         return entry, True
     if old["status"] in ("superseded", "withdrawn", "invalid"):
-        keep = {k: old.get(k) for k in ("started",)}
+        keep = {k: old.get(k) for k in ("started", "counted_at", "generic_errors")}
         old.update(entry)
         old.update(status=QUEUED, queued=now, finished=None, attempts=0, reasons=[], verdict=None, **keep)
         return old, True
@@ -129,7 +131,7 @@ def duplicate_of(st, eid, pr, author, tree):
             return f"the same root as {e['id']} (#{e['pr']}, by another author), submitted earlier"
         if e["status"] in EVALUATED and e["status"] != "error":
             return f"the same root as {e['id']} (#{e['pr']}), already evaluated ({e['status']})"
-        if e["status"] in (RUNNING, CONFIRMING):
+        if e["status"] == RUNNING:
             return f"the same root as {e['id']} (#{e['pr']}), being evaluated"
         if e["pr"] != pr and e["status"] == QUEUED:
             return f"the same root as {e['id']}, queued in #{e['pr']}"
@@ -137,16 +139,16 @@ def duplicate_of(st, eid, pr, author, tree):
 
 
 def order(st):
-    """The waiting entries in evaluation order: waiting ports, then confirmations (each oldest
-    first), then the other queued entries in the fair order."""
+    """The waiting entries in evaluation order: waiting ports (oldest first), then the other queued
+    entries in the fair order."""
     last = {}
     for e in st["submissions"]:
-        if e.get("started"):
+        t = counted_start(e)
+        if t:
             a = e["author"]
-            last[a] = max(last.get(a, ""), e["started"])
-    key = lambda e: (e["status"] != QUEUED, e["queued"] or "", e["id"])  # noqa: E731  (ports first)
-    front = sorted((e for e in st["submissions"] if e["status"] == CONFIRMING
-                    or (e["status"] == QUEUED and e.get("port_of"))), key=key)
+            last[a] = max(last.get(a, ""), t)
+    key = lambda e: (e["queued"] or "", e["id"])  # noqa: E731
+    front = sorted((e for e in st["submissions"] if e["status"] == QUEUED and e.get("port_of")), key=key)
     queued = sorted((e for e in st["submissions"] if e["status"] == QUEUED and not e.get("port_of")), key=key)
     by = {}
     for e in queued:
@@ -161,68 +163,109 @@ def order(st):
     return out
 
 
-def won_duels(e, record_id):
-    """The duels `e` won against the record `record_id` (a confirmation counts only against the
-    record the first win was against)."""
-    return [d for d in e.get("duels") or [] if isinstance(d, dict) and d.get("won") and d.get("incumbent") == record_id]
+def _ts(iso):
+    return datetime.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
-def failed_duels(e, record_id):
-    """The duels of `e` in which the record `record_id` failed on the runner (no comparison)."""
-    return [d for d in e.get("duels") or [] if isinstance(d, dict) and d.get("incumbent_failed")
-            and d.get("incumbent") == record_id]
+def counted_start(e):
+    """When an entry's evaluation counts as started, for the fair order (AGENTS.md §9):
+    `counted_at`, the start of its first run that counted (a retry never refreshes it), or the start
+    of the run in progress. A run does not count when it ended in a named organiser error
+    (`UNCOUNTED_ERRORS`: fingerprint, lengths, drift, setup, cache, attestation), nor the first
+    unnamed ERROR of an entry (a catch-all harness error or a reaped run); a later one does
+    (`settle_run`). Ports (the organiser's), superseded and withdrawn entries never count."""
+    if e.get("port_of") or e.get("status") in ("superseded", "withdrawn", "invalid"):
+        return None
+    if e.get("status") == RUNNING:
+        return e.get("counted_at") or e.get("started")
+    if "counted_at" in e:
+        return e["counted_at"]
+    # an entry written before `counted_at` existed: its start unless its last run was an ERROR
+    return e.get("started") if e.get("started") and e.get("verdict") != "ERROR" else None
 
 
-def waiting(e, record_id):
-    """The status an entry waits in: `confirming` if it won a duel against the standing record
-    `record_id`, else `queued`."""
-    return CONFIRMING if record_id and won_duels(e, record_id) else QUEUED
+def settle_run(e, organiser_error=None, error=False):
+    """Whether the run that just ended counts as the author's start in the fair order, recorded in
+    `counted_at`: not after a named organiser error, not after the entry's first unnamed ERROR
+    (`generic_errors`), otherwise yes (from the run's start, once)."""
+    if organiser_error in UNCOUNTED_ERRORS:
+        counts = False
+    elif error:
+        e["generic_errors"] = e.get("generic_errors", 0) + 1
+        counts = e["generic_errors"] > 1
+    else:
+        counts = True
+    if counts and not e.get("counted_at"):
+        e["counted_at"] = e.get("started")
+    e.setdefault("counted_at", None)
+    return counts
 
 
-def settle(st, pin, now):
-    """Wins count only against the record they were won against. When that record no longer stands
-    (beaten, retired, or a pin move), a `confirming` entry goes back to `queued`, keeping its queue
-    time, for a fresh duel against whatever stands next: no win carries over, and none crowns an
-    entry. Returns the ids changed."""
-    rec = current_record(st, pin)
-    out = []
-    for e in st["submissions"]:
-        if e["status"] == CONFIRMING and waiting(e, rec["id"] if rec else None) == QUEUED:
-            e["status"] = QUEUED
-            e["reasons"] = (e.get("reasons") or [])[:19] + [
-                "the record it won its duel against no longer stands: queued for a fresh evaluation"]
-            out.append(e["id"])
-    return out
+def _noted(x):
+    """When a streak entry was noted (its `at`), or None if it has no readable time."""
+    try:
+        return _ts(x["at"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
-def void_confirmations(st, record_id, now):
-    """A retired record's pending confirmations: each entry `confirming` on a win against it is
-    `accepted`, since a retirement must not crown a candidate on one win. Returns the ids."""
-    out = []
-    for e in st["submissions"]:
-        if e["status"] == CONFIRMING and won_duels(e, record_id):
-            _close(e, "accepted", now)
-            e["reasons"] = (e.get("reasons") or [])[:19] + [
-                f"the record {record_id} was retired before this entry's confirmation duel: one win is not a record"]
-            out.append(e["id"])
-    return out
+def pause_count(streak):
+    """The errors of the streak that count toward a pause (common.py): every ENTRY_PROOF one, and of
+    the others one per author; an error noted more than STREAK_WINDOW_S before the newest one does
+    not count (one with no readable time does)."""
+    times = [t for t in map(_noted, streak) if t is not None]
+    newest = max(times, default=None)
+    n, seen = 0, set()
+    for x in streak:
+        t = _noted(x)
+        if newest is not None and t is not None and newest - t > STREAK_WINDOW_S:
+            continue
+        if x.get("kind") in ENTRY_PROOF_ERRORS:
+            n += 1
+        elif x.get("author") not in seen:
+            seen.add(x.get("author"))
+            n += 1
+    return n
 
 
-def reap(st, now, record_id=None):
+def note_error(st, e, kind, now, reason, run_url):
+    """Adds a run of `e` that ended on the organiser's side (`kind`: a named organiser error,
+    `unnamed` or `reaped`) to the error streak, and pauses the queue when `pause_count` reaches
+    PAUSE_AFTER. Returns True if this run paused it (an already paused queue stays paused)."""
+    s = st.setdefault("error_streak", [])
+    s.append({"id": e["id"], "author": e.get("author"), "kind": kind, "at": now, "reason": str(reason or kind)[:300]})
+    del s[:-STREAK_CAP]
+    if st.get("paused") or pause_count(s) < PAUSE_AFTER:
+        return False
+    st["paused"] = {"since": now, "reason": str(reason or kind)[:300], "run_url": run_url}
+    return True
+
+
+def clear_errors(st):
+    """A clean verdict: the error streak is empty and the queue is not paused. Returns True if it
+    was paused."""
+    st["error_streak"] = []
+    return st.pop("paused", None) is not None
+
+
+def reap(st, now):
     """Entries still `running` when a new evaluation run selects (runs are serialised by the
     concurrency group, so their run ended without publishing): an organiser-side ERROR, waiting
-    once more or left as `error`. Returns the ids."""
-    out = []
+    once more or left as `error`, and a `reaped` run in the error streak. Returns (the ids, whether
+    the queue paused)."""
+    out, paused = [], False
     for e in st["submissions"]:
         if e["status"] == RUNNING:
             why = "harness error: the evaluation run ended without publishing a verdict"
             e["verdict"] = "ERROR"
+            settle_run(e, error=True)             # a reaped run: not counted the first time, then it counts
+            paused = note_error(st, e, "reaped", now, why, e.get("run_url")) or paused
             if e.get("attempts", 0) < MAX_ATTEMPTS:
-                e["status"], e["reasons"] = waiting(e, record_id), [why + " (queued again)"]
+                e["status"], e["reasons"] = QUEUED, [why + " (queued again)"]
             else:
                 _close(e, "error", now, why)
             out.append(e["id"])
-    return out
+    return out, paused
 
 
 def mark_running(e, now, run_url):
@@ -239,8 +282,7 @@ def records(st):
 def current_record(st, pin):
     """The standing record: the newest record taken at this pin (`harness_commit == pin`), unless it
     was retired (a retired record never stands again). A record of an earlier pin stays in the
-    history; with none standing there is no duel, and the first comparable attested ACCEPT at the pin
-    is the record."""
+    history; with none standing, the first comparable attested ACCEPT at the pin is the record."""
     newest = next((e for e in records(st) if e.get("harness_commit") == pin), None)
     return newest if newest is not None and newest["status"] == "record" else None
 
@@ -252,7 +294,7 @@ def retire(e, now, why):
 
 
 COMPACT_KEYS = ("id", "pr", "sha", "root", "author", "status", "queued", "finished", "tree", "attempts", "verdict",
-                "started")
+                "started", "counted_at")
 
 
 def compact(st):
@@ -302,7 +344,7 @@ def due_port(st, pin):
 def port(st, pr, pin, now, o=None):
     """A re-evaluation at a new pin: the record `o` (by default the pull request's newest record or
     other evaluated ACCEPT of an earlier pin), queued again as `<id>-<pin8>` on the same retained
-    commit, so the old record can keep the crown at the new pin (unpaired). None if there is none
+    commit, so the old record can keep the crown at the new pin. None if there is none
     or it exists."""
     if o is None:
         olds = [e for e in of_pr(st, pr) if e["status"] in ("record", "retired", "accepted", "unranked")
@@ -316,14 +358,14 @@ def port(st, pr, pin, now, o=None):
     keep = ("pr", "sha", "root", "author", "title", "agent", "builds_on", "opened", "tag", "notes", "readme", "tree")
     e = {k: o.get(k) for k in keep}
     e.update(id=nid, port_of=o["id"], status=QUEUED, queued=now, started=None, finished=None, attempts=0,
-             verdict=None, score=None, comparable=False, truncated=False, reasons=[], cpu=[], run_url=None,
+             verdict=None, score=None, comparable=False, truncated=False, reasons=[], run_url=None,
              record_of=None, verified=False, harness_commit=None, prover_sha256=None)
     st["submissions"].append(e)
     return e
 
 
 def any_queued(st):
-    return any(e["status"] in WAITING for e in st["submissions"])
+    return any(e["status"] == QUEUED for e in st["submissions"])
 
 
 def position(st, eid):

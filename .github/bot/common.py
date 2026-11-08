@@ -9,22 +9,59 @@ import re
 CORE_REPO = "scaraven/recursion.fast"
 SIGNER_WORKFLOW = "scaraven/recursion.fast/.github/workflows/evaluate.yml"
 STATUS_CONTEXT = "recursion.fast/evaluation"
-# The record rule's two parameters (the owner may tune them after calibrating with self-duels):
-MARGIN = 0.03             # a duel is won iff S_cand <= (1 - MARGIN) * S_inc, both measured in one job
-RECORD_WINS = 2           # duels a candidate must win against the same standing record to take it
+# The record rule (AGENTS.md §10): a comparable, attested ACCEPT at the pin is a new record iff
+# S < (1 - MARGIN) * S_record, S_record the standing record's score at the pin.
+# MARGIN is the owner's choice (2 %), not derived from the noise. For reference: σ, the relative
+# run-to-run spread of S for one entry on the evaluation machine with the fixed chain lengths, was
+# measured at 1.75 % over 10 runs at the smoke shape (the core's harness/smoke.toml; mostly per-step
+# process overhead, likely smaller at the season shape). S and S_record are two independent runs, so
+# two runs of one entry differ by about √2·σ ≈ 2.5 %: a near-copy of the record can beat it by noise
+# alone (at σ = 1.75 %, in roughly one attempt in five). A noise-proof margin would be 3·√2·σ ≈ 7.4 %.
+# The defences are elsewhere: a byte copy of an evaluated root is invalid, a record's prover binary
+# never takes the record again, and the owner retires a record won by noise (`retire`). The owner may
+# change MARGIN between seasons (a stored state with another margin is rewritten at once,
+# rfqueue.load; README.md, "Changing the margin", lists every place that states it).
+MARGIN = 0.02
 MAX_ATTEMPTS = 2          # an organiser-side ERROR is evaluated once more, then left for the owner
+# Organiser errors the core names in a result (`organiser_error`), and `attestation`, which the bot
+# gives a result whose provenance does not verify (nothing an entry runs can reach the attest job).
+# `drift` is among them although c_P is sampled during the entry's stream: the sandbox leaves no
+# entry process alive, so only a thermal effect could carry over (accepted and documented). These are
+# the organiser's alone: a run that ends in one never counts against the author (it does not move
+# the author back in the fair order). A `fingerprint` error (the machine is not the season's) or a
+# `lengths` error (the stream did not use the season's fixed chain lengths: an organiser bug, the
+# same at every retry at one pin) does not even use up the entry's retry; the others are retried
+# once (MAX_ATTEMPTS). `attestation`: an unverified result (the bot's).
+UNCOUNTED_ERRORS = ("fingerprint", "lengths", "drift", "setup", "cache", "attestation")
+ORGANISER_ERRORS = UNCOUNTED_ERRORS + ("harness",)
+PAUSING_ERRORS = ("fingerprint", "lengths")     # a retry cannot clear them: re-queued in place without an attempt
+# The pause (AGENTS.md §9): every run that ends on the organiser's side (any ERROR, named or not, a
+# result whose provenance fails, no result at all, a run reaped after it died) joins the error
+# streak. Only a clean verdict (a verified ACCEPT, PROVISIONAL or REJECT) whose stream ran on the
+# season's machine clears it; a REJECT at the certificate or inside the stream never reached the
+# benchmark-side checks and leaves it as it is. When PAUSE_AFTER errors of the streak count, the
+# queue pauses and one issue is opened for the owner. An entry cannot cause an ENTRY_PROOF error
+# (decided before any entry code runs, or by jobs that never fetch the entry; `attestation` here is a
+# result that exists but whose provenance fails), so each one counts. The others (drift, measured
+# during the entry's stream; harness, the certificate job, which builds the entry, ended without a
+# certificate; no result at all; an unnamed ERROR; a reaped run) might be provoked by an entry, so
+# they count once per author in the streak: no author can pause the queue alone, and an outage still
+# pauses it at the second author's entry. An error more than STREAK_WINDOW_S before the streak's
+# newest no longer counts, so unrelated errors weeks apart do not add up to a pause.
+ENTRY_PROOF_ERRORS = ("fingerprint", "lengths", "setup", "cache", "attestation")
+PAUSE_AFTER = 2
+STREAK_CAP = 32           # the streak's newest runs kept in the state
+STREAK_WINDOW_S = 7 * 24 * 3600
 
 ROOT_RE = re.compile(r"[a-z][a-z0-9-]{0,39}\Z")
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 ID_RE = re.compile(r"pr[1-9][0-9]{0,8}-[0-9a-f]{12}(?:-[0-9a-f]{8})?\Z")   # -<pin8>: a port to a new pin
 LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?\Z")
 
-# confirming: won a duel, waiting at the front of the queue for the next one against the same record
-QUEUED, RUNNING, CONFIRMING = "queued", "running", "confirming"
-WAITING = (QUEUED, CONFIRMING)
+QUEUED, RUNNING = "queued", "running"
 FINAL = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error", "invalid",
          "superseded", "withdrawn")
-STATUSES = (QUEUED, RUNNING, CONFIRMING) + FINAL
+STATUSES = (QUEUED, RUNNING) + FINAL
 VERDICTS = ("ACCEPT", "PROVISIONAL", "REJECT", "ERROR")
 
 # The entry caps: exactly the `[entry]` section of the core's harness/season.toml at the pin (the
