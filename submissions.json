@@ -1,8 +1,8 @@
 {
- "version": 1,
- "updated": "2026-11-08T13:26:14Z",
+ "version": 2,
+ "updated": "2026-11-10T12:42:34Z",
  "repo": "scaraven/recursion.fast-submissions",
- "core": "f3538eb2a198240d864eb773331a88bf16283688",
+ "core": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
  "margin": 0.02,
  "submissions": [
   {
@@ -31,19 +31,26 @@
    "tag": "rf-source/pr7-5cecb59c0bca",
    "notes": "notes/pr7-5cecb59c0bca.md",
    "readme": "readme/pr7-5cecb59c0bca.md",
-   "record_of": null,
+   "record_of": {
+    "sum": null
+   },
    "tree": "3313ca1403025f18d63df9161ca0dc22eaad9ce3",
    "verified": true,
    "harness_commit": "f3538eb2a198240d864eb773331a88bf16283688",
    "prover_sha256": "d7e10cae6d6b60a72a4e4a178cb458b875328290b9d41d8842bc51c38c4557af",
    "run_attempt": 1,
    "build_manifest": "abe8bc76ad0e3df17529204bd53193e2448a65a2ad4f8f7deeddbe7dfd910638",
-   "against": null,
+   "against": {
+    "sum": null
+   },
    "counted_at": "2026-11-08T13:11:04Z",
    "record_cache": false,
    "result": "results/pr7-5cecb59c0bca.json"
   }
  ],
- "record": null,
+ "record": {
+  "sum": null,
+  "product": null
+ },
  "error_streak": []
 }
