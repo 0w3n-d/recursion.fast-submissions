@@ -140,11 +140,12 @@ class FakeGitHub:
 
 
 def make_result(run_id, verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, prover="a" * 64, machine_ok=True,
-                organiser_error=None, stream=True):
+                organiser_error=None, stream=True, Sx=None, legacy=False):
     """A result as the core's aggregate.py writes it (the fields the bot reads). `comparable=False`:
     a truncated stream; `machine_ok=False`: another machine's fingerprint, the organiser's ERROR;
     `stream=False`: no stream recorded (a REJECT at the certificate, so no benchmark part, or inside
-    the stream)."""
+    the stream). `S` is the sum's score and `Sx` the product's (default: `S`); `legacy`: a score
+    without `tracks` (an older core), the sum alone."""
     fp = "f" * 64
     if not machine_ok:
         verdict, comparable = "ERROR", False
@@ -159,7 +160,16 @@ def make_result(run_id, verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, p
     if not machine_ok or organiser_error:
         r["organiser_error"] = organiser_error or "fingerprint"
     if verdict in ("ACCEPT", "PROVISIONAL"):
-        r["score"] = {"S": S, "P_bar": S * 0.8, "V_bar": S * 0.2, "M": 96, "c_P": 1.0, "fit": {"a": 1e-6}}
+        P, Sx = S * 0.8, S if Sx is None else Sx
+        g = Sx / P
+        r["score"] = {"S": S, "P_bar": P, "V_bar": S * 0.2, "M": 96, "c_P": 1.0, "fit": {"a": 1e-6}, "K": 5,
+                      "kappa": 3.2975, "x_bar": S * 0.2 / 3.2975, "V_mean_s": 0.6595 * max(g - 1, 0) ** 0.5, "g": g,
+                      "S_product": Sx, "pi_mean_bytes": 300000}
+        if legacy:
+            for k in ("x_bar", "V_mean_s", "g", "S_product", "pi_mean_bytes"):
+                del r["score"][k]
+        else:
+            r["score"]["tracks"] = {"sum": "S", "product": "S_product"}
     return r
 
 
@@ -215,11 +225,12 @@ class World:
             flows.sync(self.ctx())
         return k
 
-    def evaluate(self, result=None, force=None, retire=None, resume=False):
-        """select → (the core's evaluation, replaced by `result(entry, run_id)`) → publish."""
+    def evaluate(self, result=None, force=None, retire=None, resume=False, track=None):
+        """select → (the core's evaluation, replaced by `result(entry, run_id)`) → publish.
+        `retire`, `track`: the owner retires that record in that track first."""
         self.run += 1
         ctx = self.ctx(self.run)
-        e = flows.select(ctx, force, retire, resume)
+        e = flows.select(ctx, force, retire, resume, track)
         if e is None:
             return None, None
         path = None
@@ -255,7 +266,8 @@ def main():
         w.intake(6)
         e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, prover="e" * 64))
         print("evaluated", e["id"], "->", p["status"], "|", p["reasons"][-1])
-        print("main records.json:", json.loads(w.show("main:records.json"))["record"]["id"],
+        rec = json.loads(w.show("main:records.json"))["record"]
+        print("main records.json:", {t: r and r["id"] for t, r in rec.items()},
               "main roots:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
         # a run off the season's machine is the organiser's ERROR, re-queued in its place; a truncated
         # stream is the entry's `unranked`
@@ -279,16 +291,36 @@ def main():
         print("fair order: dave's #11 before carol's #12:", e["id"], "->", p["status"])
         e, p = w.evaluate(lambda e, run: make_result(run, "REJECT"))
         print("then carol's #12:", e["id"], "->", p["status"])
-        # the pin moves: the record's port runs first and keeps the crown; then an entry beats it
+        # the two tracks: a fat-but-fast verifier takes the product's record only (its sum is worse)
+        g.open_pr(13, "grace", good_root("iota", "13"))
+        w.intake(13)
+        e, p = w.evaluate(lambda e, run: make_result(run, S=9.5, Sx=6.0, prover="1" * 64))
+        print("tracks: one track only:", e["id"], "->", p["status"], p["record_in"], "|", p["reasons"][-2], "|", p["reasons"][-1])
+        rec = json.loads(w.show("main:records.json"))["record"]
+        print("records.json:", {t: r and r["id"] for t, r in rec.items()},
+              "main roots:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
+        # the pin moves: each track's record is ported first and keeps its crown (two ports here,
+        # the sum's and the product's, each a candidate only in its own track)
         g.open_pr(5, "dave", good_root("eps", "5"))
         w.intake(5)
         w.pin = "c" * 40
-        e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, harness=w.pin, prover="e" * 64))
-        print("pin moved; the record is ported first:", e["id"], "->", p["status"])
-        e, p = w.evaluate(lambda e, run: make_result(run, S=8.0, harness=w.pin, prover="5" * 64))
-        print("then at the new pin:", e["id"], "->", p["status"], "|", p["reasons"][-1])
+        provers = {6: "e" * 64, 13: "1" * 64}           # a port runs its record's own prover binary
+        for _ in range(2):
+            e, p = w.evaluate(lambda e, run: make_result(run, S=9.0, Sx=5.0, harness=w.pin, prover=provers[e["pr"]]))
+            print("pin moved; a record is ported first:", e["id"], "->", p["status"], p["record_in"], "| port of", e.get("port_tracks"))
+        # an entry that beats both records takes both
+        e, p = w.evaluate(lambda e, run: make_result(run, S=8.0, Sx=4.0, harness=w.pin, prover="5" * 64))
+        print("then at the new pin:", e["id"], "->", p["status"], p["record_in"], "|", "; ".join(p["reasons"][-2:]))
+        # the owner retires it in the product track only: it still holds the sum's record
+        g.open_pr(14, "heidi", good_root("kappa", "14"))
+        w.intake(14)
+        e, p = w.evaluate(lambda e, run: make_result(run, S=8.5, Sx=4.5, harness=w.pin, prover="4" * 64),
+                          retire=p["id"], track="product")
+        print("retired in product only:", e["id"], "->", p["status"], p["record_in"], "|", "; ".join(p["reasons"][-2:]))
         rec = json.loads(w.show("main:records.json"))
-        print("records.json:", rec["core"][:8], rec["record"]["id"], "history:", [h["id"] + ":" + h["status"] for h in rec["history"]])
+        print("records.json:", rec["core"][:8], {t: r and r["id"] for t, r in rec["record"].items()},
+              "history:", {t: [h["id"] + ":" + h["status"] for h in hs] for t, hs in rec["history"].items()})
+        print("main roots:", git(w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
         print("comments:", len(g.comments), "statuses:", len(g.status_log), "dispatches:", len(g.dispatches))
         print("queue:", [(x["id"], x["status"]) for x in w.state()["submissions"]])
     finally:

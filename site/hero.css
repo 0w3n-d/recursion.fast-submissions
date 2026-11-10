@@ -1,0 +1,35 @@
+/* recursion.fast: the home page's hero figure (drawn by hero.js). */
+.hero-fig { margin: 32px 0 0; }
+/* overflow: visible lets the arms swing in from outside the box during the load animation */
+.hero-fig svg { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto; overflow: visible; }
+.hero-fig figcaption { max-width: 360px; margin: 10px auto 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+/* the chains' fade: --ink at .85 to .52 keeps every dot at 3:1 or more against --page, light and dark */
+.hero-fig .f0 { stop-color: var(--ink); stop-opacity: .85; }
+.hero-fig .f1 { stop-color: var(--ink); stop-opacity: .52; }
+.hero-fig .arms path { fill: none; stroke: url(#hero-fade) var(--ink-2); stroke-width: 1.3; stroke-linecap: round; stroke-dasharray: 0 2.7; }
+.hero-fig .arms circle { fill: var(--page); stroke: var(--muted); stroke-width: .8; }
+.hero-fig .proof { fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.hero-fig .core circle { fill: var(--accent); }
+.hero-fig .core text { fill: var(--page); font: italic 15px var(--math); }
+
+@media (min-width: 900px) {
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto 1fr; column-gap: 56px; align-items: start; }
+  .hero > * { grid-column: 1; }
+  .hero > .hero-fig { grid-column: 2; grid-row: 1 / span 2; margin: 4px 0 0; }
+}
+
+/* one fold on load: the spiral draws clockwise, each chain swings onto it at its step, the core lands last */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-fig .play .proof { stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: hero-draw var(--t) linear .15s forwards; }
+  .hero-fig .play .arms g { opacity: 0; transform-origin: 200px 200px; transform: rotate(-24deg); animation: hero-fold .6s cubic-bezier(.2, .7, .3, 1) calc(var(--d) - .35s) forwards; }
+  .hero-fig .play .core { opacity: 0; animation: hero-in .3s ease-out calc(var(--d) + .1s) forwards; }
+}
+@keyframes hero-draw { to { stroke-dashoffset: 0; } }
+@keyframes hero-fold { to { opacity: 1; transform: none; } }
+@keyframes hero-in { to { opacity: 1; } }
+@media (forced-colors: active) {
+  .hero-fig .proof { stroke: CanvasText; }
+  .hero-fig .core circle { fill: CanvasText; }
+  .hero-fig .core text { fill: Canvas; }
+  .hero-fig .arms path { stroke: GrayText; }
+}

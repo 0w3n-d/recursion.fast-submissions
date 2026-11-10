@@ -1,1 +1,44 @@
-{"schema": "recursion.fast/v4/result-1", "verdict": "PROVISIONAL", "comparable": false, "truncated": false, "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de", "job": "scaraven/recursion.fast-submissions/actions/runs/105/attempts/1", "machine": {"fingerprint": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15", "expected": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15", "matches": true}, "runner": {"name": "rf-bench-1", "environment": "self-hosted", "labels": ["rf-bench"]}, "reasons": ["certificate: provisional: sorryAx in the closure of certified (NovaKeccak.Fold.extract_sound)"], "prover_sha256": "000000000000000000000000000000000000000000000000000000000000b99a", "score": {"S": 2.913, "P_bar": 2.488, "V_bar": 0.425, "M": 96, "c_P": 1.031, "kappa": 0.9893, "v_ref_s": 0.6595, "retimed": 2}}
+{
+ "schema": "recursion.fast/v4/result-1",
+ "verdict": "PROVISIONAL",
+ "comparable": false,
+ "truncated": false,
+ "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
+ "job": "scaraven/recursion.fast-submissions/actions/runs/105/attempts/1",
+ "machine": {
+  "fingerprint": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15",
+  "expected": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15",
+  "matches": true
+ },
+ "runner": {
+  "name": "rf-bench-1",
+  "environment": "self-hosted",
+  "labels": [
+   "rf-bench"
+  ]
+ },
+ "reasons": [
+  "certificate: provisional: sorryAx in the closure of certified (NovaKeccak.Fold.extract_sound)"
+ ],
+ "prover_sha256": "000000000000000000000000000000000000000000000000000000000000b99a",
+ "score": {
+  "S": 4.2097,
+  "P_bar": 2.488,
+  "V_bar": 1.7217,
+  "x_bar": 0.5221,
+  "V_mean_s": 0.25,
+  "g": 1.1437,
+  "S_product": 2.8455,
+  "pi_mean_bytes": 300000,
+  "M": 96,
+  "c_P": 1.031,
+  "K": 5,
+  "kappa": 3.2975,
+  "v_ref_s": 0.6595,
+  "retimed": 2,
+  "tracks": {
+   "sum": "S",
+   "product": "S_product"
+  }
+ }
+}

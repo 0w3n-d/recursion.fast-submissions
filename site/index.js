@@ -1,98 +1,90 @@
-// recursion.fast: the home page (record, progression, leaderboard, queue, submissions).
+// recursion.fast: the home page (the track tabs with each track's record, progression and
+// leaderboard; the queue; every submission).
 'use strict';
 (function () {
-  const { el, svg, ext, page, link, fmtS, fmtDate, timeEl, ago, badge, evaluatedAt, gainOf, marginText, pct, unverified } = window.RF;
+  const { el, svg, ext, page, link, fmtS, fmtPart, fmtDate, timeEl, ago, badge, evaluatedAt, gainOf, marginText, pct, unverified,
+    scoreIn, retiredIn, trackOf } = window.RF;
 
-  // ---- the stream figure: the season's fixed chain lengths ------------------------------------
-  // `[stream] lengths` of the core's harness/season.toml at the pin: M + 1 values, step 1's two
-  // chains, then one per step (the same in every evaluation; the starts are fresh per evaluation)
-  const LENGTHS = [
-    202109, 151388, 556082, 207817, 394830, 542490, 355707, 348583, 331757, 353644,
-    279314, 263002, 545955, 314021, 152163, 159823, 145404, 176242, 186633, 224157,
-    174590, 287231, 165190, 164913, 197040, 150598, 167100, 136058, 292052, 236696,
-    491493, 298824, 489211, 404649, 254274, 186064, 201614, 580522, 329791, 750780,
-    149611, 146725, 986256, 684942, 195865, 270010, 202428, 324889, 501473, 260038,
-    238449, 448940, 298915, 370193, 204450, 446253, 432030, 522345, 278618, 155263,
-    158119, 237412, 442472, 284980, 162386, 210558, 148933, 641165, 980030, 791452,
-    133460, 429685, 251011, 182656, 301491, 151149, 181150, 194910, 205798, 1011610,
-    346439, 597766, 389391, 656622, 403982, 153100, 149058, 319683, 155616, 638315,
-    237618, 218729, 328702, 662587, 377019, 150940, 206820,
-  ];
-  function drawStream(animate) {
-    const s = document.querySelector('#stream svg');
-    if (!s) return;
-    // drawn in CSS pixels so labels keep their size at every width
-    const W = Math.max(280, Math.round(s.parentNode.clientWidth)), H = W < 600 ? 120 : 150;
-    s.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    const hi = 2 ** 20, M = LENGTHS.length - 1;
-    const x0 = 12, x1 = W - 12, yP = 30, yB = H - 4;
-    const dx = (x1 - x0) / (M - 1);
-    const r = Math.min(3.4, dx * 0.4), bw = Math.min(2.2, dx * 0.55);
-    const g = svg('g');
-    const pts = [];
-    for (let i = 0; i < M; i++) {
-      const n = Math.min(hi, i === 0 ? LENGTHS[0] + LENGTHS[1] : LENGTHS[i + 1]); // step i + 1's new permutations
-      const x = x0 + i * dx;
-      const h = 4 + (n / hi) * (yB - yP - r - 8);
-      g.append(svg('line', { class: 'bar', x1: x, y1: yP + r + 4, x2: x, y2: yP + r + 4 + h, 'stroke-width': bw }));
-      pts.push(x);
-    }
-    const proof = svg('path', { class: 'proof' + (animate ? ' draw' : ''), d: `M${x0} ${yP}H${x1}` });
-    proof.style.setProperty('--len', String(x1 - x0));
-    g.append(proof);
-    pts.forEach((x, i) => {
-      const c = svg('circle', { class: 'node' + (animate ? ' draw' : ''), cx: x, cy: yP, r });
-      if (animate) c.style.animationDelay = (0.15 + 1.6 * (i / (M - 1)) ** 0.85) + 's';
-      g.append(c);
-    });
-    g.append(svg('text', { class: 'lbl', x: x0 - 2, y: yP - 12 }, '\u03c0\u2081'));
-    g.append(svg('text', { class: 'lbl', x: x1 + 2, y: yP - 12, 'text-anchor': 'end' }, '\u03c0\u2089\u2086'));
-    s.replaceChildren(g);
-  }
-
-  // the record an entry beat, in words: its gain and a link to that record
-  function beat(e, data, nm) {
-    const a = e.against;
-    if (!a) return e.port_of ? 'none (the record re-run at a new pin)' : 'none (no record stood at its pin)';
+  // the record an entry beat in the track, in words: its gain and a link to that record
+  function beat(e, tr, data, nm) {
+    const a = e.against[tr.id];
+    if (!a || !e.record_of[tr.id]) return e.port_of ? 'none (the record re-run at a new pin)' : 'none (no record stood in this track at its pin)';
     const prev = data.subs.find(x => x.id === a.record);
     const name = el('a', { href: page('submission.html', { id: a.record }) }, prev ? nm(prev) : a.record);
-    return [pct(gainOf(e)), ' against ', name, a.S_record !== null ? ` (${fmtS(a.S_record)} s)` : ''];
+    return [pct(gainOf(e, tr.id)), ' against ', name, a.S_record !== null ? ` (${fmtS(a.S_record)} s)` : ''];
   }
   const short = sha => sha ? sha.slice(0, 7) : 'unknown';
 
-  // ---- record card: the bot's standing record (`record` in submissions.json) ----------------------
-  function recordCard(recs, data, nm) {
+  // ---- the track tabs (keyboard: arrows, Home, End; the choice is remembered) --------------------
+  let track = window.RF.chosenTrack();
+  function tabs(onChange) {
+    const list = document.getElementById('track-tabs');
+    const all = [...list.querySelectorAll('[role="tab"]')];
+    const show = id => {
+      for (const b of all) {
+        const on = b.getAttribute('data-track') === id;
+        b.setAttribute('aria-selected', String(on));
+        b.tabIndex = on ? 0 : -1;
+        if (on) document.getElementById('track-panel').setAttribute('aria-labelledby', b.id);
+      }
+      document.getElementById('track-blurb').textContent = trackOf(id).blurb;
+    };
+    const pick = (id, focus) => {
+      if (id === track) { if (focus) all.find(b => b.getAttribute('data-track') === id).focus(); return; }
+      track = id;
+      window.RF.rememberTrack(id);
+      show(id);
+      if (focus) all.find(b => b.getAttribute('data-track') === id).focus();
+      onChange();
+    };
+    for (const b of all) b.addEventListener('click', () => pick(b.getAttribute('data-track'), false));
+    list.addEventListener('keydown', ev => {
+      const i = all.indexOf(document.activeElement);
+      if (i < 0) return;
+      const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: all.length - 1 }[ev.key];
+      if (to === undefined) return;
+      ev.preventDefault();
+      pick(all[(to + all.length) % all.length].getAttribute('data-track'), true);
+    });
+    show(track);
+  }
+
+  // ---- record card: the bot's standing record of the track (`record` in submissions.json) ---------
+  function recordCard(recs, tr, data, nm) {
     const box = document.getElementById('record');
     box.replaceChildren();
-    const cur = data.record;
+    const cur = data.record[tr.id];
     if (!cur) {
       const waiting = data.subs.filter(e => ['queued', 'running'].includes(e.status)).length;
       const last = recs[recs.length - 1];
       box.append(el('div', { class: 'empty-card' },
-        el('h2', null, last ? 'No standing record at this contract pin.' : 'No record yet. Be the first.'),
-        last ? el('p', null, `The records so far were set at earlier pins or retired (the leaderboard keeps them). The first certified, comparable, attested ACCEPT at pin ${short(data.core)} becomes the record.`)
-          : el('p', null, `The first entry with a certified, comparable, attested ACCEPT becomes the record. After that, a new record needs a score S more than ${marginText(data)} below the standing record's, at the same contract pin.`),
+        el('h2', null, last ? `No standing ${tr.label.toLowerCase()} record at this contract pin.` : `No ${tr.label.toLowerCase()} record yet. Be the first.`),
+        last ? el('p', null, `The records of this track so far were set at earlier pins or retired (the leaderboard keeps them). The first certified, comparable, attested ACCEPT at pin ${short(data.core)} becomes the record of this track.`)
+          : el('p', null, `The first entry with a certified, comparable, attested ACCEPT becomes the record of each track. After that, a new record of this track needs a score ${tr.sym} more than ${marginText(data)} below the standing record's, at the same contract pin.`),
         data.unpublished ? el('p', null, 'Nothing has been published yet: the first pull request starts the record book.') : null,
         waiting ? el('p', null, waiting === 1 ? 'One submission is in the queue.' : waiting + ' submissions are in the queue.') : null,
         el('div', { class: 'actions' },
           el('a', { class: 'button', href: page('rules.html') + '#submit' }, 'How to submit'),
-          el('a', { class: 'button ghost', href: page('rules.html') }, 'Read the rules'))));
+          el('a', { class: 'button ghost', href: page('rules.html') + '#score' }, 'How the tracks score'))));
       return;
     }
     const sc = cur.score;
+    const split = tr.id === 'product'
+      ? [el('span', { class: 'math' }, 'P̄'), fmtS(sc.P_bar), el('span', { class: 'op' }, '\u00d7'), el('span', { class: 'math' }, 'g'), fmtPart(sc.g, '')]
+      : [el('span', { class: 'math' }, 'P̄'), fmtS(sc.P_bar), el('span', { class: 'op' }, '+'), el('span', { class: 'math' }, 'V̄'), fmtS(sc.V_bar)];
+    const other = window.RF.TRACKS.filter(t => t.id !== tr.id && data.record[t.id] && data.record[t.id].id === cur.id);
     const left = el('div', null,
-      el('h2', null, 'Current record'),
-      el('p', { class: 'score-big' }, el('span', { class: 'math' }, 'S'), fmtS(sc.S), el('span', { class: 'unit' }, 's')),
-      el('p', { class: 'score-split' }, '=',
-        el('span', { class: 'math' }, 'P̄'), fmtS(sc.P_bar), el('span', { class: 'op' }, '+'),
-        el('span', { class: 'math' }, 'V̄'), fmtS(sc.V_bar)),
-      el('p', { class: 'score-note' }, 'Seconds per 2¹⁸ permutations: prover time plus verifier charge. Lower is better.'));
+      el('h2', null, `Current ${tr.label.toLowerCase()} record`),
+      el('p', { class: 'score-big' }, el('span', { class: 'math' }, tr.sym), fmtS(scoreIn(cur, tr.id)), el('span', { class: 'unit' }, 's')),
+      el('p', { class: 'score-split' }, '=', split),
+      el('p', { class: 'score-note' }, 'Seconds per 2¹⁸ permutations. Lower is better.'),
+      other.length ? el('p', { class: 'score-note' }, 'It also holds the ' + other.map(t => t.label.toLowerCase()).join(' and ') + ' record.') : null);
     const dl = el('dl', { class: 'kv' },
       el('dt', null, 'Entry'), el('dd', null, el('a', { href: page('submission.html', { id: cur.id }) }, nm(cur))),
       el('dt', null, 'Author'), el('dd', null, cur.author ? ext(link.author(cur), cur.author) : '–'),
       cur.agent ? el('dt', null, 'Agent') : null, cur.agent ? el('dd', null, cur.agent) : null,
       el('dt', null, 'Date'), el('dd', null, timeEl(evaluatedAt(cur))),
-      el('dt', null, 'Gain'), el('dd', null, beat(cur, data, nm)),
+      el('dt', null, 'Gain'), el('dd', null, beat(cur, tr, data, nm)),
       el('dt', null, 'Contract pin'), el('dd', null, cur.harness_commit ? ext(link.core(cur.harness_commit), short(cur.harness_commit)) : '–'));
     const right = el('div', { class: 'facts' }, dl,
       el('p', { class: 'more' }, el('a', { href: page('submission.html', { id: cur.id }) }, 'Verdict, notes and code'), ' ',
@@ -105,26 +97,29 @@
     const raw = span / n, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
     return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
   }
-  function chart(recs, data, nm) {
+  function chart(recs, tr, data, nm) {
     const box = document.getElementById('chart');
-    const others = data.subs.filter(e => e.status === 'accepted' && e.score && e.score.S !== null && e.score.S > 0 && evaluatedAt(e));
+    const S = e => scoreIn(e, tr.id);
+    // comparable, attested ACCEPTs that are not a record of this track
+    const others = data.subs.filter(e => ['accepted', 'record', 'retired'].includes(e.status) && !e.record_in.includes(tr.id)
+      && e.verified && e.comparable && S(e) !== null && evaluatedAt(e));
     const W = Math.max(280, box.clientWidth - 16), H = W < 560 ? 240 : 300;
     const m = { l: 50, r: W < 560 ? 52 : 70, t: 18, b: 30 };
-    const pos = recs.filter(e => e.score.S > 0);
+    const pos = recs;
     const s = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': pos.length
-      ? `Record score over time: ${pos.length} records, from ${fmtS(pos[0].score.S)} s to ${fmtS(pos[pos.length - 1].score.S)} s`
-      : 'No records yet' });
+      ? `${tr.label} record score over time: ${pos.length} records, from ${fmtS(S(pos[0]))} s to ${fmtS(S(pos[pos.length - 1]))} s`
+      : `No ${tr.label.toLowerCase()} records yet` });
     const tip = el('div', { class: 'tooltip', hidden: true, role: 'status' });
     box.replaceChildren();
     if (!pos.length) {
       for (let i = 0; i < 5; i++) s.append(svg('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: m.t + i * (H - m.t - m.b) / 4, y2: m.t + i * (H - m.t - m.b) / 4 }));
       s.append(svg('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
-      s.append(svg('text', { class: 'empty-msg', x: (m.l + W - m.r) / 2, y: (H - m.b + m.t) / 2, 'text-anchor': 'middle' }, 'The first record will start this line.'));
+      s.append(svg('text', { class: 'empty-msg', x: (m.l + W - m.r) / 2, y: (H - m.b + m.t) / 2, 'text-anchor': 'middle' }, 'The first record of this track will start this line.'));
       box.append(s);
       return;
     }
     const pts = [...pos, ...others.slice(-2000)];
-    const vals = pts.map(e => e.score.S);
+    const vals = pts.map(S);
     const vmin = Math.min(...vals), vmax = Math.max(...vals);
     const log = vmax / vmin > 8;
     let y, yticks;
@@ -165,16 +160,17 @@
     // the record line: each record holds until the next one at the same pin; a new pin breaks it
     let d = '', prev = null;
     for (const e of pos) {
-      const px = x(t(e)).toFixed(1), py = y(e.score.S).toFixed(1);
+      const px = x(t(e)).toFixed(1), py = y(S(e)).toFixed(1);
       d += prev && prev.harness_commit === e.harness_commit ? `H${px}V${py}` : `M${px} ${py}`;
       prev = e;
     }
     s.append(svg('path', { class: 'step', d }));
-    const cur = data.record && pos.includes(data.record) ? data.record : null;
-    if (cur) s.append(svg('path', { class: 'step-tail', d: `M${x(t(cur)).toFixed(1)} ${y(cur.score.S).toFixed(1)}H${x(end).toFixed(1)}` }));
+    const cur = data.record[tr.id] && pos.includes(data.record[tr.id]) ? data.record[tr.id] : null;
+    if (cur) s.append(svg('path', { class: 'step-tail', d: `M${x(t(cur)).toFixed(1)} ${y(S(cur)).toFixed(1)}H${x(end).toFixed(1)}` }));
+    const word = e => e.record_in.includes(tr.id) ? (retiredIn(e, tr.id) ? 'retired record' : 'record') : 'accepted';
     const showTip = (e, px, py) => {
-      tip.replaceChildren(el('strong', null, nm(e)), 'S = ' + fmtS(e.score.S) + ' s', el('br'),
-        fmtDate(evaluatedAt(e)) + ', ' + e.status + (e.author ? ', ' + e.author : ''));
+      tip.replaceChildren(el('strong', null, nm(e)), `${tr.sym} = ${fmtS(S(e))} s`, el('br'),
+        fmtDate(evaluatedAt(e)) + ', ' + word(e) + (e.author ? ', ' + e.author : ''));
       tip.hidden = false;
       const bw = box.clientWidth;
       tip.style.left = Math.max(8, Math.min(px + 14, bw - 268)) + 'px';
@@ -182,8 +178,8 @@
     };
     const hide = () => { tip.hidden = true; };
     const point = (e, cls, r) => {
-      const px = x(t(e)), py = y(e.score.S);
-      const a = svg('a', { href: page('submission.html', { id: e.id }), 'aria-label': `${nm(e)}: S ${fmtS(e.score.S)} s, ${fmtDate(evaluatedAt(e))}, ${e.status}` },
+      const px = x(t(e)), py = y(S(e));
+      const a = svg('a', { href: page('submission.html', { id: e.id }), 'aria-label': `${nm(e)}: ${tr.sym} ${fmtS(S(e))} s, ${fmtDate(evaluatedAt(e))}, ${word(e)}` },
         svg('circle', { class: 'hit', cx: px, cy: py, r: 12 }),
         svg('circle', { class: cls, cx: px, cy: py, r }));
       const scale = () => s.getBoundingClientRect().width / W;
@@ -194,26 +190,34 @@
       s.append(a);
     };
     for (const e of others.slice(-2000)) point(e, 'pt-other', 3.6);
-    for (const e of pos) point(e, e.status === 'retired' ? 'pt-retired' : 'pt-record', 5);
+    for (const e of pos) point(e, retiredIn(e, tr.id) ? 'pt-retired' : 'pt-record', 5);
     const lab = cur || pos[pos.length - 1];
-    s.append(svg('text', { class: 'direct', x: x(t(lab)) + 9, y: y(lab.score.S) - 9 }, fmtS(lab.score.S) + ' s'));
+    s.append(svg('text', { class: 'direct', x: x(t(lab)) + 9, y: y(S(lab)) - 9 }, fmtS(S(lab)) + ' s'));
     box.append(s);
-    const hasRetired = pos.some(e => e.status === 'retired');
+    const hasRetired = pos.some(e => retiredIn(e, tr.id));
     if (others.length || hasRetired) box.append(el('div', { class: 'legend' }, el('span', { class: 'lg-record' }, 'Record'),
       hasRetired ? el('span', { class: 'lg-retired' }, 'Retired record') : null,
-      others.length ? el('span', { class: 'lg-other' }, 'Accepted, not a record') : null));
+      others.length ? el('span', { class: 'lg-other' }, 'Accepted, not a record of this track') : null));
     if (log) box.append(el('div', { class: 'legend' }, el('span', { class: 'muted' }, 'Logarithmic scale.')));
     box.append(tip);
   }
 
-  // ---- leaderboard: every record (`record`, `retired`), newest first, grouped by contract pin ------
-  function leaderboard(recs, data, nm) {
+  // ---- leaderboard: every record of the track, newest first, grouped by contract pin ------------
+  function leaderboard(recs, tr, data, nm) {
     document.getElementById('leaderboard-note').textContent =
-      `Every record, newest first. A new record needs a score more than ${marginText(data)} below the standing record's, at the same contract pin. Gain: 1 \u2212 S / S_record against the record it beat.`;
+      `Every ${tr.label.toLowerCase()} record, newest first. A new record needs a score ${tr.sym} more than ${marginText(data)} below the standing record's, at the same contract pin. Gain: 1 \u2212 ${tr.sym} / ${tr.sym},record against the record it beat.`;
+    document.getElementById('leaders-caption').textContent = `Every ${tr.label.toLowerCase()} record, newest first, grouped by contract pin`;
+    const cols = 6 + tr.parts.length;
+    const th = (label, cls, title) => el('th', { scope: 'col', class: cls || null, title: title || null }, label);
+    document.getElementById('leaders-head').replaceChildren(el('tr', null,
+      th('#', 'num'), th('Entry'), th('Author'), th(tr.sym + ' (s)', 'num', 'the score of this track, seconds'),
+      tr.parts.map(([, label, unit, note]) => th(label + (unit === 's' ? ' (s)' : '') + (note ? ' *' : ''), 'num' + (note ? ' unscored' : ''),
+        note ? 'shown, ' + note : null)),
+      th('Gain', 'num'), th('Date')));
     const tb = document.getElementById('leaders');
     tb.replaceChildren();
     if (!recs.length) {
-      tb.append(el('tr', { class: 'empty-row' }, el('td', { colspan: 9 }, 'No records yet. The first certified, comparable, attested ACCEPT takes the board.')));
+      tb.append(el('tr', { class: 'empty-row' }, el('td', { colspan: cols }, `No ${tr.label.toLowerCase()} records yet. The first certified, comparable, attested ACCEPT takes the board.`)));
       return;
     }
     const numbered = recs.map((e, i) => ({ e, n: i + 1 })).reverse();
@@ -221,26 +225,27 @@
     for (const { e, n } of numbered) {
       if (e.harness_commit !== pin) {
         pin = e.harness_commit;
-        tb.append(el('tr', { class: 'pin-row' }, el('th', { colspan: 9 },
+        tb.append(el('tr', { class: 'pin-row' }, el('th', { colspan: cols },
           'Contract pin ', pin ? ext(link.core(pin), short(pin)) : 'unknown',
           pin && pin === data.core ? ' (current)' : ' (earlier pin)')));
       }
       const sc = e.score;
-      const gain = gainOf(e);
-      const isCur = data.record && data.record.id === e.id;
+      const gain = gainOf(e, tr.id);
+      const a = e.against[tr.id];
+      const isCur = data.record[tr.id] && data.record[tr.id].id === e.id;
       tb.append(el('tr', { class: isCur ? 'current' : null },
         el('td', { class: 'num' }, String(n)),
         el('td', null, el('a', { class: 'entry', href: page('submission.html', { id: e.id }) }, nm(e)),
-          isCur ? [' ', el('span', { class: 'badge st-record' }, 'current')] : e.status === 'retired' ? [' ', badge('retired')] : null),
+          isCur ? [' ', el('span', { class: 'badge st-record' }, 'current')] : retiredIn(e, tr.id) ? [' ', badge('retired')] : null),
         el('td', null, e.author ? ext(link.author(e), e.author) : '–'),
-        el('td', null, el('span', { class: 'agent' }, e.agent || '–')),
-        el('td', { class: 'num' }, el('strong', null, fmtS(sc.S))),
-        el('td', { class: 'num' }, fmtS(sc.P_bar)),
-        el('td', { class: 'num' }, fmtS(sc.V_bar)),
-        el('td', { class: 'num' + (gain !== null ? ' gain' : ''), title: gain !== null && e.against.S_record !== null ? `Against the ${fmtS(e.against.S_record)} s of the record it beat` : null },
-          gain !== null ? pct(gain) : e.port_of ? 'ported' : 'first at pin'),
+        el('td', { class: 'num' }, el('strong', null, fmtS(scoreIn(e, tr.id)))),
+        tr.parts.map(([k, , unit, note]) => el('td', { class: 'num' + (note ? ' unscored' : '') }, fmtPart(sc[k], unit))),
+        el('td', { class: 'num' + (gain !== null && e.record_of[tr.id] ? ' gain' : ''), title: gain !== null && a.S_record !== null ? `Against the ${fmtS(a.S_record)} s of the record it beat` : null },
+          gain !== null && e.record_of[tr.id] ? pct(gain) : e.port_of ? 'ported' : 'first at pin'),
         el('td', null, timeEl(evaluatedAt(e)))));
     }
+    if (tr.parts.some(p => p[3])) tb.append(el('tr', { class: 'note-row' }, el('td', { colspan: cols, class: 'muted' },
+      '* ' + tr.parts.filter(p => p[3]).map(p => p[1] + ': ' + p[3]).join('; ') + ' (shown so the trade-off is visible; the sum prices it).')));
   }
 
   // ---- queue: running first, then a waiting port, then the bot's fair order by author ------------
@@ -323,9 +328,9 @@
     const tb = document.getElementById('subs');
     tb.replaceChildren();
     if (!sorted.length) {
-      tb.append(el('tr', { class: 'empty-row' }, el('td', { colspan: 8 }, 'No submissions yet. Open the first pull request and it is evaluated next.')));
+      tb.append(el('tr', { class: 'empty-row' }, el('td', { colspan: 9 }, 'No submissions yet. Open the first pull request and it is evaluated next.')));
     } else if (!rows.length) {
-      tb.append(el('tr', { class: 'empty-row' }, el('td', { colspan: 8 }, 'Nothing matches this filter.')));
+      tb.append(el('tr', { class: 'empty-row' }, el('td', { colspan: 9 }, 'Nothing matches this filter.')));
     }
     for (const e of rows.slice(0, state.limit)) {
       const n = rel.citeCount(e.pr);
@@ -339,7 +344,8 @@
         el('td', { class: 'num' }, ext(link.pr(e), '#' + e.pr)),
         el('td', null, e.author ? ext(link.author(e), e.author) : '–'),
         el('td', null, el('span', { class: 'agent' }, e.agent || '–')),
-        el('td', { class: 'num' }, e.score && e.score.S !== null ? fmtS(e.score.S) : '–'),
+        window.RF.TRACK_IDS.map(t => el('td', { class: 'num' }, scoreIn(e, t) !== null ? fmtS(scoreIn(e, t)) : '–',
+          e.record_in.includes(t) ? el('span', { class: 'rec-mark', title: retiredIn(e, t) ? 'took this track\'s record (retired since)' : 'took this track\'s record' }, retiredIn(e, t) ? ' \u2020' : ' \u2605') : null)),
         el('td', null, timeEl(e.finished || e.queued || e.opened)),
         el('td', null, credit.length ? credit : '–')));
     }
@@ -381,8 +387,8 @@
       el('p', null, `Could not read submissions.json from ${host}: ${err && err.message ? err.message : 'unknown error'}. Check your connection and try again; the data is also on the `,
         ext(link.repo + '/tree/data', 'data branch'), '.'), retry));
     const msg = 'Results unavailable.';
-    document.getElementById('leaders').replaceChildren(el('tr', { class: 'empty-row' }, el('td', { colspan: 9 }, msg)));
-    document.getElementById('subs').replaceChildren(el('tr', { class: 'empty-row' }, el('td', { colspan: 8 }, msg)));
+    document.getElementById('leaders').replaceChildren(el('tr', { class: 'empty-row' }, el('td', { colspan: 6 + trackOf(track).parts.length }, msg)));
+    document.getElementById('subs').replaceChildren(el('tr', { class: 'empty-row' }, el('td', { colspan: 9 }, msg)));
     document.getElementById('queue').replaceChildren(el('li', { class: 'empty-li' }, el('span', { class: 'empty' }, msg)));
     document.getElementById('chart').replaceChildren();
     document.getElementById('chips').replaceChildren();
@@ -390,30 +396,33 @@
   }
 
   let current = null, names = null;
+  // the three sections of the selected track
+  function renderTrack(data) {
+    const { section } = window.RF;
+    const tr = trackOf(track);
+    const nm = names || (e => e.root || e.id);
+    let recs = [];
+    section('records', 'record', () => { recs = window.RF.records(data.subs, tr.id); });
+    section('current record', 'record', () => recordCard(recs, tr, data, nm));
+    section('progression', 'chart', () => chart(recs, tr, data, nm));
+    section('leaderboard', 'leaders', () => leaderboard(recs, tr, data, nm));
+  }
   async function start(force) {
     let data;
     try { data = await window.RF.loadData(force); } catch (err) { failed(err); return; }
     current = data;
     const { section } = window.RF;
-    let recs = [];
-    section('records', 'record', () => { names = window.RF.nameOf(data.subs); recs = window.RF.records(data.subs); });
+    section('names', 'record', () => { names = window.RF.nameOf(data.subs); });
     const nm = names || (e => e.root || e.id);
     section('pause', 'paused', () => pausedBanner(data));
-    section('current record', 'record', () => recordCard(recs, data, nm));
-    section('progression', 'chart', () => chart(recs, data, nm));
-    section('leaderboard', 'leaders', () => leaderboard(recs, data, nm));
+    renderTrack(data);
     section('queue', 'queue', () => queue(data.subs, nm));
     section('submissions', 'subs', () => submissions(data, nm));
     section('footer', 'pin', () => window.RF.footer(data));
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    drawStream(true);
-    let sw = document.getElementById('stream').clientWidth;
-    new ResizeObserver(() => {
-      const nw = document.getElementById('stream').clientWidth;
-      if (Math.abs(nw - sw) > 4) { sw = nw; drawStream(false); }
-    }).observe(document.getElementById('stream'));
+    tabs(() => { if (current) renderTrack(current); });
     const q = document.getElementById('q');
     let timer = 0;
     q.addEventListener('input', () => {
@@ -425,7 +434,8 @@
       const nw = Math.round(entries[0].contentRect.width);
       if (current && Math.abs(nw - w) > 4) {
         w = nw;
-        window.RF.section('progression', 'chart', () => chart(window.RF.records(current.subs), current, names || (e => e.root || e.id)));
+        const tr = trackOf(track);
+        window.RF.section('progression', 'chart', () => chart(window.RF.records(current.subs, tr.id), tr, current, names || (e => e.root || e.id)));
       } else w = nw;
     }).observe(document.getElementById('chart'));
     start(false);

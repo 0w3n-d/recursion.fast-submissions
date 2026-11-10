@@ -45,20 +45,21 @@ class E2E(unittest.TestCase):
         man = {"certificate": {"entry_build": {"manifest_sha256": "f" * 64}}}
         e, p = self.w.evaluate(lambda e, run: dict(make_result(run, S=10.0, prover="1" * 64), **man))
         self.assertEqual((e["pr"], p["status"], "incumbent" in e, e["record_manifest"]), (1, "record", False, ""))
-        rec = json.loads(self.w.show("main:records.json"))["record"]
+        rec = json.loads(self.w.show("main:records.json"))["record"]["sum"]
         self.assertEqual(git(self.w.bare, "rev-parse", "main:submissions/r1"), p["tree"])
         # the record rule: S < (1 - MARGIN) * S_record; exactly (1 - MARGIN) * 10 is not a record
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=(1 - common.MARGIN) * 10.0, prover="2" * 64))
-        self.assertEqual((p["status"], e["record_manifest"], p["against"]["record"]), ("accepted", "f" * 64, rec["id"]))
+        self.assertEqual((p["status"], e["record_manifest"], p["against"]["sum"]["record"]), ("accepted", "f" * 64, rec["id"]))
         self.assertNotIn("incumbent", e)
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, prover="3" * 64))
-        self.assertEqual((e["pr"], p["status"], p["record_of"]), (3, "record", rec["id"]))
-        self.assertAlmostEqual(p["against"]["gain"], 0.1)
+        self.assertEqual((e["pr"], p["status"], p["record_of"]), (3, "record", {"sum": rec["id"], "product": rec["id"]}))
+        self.assertAlmostEqual(p["against"]["sum"]["gain"], 0.1)
         self.assertEqual(self.head_status(3)["state"], "success")
         self.assertFalse(any(k in p for k in ("duel", "duels", "duel_with", "cpu")))
-        self.assertTrue(any("Against the record" in c[1] for c in self.g.comments))
+        self.assertTrue(any("Against the sum record" in c[1] for c in self.g.comments))
         r2 = json.loads(self.w.show("main:records.json"))
-        self.assertEqual(([r2["record"]["pr"]] + [h["pr"] for h in r2["history"]], r2["margin"]), ([3, 1], 0.02))
+        for t in common.TRACKS:
+            self.assertEqual(([r2["record"][t]["pr"]] + [h["pr"] for h in r2["history"][t]], r2["margin"]), ([3, 1], 0.02))
         self.assertEqual(git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split(),
                          ["submissions/README.md", "submissions/example", "submissions/r3"])
         self.assertTrue(self.w.show(f"data:notes/{p['id']}.md").startswith(b"# r3"))
@@ -71,7 +72,7 @@ class E2E(unittest.TestCase):
     def test_launch_with_no_pull_requests(self):
         self.assertEqual(flows.sync(self.w.ctx()), 0)
         st = json.loads(self.w.show("data:submissions.json"))
-        self.assertEqual((st["submissions"], st["core"], st["record"]), ([], PIN, None))
+        self.assertEqual((st["submissions"], st["core"], st["record"], st["version"]), ([], PIN, {"sum": None, "product": None}, 2))
         self.assertIsNone(flows.select(self.w.ctx()))
         self.assertEqual(self.w.show("main:records.json"), render.records_json(self.w.state(), PIN))
         main0 = git(self.w.bare, "rev-parse", "main")
@@ -184,26 +185,94 @@ class E2E(unittest.TestCase):
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
         self.w.intake(1)
         _, rec = self.w.evaluate(lambda e, run: make_result(run, S=10.0, prover="1" * 64))
+        self.assertEqual(rec["record_in"], ["sum", "product"])
         self.g.open_pr(2, "bob", good_root("beta", "2"))
         self.w.intake(2)
-        # the owner retires the record: no record stands, so #2's ACCEPT is the record whatever its S
-        e, p = self.w.evaluate(lambda e, run: make_result(run, S=99.0, prover="2" * 64), retire=rec["id"])
-        self.assertEqual((e["pr"], p["status"], p["record_of"], p["against"]), (2, "record", None, None))
-        self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == rec["id"])["status"], "retired")
-        self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["id"], p["id"])
-        # the owner retires a record by hand with nothing queued
-        e, p2 = self.w.evaluate(lambda e, run: None, retire=p["id"])
-        self.assertIsNone(e)
-        self.assertEqual(next(x for x in self.w.state()["submissions"] if x["id"] == p["id"])["status"], "retired")
-        # a pin move after a retirement: nothing is ported automatically; the owner's forced port remains
+        # the owner retires the record in the sum: no sum record stands, so #2's ACCEPT takes it
+        # whatever its S; the product's record still stands and #2 does not beat it
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=99.0, prover="2" * 64), retire=rec["id"], track="sum")
+        self.assertEqual((e["pr"], p["status"], p["record_in"], p["record_of"]["sum"], p["against"]["sum"]),
+                         (2, "record", ["sum"], None, None))
+        self.assertEqual((p["against"]["product"]["record"], p["against"]["product"]["beats"]), (rec["id"], False))
+        r0 = next(x for x in self.w.state()["submissions"] if x["id"] == rec["id"])
+        self.assertEqual((r0["status"], list(r0["retired_in"])), ("record", ["sum"]))    # the product's crown kept
+        r = json.loads(self.w.show("main:records.json"))
+        self.assertEqual((r["record"]["sum"]["id"], r["record"]["product"]["id"]), (p["id"], rec["id"]))
+        self.assertEqual(git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split(),
+                         ["submissions/README.md", "submissions/alpha", "submissions/beta", "submissions/example"])
+        # the owner retires records by hand with nothing queued; a wrong track retires nothing, writes
+        # nothing, starts nothing and fails the run (also with an entry waiting)
+        self.g.open_pr(4, "dave", good_root("delta", "4"))
+        self.w.intake(4)
+        before = self.w.show("data:submissions.json")
+        for rid, t in ((p["id"], "product"), (rec["id"], "sum"), ("pr99-000000000000", "sum")):
+            with self.assertRaisesRegex(RuntimeError, "nothing retired, nothing evaluated"):
+                self.w.evaluate(lambda e, run: None, retire=rid, track=t)
+        self.assertEqual(self.w.show("data:submissions.json"), before)
+        self.assertEqual(self.entry(4)["status"], "queued")
+        self.g.prs[4]["state"] = "closed"
+        flows.sync(self.w.ctx())
+        self.w.evaluate(lambda e, run: None, retire=p["id"], track="sum")
+        self.w.evaluate(lambda e, run: None, retire=rec["id"], track="product")
+        st = self.w.state()
+        self.assertEqual([x["status"] for x in st["submissions"]], ["retired", "retired", "withdrawn"])
+        self.assertEqual(json.loads(rfqueue.dump(st))["record"], {"sum": None, "product": None})
+        # a pin move after a retirement: nothing is ported automatically; the owner's forced port
+        # remains, a candidate in every track
         self.w.pin = "c" * 40
         self.assertIsNone(self.w.evaluate(lambda e, run: None)[0])
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=80.0, harness=self.w.pin, prover="2" * 64), force=2)
-        self.assertEqual((e["port_of"], p["status"]), (self.entry(2)["id"], "record"))
+        self.assertEqual((e["port_of"], e["port_tracks"], p["status"], p["record_in"]), (self.entry(2)["id"], None, "record",
+                                                                                        ["sum", "product"]))
         self.g.open_pr(3, "carol", good_root("gamma", "3"))
         self.w.intake(3)
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=70.0, harness=self.w.pin, prover="3" * 64))
-        self.assertEqual((p["status"], p["record_of"]), ("record", self.entry(2)["id"] + "-cccccccc"))
+        self.assertEqual((p["status"], p["record_of"]["sum"]), ("record", self.entry(2)["id"] + "-cccccccc"))
+
+    def test_two_tracks_two_records_two_ports(self):
+        """A record in one track only; a pin move ports both tracks' records, each by its own port and
+        each a candidate only in its own track, before any other entry; then one entry takes both."""
+        self.g.open_pr(1, "alice", good_root("alpha", "1"))
+        self.w.intake(1)
+        _, a = self.w.evaluate(lambda e, run: make_result(run, S=10.0, Sx=10.0, prover="1" * 64))
+        self.g.open_pr(2, "bob", good_root("beta", "2"))
+        self.w.intake(2)
+        _, b = self.w.evaluate(lambda e, run: make_result(run, S=12.0, Sx=6.0, prover="2" * 64))
+        self.assertEqual((b["status"], b["record_in"], b["record_of"]), ("record", ["product"], {"sum": None, "product": a["id"]}))
+        self.assertEqual(self.head_status(2)["description"], "ACCEPT: new record (product), S = 12.0000 s, S_product = 6.0000 s")
+        st = json.loads(self.w.show("data:submissions.json"))
+        self.assertEqual(st["record"], {"sum": a["id"], "product": b["id"]})
+        self.assertEqual(git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split(),
+                         ["submissions/README.md", "submissions/alpha", "submissions/beta", "submissions/example"])
+        self.g.open_pr(3, "carol", good_root("gamma", "3"))
+        self.w.intake(3)
+        self.w.pin = "c" * 40
+        provers = {1: "1" * 64, 2: "2" * 64}
+        # the ports' scores are such that each would beat the other's record: neither may take it
+        for want, tracks in ((a, ["sum"]), (b, ["product"])):
+            e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.0 if e["pr"] == 2 else 11.0, Sx=5.0 if e["pr"] == 1 else 7.0,
+                                                              harness=self.w.pin, prover=provers[e["pr"]]), force=3)
+            self.assertEqual((e["port_of"], e["port_tracks"], p["status"], p["record_in"]), (want["id"], tracks, "record", tracks))
+        st = json.loads(self.w.show("data:submissions.json"))
+        self.assertEqual(st["record"], {"sum": a["id"] + "-cccccccc", "product": b["id"] + "-cccccccc"})
+        e, p = self.w.evaluate(lambda e, run: make_result(run, S=9.0, Sx=5.0, harness=self.w.pin, prover="3" * 64))
+        self.assertEqual((e["pr"], p["status"], p["record_in"]), (3, "record", ["sum", "product"]))
+        r = json.loads(self.w.show("main:records.json"))
+        self.assertEqual({t: x["id"] for t, x in r["record"].items()}, {"sum": p["id"], "product": p["id"]})
+        self.assertEqual([h["id"] for h in r["history"]["product"]], [b["id"] + "-cccccccc", b["id"], a["id"]])
+        self.assertEqual(git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split(),
+                         ["submissions/README.md", "submissions/example", "submissions/gamma"])
+
+    def test_two_records_sharing_a_root_name(self):
+        """Two standing records of different entries with one root name: main holds the newer one's tree."""
+        self.g.open_pr(1, "alice", good_root("same", "1"))
+        self.w.intake(1)
+        _, a = self.w.evaluate(lambda e, run: make_result(run, S=10.0, prover="1" * 64))
+        self.g.open_pr(2, "bob", good_root("same", "2"))
+        self.w.intake(2)
+        _, b = self.w.evaluate(lambda e, run: make_result(run, S=12.0, Sx=6.0, prover="2" * 64))
+        self.assertEqual(json.loads(self.w.show("data:submissions.json"))["record"], {"sum": a["id"], "product": b["id"]})
+        self.assertEqual(git(self.w.bare, "rev-parse", "main:submissions/same"), b["tree"])
 
     def test_pin_move_ports_the_record_first(self):
         self.g.open_pr(1, "alice", good_root("alpha", "1"))
@@ -216,13 +285,13 @@ class E2E(unittest.TestCase):
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=11.0, harness=self.w.pin, prover="1" * 64), force=2)
         self.assertEqual((e["id"], e["port_of"], "incumbent" in e, p["status"]), (rec["id"] + "-cccccccc", rec["id"], False, "record"))
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=50.0, harness=self.w.pin, prover="2" * 64))
-        self.assertEqual((e["pr"], p["against"]["record"], p["status"]), (2, rec["id"] + "-cccccccc", "accepted"))
+        self.assertEqual((e["pr"], p["against"]["sum"]["record"], p["status"]), (2, rec["id"] + "-cccccccc", "accepted"))
         # the next pin: the port fails, so no record stands; main says so, and the queue proceeds
         self.w.pin = "d" * 40
         e, p = self.w.evaluate(lambda e, run: make_result(run, "REJECT", harness=self.w.pin))
         self.assertEqual((e["port_of"], p["status"]), (rec["id"] + "-cccccccc", "rejected"))
         r = json.loads(self.w.show("main:records.json"))
-        self.assertEqual((r["core"], r["record"]), ("d" * 40, None))
+        self.assertEqual((r["core"], r["record"]), ("d" * 40, {"sum": None, "product": None}))
         self.assertIn("submissions/alpha", git(self.w.bare, "ls-tree", "--name-only", "main", "submissions/").split())
         self.g.open_pr(3, "carol", good_root("gamma", "3"))
         self.w.intake(3)
@@ -251,7 +320,7 @@ class E2E(unittest.TestCase):
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=10.2, harness=self.w.pin, prover="1" * 64), force=3)
         self.assertEqual((e["port_of"], p["status"]), (rec["id"], "record"))
         e, p = self.w.evaluate(self.win(S=9.0))                       # then the fair order: #2 first
-        self.assertEqual((e["pr"], p["against"]["record"], p["status"]), (2, rec["id"] + "-cccccccc", "record"))
+        self.assertEqual((e["pr"], p["against"]["sum"]["record"], p["status"]), (2, rec["id"] + "-cccccccc", "record"))
 
     def test_ports_of_ports_keep_the_crown(self):
         rec = self.record_at()
@@ -271,8 +340,8 @@ class E2E(unittest.TestCase):
         self.g.open_pr(2, "bob", good_root("r2", "2"))
         self.w.intake(2)
         _, p = self.w.evaluate(lambda e, run: make_result(run, S=1.0, comparable=False, harness=self.w.pin, prover="2" * 64))
-        self.assertEqual((p["status"], p["record_of"]), ("unranked", None))
-        self.assertEqual(self.w.state()["record"], rec["id"])
+        self.assertEqual((p["status"], p["record_of"]), ("unranked", {"sum": None, "product": None}))
+        self.assertEqual(json.loads(self.w.show("data:submissions.json"))["record"], {"sum": rec["id"], "product": rec["id"]})
 
     def test_intake_runs_the_workflow_check(self):
         """The intake (main's code) runs wfcheck on every head touching `.github/`."""
@@ -351,7 +420,7 @@ class E2E(unittest.TestCase):
         e, p = self.w.evaluate(off, force=3)                                # the owner's test run, still broken
         self.assertEqual((p["status"], len(self.g.issues)), ("queued", 1))  # no second notice
         e, p = self.w.evaluate(lambda e, run: make_result(run, S=5.0, harness=self.w.pin, prover="2" * 64), force=2)
-        self.assertEqual((e["pr"], p["status"], p["record_of"]), (2, "record", rec["id"]))
+        self.assertEqual((e["pr"], p["status"], p["record_of"]["sum"]), (2, "record", rec["id"]))
         st = self.w.state()
         self.assertEqual((st["error_streak"], st.get("paused")), ([], None))
         e, _ = self.w.evaluate(lambda e, run: make_result(run, "REJECT", harness=self.w.pin))
@@ -547,8 +616,9 @@ class E2E(unittest.TestCase):
         flows.sync(self.w.ctx())                                        # run by the push that moves the pin
         st = json.loads(self.w.show("data:submissions.json"))
         main = json.loads(self.w.show("main:records.json"))
-        self.assertEqual((st["core"], st["record"], main["core"], main["record"]), ("c" * 40, None, "c" * 40, None))
-        self.assertEqual(main["history"][0]["id"], rec["id"])
+        none = {"sum": None, "product": None}
+        self.assertEqual((st["core"], st["record"], main["core"], main["record"]), ("c" * 40, none, "c" * 40, none))
+        self.assertEqual((main["history"]["sum"][0]["id"], main["history"]["product"][0]["id"]), (rec["id"], rec["id"]))
         self.assertIn(("evaluate-next.yml", "main"), self.g.dispatches[n0:])   # for the port
 
     # what the launch left on the live branches: an earlier pin, another margin and the removed
@@ -571,14 +641,14 @@ class E2E(unittest.TestCase):
         self.assertTrue(self.w.state()["_stale"])
         flows.sync(self.w.ctx())
         st = json.loads(self.w.show("data:submissions.json"))
-        self.assertEqual((st["core"], st["margin"], st["submissions"], st["record"], "record_wins" in st),
-                         (PIN, common.MARGIN, [], None, False))
+        self.assertEqual((st["version"], st["core"], st["margin"], st["submissions"], st["record"], "record_wins" in st),
+                         (2, PIN, common.MARGIN, [], {"sum": None, "product": None}, False))
         self.assertEqual(self.w.show("main:records.json"), render.records_json(rfqueue.empty("o/r", PIN), PIN))
         self.assertFalse(self.w.state()["_stale"])
         self.assertEqual(flows.sync(self.w.ctx()), 0)                       # then idempotent
         self.assertEqual(json.loads(self.w.show("data:submissions.json"))["updated"], st["updated"])
         rec = self.record_at()                                              # the first ACCEPT is the record
-        self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["id"], rec["id"])
+        self.assertEqual(json.loads(self.w.show("main:records.json"))["record"]["sum"]["id"], rec["id"])
 
     def test_margin_change_alone_rewrites_the_state(self):
         """At the same pin, a stored state with another margin is rewritten (the evaluated entries kept)."""
@@ -590,7 +660,7 @@ class E2E(unittest.TestCase):
         self.assertIn(b'"margin": 0.05', self.w.show("main:records.json"))
         flows.sync(self.w.ctx())
         st = json.loads(self.w.show("data:submissions.json"))
-        self.assertEqual((st["margin"], st["record"], [e["id"] for e in st["submissions"]]), (common.MARGIN, rec["id"], [rec["id"]]))
+        self.assertEqual((st["margin"], st["record"]["sum"], [e["id"] for e in st["submissions"]]), (common.MARGIN, rec["id"], [rec["id"]]))
         self.assertEqual(json.loads(self.w.show("main:records.json"))["margin"], common.MARGIN)
 
     def test_pushes_while_running(self):

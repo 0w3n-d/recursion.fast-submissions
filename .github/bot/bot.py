@@ -3,7 +3,7 @@
 
   python3 -I .github/bot/bot.py intake  --pr N [--force]    prechecks and admits a head (no `data` write)
   python3 -I .github/bot/bot.py sync                        the single writer of new queue entries
-  python3 -I .github/bot/bot.py select  [--pr N] [--retire ID] [--resume true]
+  python3 -I .github/bot/bot.py select  [--pr N] [--retire ID --track T] [--resume true]
                                     outputs id, sha, path, ref, record_cache, record_manifest_sha256 (or nothing)
   python3 -I .github/bot/bot.py publish --id ID [--result result/result.json] [--core core]
   python3 -I .github/bot/bot.py sync-main
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import attest  # noqa: E402
 import flows  # noqa: E402
 import pin as pinmod  # noqa: E402
-from common import ID_RE  # noqa: E402
+from common import ID_RE, TRACK_RE  # noqa: E402
 from gh import GitHub  # noqa: E402
 
 
@@ -61,6 +61,7 @@ def main():
     ap.add_argument("cmd", choices=["intake", "sync", "select", "publish", "sync-main", "record-build"])
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--retire", default="")
+    ap.add_argument("--track", default="")
     ap.add_argument("--resume", default="")
     ap.add_argument("--dir", default="")
     ap.add_argument("--pr", default="")
@@ -87,9 +88,11 @@ def main():
     elif a.cmd == "select":
         if a.retire and not ID_RE.match(a.retire):
             sys.exit("bot: --retire must be an entry id")
+        if a.retire and not TRACK_RE.match(a.track):
+            sys.exit("bot: --retire needs --track, the track of the record to retire (sum or product)")
         if a.resume not in ("", "true", "false"):
             sys.exit("bot: --resume must be true or false")
-        e = flows.select(ctx, pr, a.retire or None, a.resume == "true")
+        e = flows.select(ctx, pr, a.retire or None, a.resume == "true", (a.track if a.retire else None))
         if e:
             print(f"select: {e['id']} (#{e['pr']}, {e['root']}, attempt {e['attempts']})")
             output(id=e["id"], sha=e["sha"], path=f"submissions/{e['root']}", ref=f"refs/tags/{e['tag']}",

@@ -2,7 +2,7 @@
 'use strict';
 (function () {
   const RF = window.RF;
-  const { el, ext, page, link, fmtS, timeEl, badge, gainOf, marginText, pct, unverified } = RF;
+  const { el, ext, page, link, fmtS, fmtPart, timeEl, badge, gainOf, marginText, pct, unverified, scoreIn, retiredIn } = RF;
   const MAX_MD = 70000; // the bot copies at most 64 KiB; a little slack for encoding
 
   function message(title, body, retry) {
@@ -42,30 +42,38 @@
     parts.push(el('div', { class: 'detail-head' },
       el('h1', null, nm(e)),
       el('div', { class: 'badges' }, badge(e.status), unverified(e),
-        data.record && data.record.id === e.id ? el('span', { class: 'badge st-record' }, 'current record') : null,
+        RF.TRACKS.filter(t => data.record[t.id] && data.record[t.id].id === e.id)
+          .map(t => el('span', { class: 'badge st-record' }, 'current ' + t.label.toLowerCase() + ' record')),
         e.verdict ? el('span', null, 'verdict ' + e.verdict) : null,
         el('span', null, RF.STATUS_INFO[e.status][1])),
       e.title ? el('p', { class: 'title' }, el('span', { class: 'muted' }, 'Pull request title (written by the submitter): '), e.title) : null));
 
-    // numbers
+    // numbers: both tracks' scores, each with its components and its comparison with the track's record
     const sc = e.score;
-    if (sc && sc.S !== null) {
-      const m = (lbl, v, note) => el('div', null, el('span', { class: 'lbl' }, lbl), el('span', { class: 'val' }, fmtS(v), ' ', el('small', null, 's')), note ? el('span', { class: 'lbl' }, note) : null);
-      parts.push(el('div', { class: 'metrics', role: 'group', 'aria-label': 'Score' },
-        m('Score S', sc.S, 'per 2¹⁸ permutations'),
-        m('Prover P̄', sc.P_bar, 'cubic mean over the steps'),
-        m('Verifier V̄', sc.V_bar, 'check time and proof size')));
-      const a = e.against;
-      const recOf = id => { const r = rel.byId.get(id); return r ? subLink(r) : el('code', null, id); };
+    const recOf = id => { const r = rel.byId.get(id); return r ? subLink(r) : el('code', null, id); };
+    for (const tr of RF.TRACKS) {
+      const v = scoreIn(e, tr.id);
+      if (v === null) continue;
+      const m = (lbl, val, unit, note) => el('div', null, el('span', { class: 'lbl' }, lbl),
+        el('span', { class: 'val' }, fmtPart(val, unit), unit === 's' ? [' ', el('small', null, 's')] : null),
+        note ? el('span', { class: 'lbl' }, note) : null);
+      const took = e.record_in.includes(tr.id);
+      parts.push(el('h2', { class: 'track-head' }, tr.label, ' ', el('span', { class: 'tab-formula' }, tr.formula),
+        took ? [' ', el('span', { class: 'badge ' + (retiredIn(e, tr.id) ? 'st-retired' : 'st-record') }, retiredIn(e, tr.id) ? 'record, retired' : 'took the record')] : null));
+      parts.push(el('div', { class: 'metrics m' + (tr.parts.length + 1), role: 'group', 'aria-label': tr.label + ' score' },
+        m('Score ' + tr.sym, v, 's', 'per 2¹⁸ permutations'),
+        tr.parts.map(([k, label, unit, note]) => m(label, sc[k], unit, note || (k === 'P_bar' ? 'cubic mean over the steps'
+          : k === 'V_bar' ? 'check time and proof size' : k === 'x_bar' ? 'mean of V/v_ref + |π|/s_ref' : k === 'g' ? '1 + (mean V / v_ref)²' : null)))));
+      const a = e.against[tr.id];
       if (a) {
-        const g = gainOf(e);
+        const g = gainOf(e, tr.id);
         parts.push(el('p', { class: 'against' },
-          el('strong', null, a.beats ? 'Beat the standing record.' : 'Did not beat the standing record.'), ' ',
-          `S = ${fmtS(a.S !== null ? a.S : sc.S)} s against S_record = ${fmtS(a.S_record)} s of the record `, recOf(a.record),
-          `, at the same contract pin: gain 1 \u2212 S / S_record = ${pct(g)}. A record needs a gain of more than ${marginText(data)}.`));
-      } else if ((e.status === 'record' || e.status === 'retired') && !e.record_of) {
-        parts.push(el('p', { class: 'against' }, e.port_of ? 'The previous pin\'s record, re-run at a new contract pin before any other entry.'
-          : 'No record stood at its contract pin when it was evaluated, so it took the record.'));
+          el('strong', null, a.beats ? `Beat the standing ${tr.label.toLowerCase()} record.` : `Did not beat the standing ${tr.label.toLowerCase()} record.`), ' ',
+          `${tr.sym} = ${fmtS(a.S !== null ? a.S : v)} s against ${fmtS(a.S_record)} s of the record `, recOf(a.record),
+          `, at the same contract pin: gain = ${pct(g)}. A record needs a gain of more than ${marginText(data)}.`));
+      } else if (took && !e.record_of[tr.id]) {
+        parts.push(el('p', { class: 'against' }, e.port_of ? `The previous pin's ${tr.label.toLowerCase()} record, re-run at a new contract pin before any other entry.`
+          : `No ${tr.label.toLowerCase()} record stood at its contract pin when it was evaluated, so it took the record of this track.`));
       }
     }
 
@@ -77,7 +85,6 @@
     }
 
     // facts and links
-    const recOf = e.record_of ? rel.byId.get(e.record_of) : null;
     const facts = el('dl', { class: 'kv kv-wide' },
       dt('Submission', el('code', null, e.id)),
       dt('Pull request', ext(link.pr(e), '#' + e.pr)),
@@ -94,8 +101,12 @@
       e.verdict ? dt('Attestation', e.verified ? 'verified' : el('strong', { class: 'warn-text' }, 'not verified: this result can never be a record')) : null,
       e.harness_commit ? dt('Harness commit', ext(link.harness(e.harness_commit), e.harness_commit.slice(0, 12))) : null,
       e.prover_sha256 ? dt('Prover sha256', el('code', { class: 'hash' }, e.prover_sha256)) : null,
-      e.status === 'record' || e.status === 'retired' ? dt('Previous record', recOf ? subLink(recOf) : (e.record_of ? el('code', null, e.record_of) : 'none at its pin')) : null,
-      e.retired ? dt('Retired', timeEl(e.retired, true)) : null,
+      ...RF.TRACKS.filter(t => e.record_in.includes(t.id)).flatMap(t => {
+        const id = e.record_of[t.id], prev = id ? rel.byId.get(id) : null;
+        return [dt(`Previous ${t.label.toLowerCase()} record`, prev ? subLink(prev) : (id ? el('code', null, id) : 'none at its pin')),
+          e.retired_in[t.id] ? dt(`Retired (${t.label.toLowerCase()})`, timeEl(e.retired_in[t.id], true)) : null];
+      }),
+      e.port_tracks && e.port_tracks.length ? dt('Ports the record of', e.port_tracks.join(', ')) : null,
       e.port_of ? dt('Port of', rel.byId.get(e.port_of) ? subLink(rel.byId.get(e.port_of)) : el('code', null, e.port_of)) : null);
     const links = el('ul', { class: 'links' },
       el('li', null, ext(link.pr(e), 'Pull request')),
@@ -134,7 +145,8 @@
 
     // every measured number
     if (sc) {
-      const rest = Object.entries(sc).filter(([k]) => !['S', 'P_bar', 'V_bar'].includes(k));
+      const shown = new Set(['S', 'tracks', ...RF.TRACKS.flatMap(t => t.parts.map(p => p[0])), ...Object.values(sc.tracks || {})]);
+      const rest = Object.entries(sc).filter(([k]) => !shown.has(k));
       if (rest.length) {
         const dl = el('dl', { class: 'kv' });
         for (const [k, v] of rest) dl.append(...dt(el('code', null, k), typeof v === 'number' ? String(+v.toPrecision(6)) : String(v)));

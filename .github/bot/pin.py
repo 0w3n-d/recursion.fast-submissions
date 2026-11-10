@@ -9,7 +9,7 @@
                                                     commit SHA, and its season's [entry] caps are the
                                                     bot's (fetches the pin, read-only)
   python3 -I .github/bot/pin.py --records FILE PIN  prints records.json re-pinned to PIN (no record stands
-                                                    at a new pin: the record moves to the history)"""
+                                                    at a new pin: each track's record moves to its history)"""
 import json
 import os
 import re
@@ -138,20 +138,30 @@ def core_problems(ours, pin):
 
 
 def repin_records(raw, pin):
-    """records.json at a new pin, as the bot writes it there before any evaluation: `core` is the
-    pin, `margin` the bot's (common.MARGIN), no record stands (`record: null`), and the old record
-    heads the history."""
+    """records.json at a new pin, as the bot writes it there before any evaluation (version 2):
+    `core` is the pin, `margin` the bot's (common.MARGIN), no record stands in any track (`record`:
+    null per track), and each track's old record heads that track's history. Version 1 (one record,
+    the sum's) is read as the sum track's."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from common import MARGIN
+    from common import MARGIN, TRACKS
     j = json.loads(raw)
-    if not isinstance(j, dict) or j.get("version") != 1:
-        raise ValueError("records.json is not version 1 of the bot's format")
-    rec, hist = j.get("record"), [h for h in j.get("history") or [] if isinstance(h, dict)]
-    if isinstance(rec, dict) and j.get("core") != pin:
-        hist = [rec] + [h for h in hist if h.get("id") != rec.get("id")]
-        rec = None
+    if not isinstance(j, dict) or j.get("version") not in (1, 2):
+        raise ValueError("records.json is not version 2 (or 1) of the bot's format")
+    rec, hist = j.get("record"), j.get("history")
+    if j.get("version") == 1:
+        rec, hist = {"sum": rec}, {"sum": hist}
+    rec = rec if isinstance(rec, dict) else {}
+    hist = hist if isinstance(hist, dict) else {}
+    tracks = list(TRACKS) + sorted((set(rec) | set(hist)) - set(TRACKS))
+    out_r, out_h = {}, {}
+    for t in tracks:
+        r, h = rec.get(t), [x for x in hist.get(t) or [] if isinstance(x, dict)]
+        if isinstance(r, dict) and j.get("core") != pin:
+            h = [r] + [x for x in h if x.get("id") != r.get("id")]
+            r = None
+        out_r[t], out_h[t] = r if isinstance(r, dict) else None, h
     j.pop("record_wins", None)      # not a parameter of the record rule
-    j.update(core=pin, margin=MARGIN, record=rec, history=hist)
+    j.update(version=2, core=pin, margin=MARGIN, record=out_r, history=out_h)
     return (json.dumps(j, indent=1, ensure_ascii=False) + "\n").encode()
 
 

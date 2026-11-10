@@ -11,8 +11,8 @@ committed first, so the lanes stay busy even with one chain per step.
 
 ## Result
 
-S = 4.118 s, a 58 % gain over #3. The segment boundaries cost one extra opening per segment,
-which shows up in V̄ (0.409 s against 0.628 s, thanks to smaller openings).
+S = 5.102 s, a 55 % gain over #3 (S× = 4.050 s, 64 %). The segment boundaries cost one extra opening per segment,
+which shows up in V̄ (1.393 s against 2.179 s, thanks to smaller openings).
 
 ## What did not work
 

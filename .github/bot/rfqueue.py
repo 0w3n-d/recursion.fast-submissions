@@ -9,29 +9,52 @@ import datetime
 import json
 
 from common import (ENTRY_PROOF_ERRORS, UNCOUNTED_ERRORS, FINAL, MARGIN, MAX_ATTEMPTS, MAX_HEADS_PER_PR,
-                    PAUSE_AFTER, QUEUED, RUNNING, STATUSES, STREAK_CAP, STREAK_WINDOW_S, now_iso)
+                    PAUSE_AFTER, QUEUED, RUNNING, STATUSES, STREAK_CAP, STREAK_WINDOW_S, TRACK_RE, TRACKS, now_iso)
 
 EVALUATED = ("record", "retired", "accepted", "unranked", "provisional", "rejected", "error")
 
 
+VERSION = 2
+
+
 def empty(repo, pin):
-    return {"version": 1, "updated": None, "repo": repo, "core": pin, "margin": MARGIN, "submissions": []}
+    return {"version": VERSION, "updated": None, "repo": repo, "core": pin, "margin": MARGIN, "submissions": []}
+
+
+def migrate_v1(st):
+    """Version 1 (one record, the sum's) as version 2, once: a record or retired entry took the sum's
+    record (`record_in`), retired in it if `retired`; `record_of` and `against` become per track."""
+    for e in st["submissions"]:
+        if e.get("status") in ("record", "retired"):
+            e["record_in"] = ["sum"]
+            if e["status"] == "retired":
+                e["retired_in"] = {"sum": e.get("retired") or e.get("finished")}
+        if "record_of" in e and not isinstance(e["record_of"], dict):
+            e["record_of"] = {"sum": e["record_of"] if isinstance(e["record_of"], str) else None}
+        if "against" in e:
+            e["against"] = {"sum": e["against"] if isinstance(e["against"], dict) else None}
+    st["version"] = VERSION
+    return st
 
 
 def load(raw, repo, pin):
     """The state from the bytes of `submissions.json` (None: a fresh state). A state that is not
-    the bot's format fails loudly rather than being silently replaced."""
+    the bot's format fails loudly rather than being silently replaced. Version 1 (one record, no tracks)
+    is migrated once (`migrate_v1`) and rewritten by the next writer."""
     if raw is None:
         return empty(repo, pin)
     st = json.loads(raw)
-    if not isinstance(st, dict) or st.get("version") != 1 or not isinstance(st.get("submissions"), list):
-        raise ValueError("submissions.json is not version 1 of the bot's format")
+    if not isinstance(st, dict) or st.get("version") not in (1, VERSION) or not isinstance(st.get("submissions"), list):
+        raise ValueError(f"submissions.json is not version {VERSION} (or 1) of the bot's format")
     for e in st["submissions"]:
         if not isinstance(e, dict) or e.get("status") not in STATUSES or not isinstance(e.get("id"), str):
             raise ValueError(f"submissions.json holds a malformed entry: {str(e)[:200]}")
-    # `stale`: the stored pin or parameters are not the current ones (a pin move); the next writer
-    # rewrites the file even if no entry changed, so readers see the pin and its record at once
-    stale = (st.get("core"), st.get("margin")) != (pin, MARGIN) or "record_wins" in st
+    old = st["version"] == 1
+    if old:
+        migrate_v1(st)
+    # `stale`: the stored pin, parameters or format are not the current ones (a pin move); the next
+    # writer rewrites the file even if no entry changed, so readers see the pin and its records at once
+    stale = (st.get("core"), st.get("margin")) != (pin, MARGIN) or "record_wins" in st or old
     st.pop("record_wins", None)
     st.pop("fingerprint_errors", None)          # an older state's counter: `error_streak` replaces it
     st["core"], st["margin"] = pin, MARGIN
@@ -42,8 +65,8 @@ def load(raw, repo, pin):
 def dump(st, clock=None):
     st.pop("_stale", None)
     st["updated"] = now_iso(clock)
-    rec = current_record(st, st.get("core"))
-    st["record"] = rec["id"] if rec else None      # the standing record at the pin, for readers (the site)
+    # the standing record of each track at the pin, for readers (the site)
+    st["record"] = {t: (r["id"] if r else None) for t, r in standing(st, st.get("core")).items()}
     return (json.dumps(st, indent=1, ensure_ascii=False, sort_keys=False) + "\n").encode()
 
 
@@ -273,24 +296,50 @@ def mark_running(e, now, run_url):
     e["attempts"] = e.get("attempts", 0) + 1
 
 
-def records(st):
-    """Every record ever taken (status `record` or `retired`), newest first."""
-    rs = [e for e in st["submissions"] if e["status"] in ("record", "retired")]
+def tracks(st):
+    """The tracks of the state: TRACKS, then any other track an entry took a record in."""
+    extra = {t for e in st["submissions"] for t in e.get("record_in") or [] if isinstance(t, str) and TRACK_RE.match(t)}
+    return list(TRACKS) + sorted(extra - set(TRACKS))
+
+
+def records(st, track=None):
+    """Every record ever taken in `track` (None: in any track), newest first: an entry with status
+    `record` or `retired` whose `record_in` names the track."""
+    rs = [e for e in st["submissions"] if e["status"] in ("record", "retired")
+          and (e.get("record_in") if track is None else track in (e.get("record_in") or []))]
     return sorted(rs, key=lambda e: (e.get("finished") or "", e["id"]), reverse=True)
 
 
-def current_record(st, pin):
-    """The standing record: the newest record taken at this pin (`harness_commit == pin`), unless it
-    was retired (a retired record never stands again). A record of an earlier pin stays in the
-    history; with none standing, the first comparable attested ACCEPT at the pin is the record."""
-    newest = next((e for e in records(st) if e.get("harness_commit") == pin), None)
-    return newest if newest is not None and newest["status"] == "record" else None
+def current_record(st, pin, track):
+    """The standing record of `track`: the newest record of the track taken at this pin
+    (`harness_commit == pin`), unless it was retired in that track (a retired record never stands
+    again). A record of an earlier pin stays in the history; with none standing, the first
+    comparable attested ACCEPT at the pin is the track's record."""
+    newest = next((e for e in records(st, track) if e.get("harness_commit") == pin), None)
+    return newest if newest is not None and not retired_in(newest, track) else None
 
 
-def retire(e, now, why):
-    """The record leaves the throne (it stays in the history as `retired`)."""
-    e["status"], e["retired"] = "retired", now
-    e["reasons"] = (e.get("reasons") or [])[:19] + [why]
+def retired_in(e, track):
+    """Whether the record `e` was retired in `track` (status `retired`: in every track it took)."""
+    return e["status"] == "retired" or track in (e.get("retired_in") or {})
+
+
+def standing(st, pin):
+    """{track: its standing record at the pin, or None} for every track of the state."""
+    return {t: current_record(st, pin, t) for t in tracks(st)}
+
+
+def retire(e, track, now, why):
+    """The record leaves the throne of `track` (it stays in that track's history); once it is
+    retired in every track it took, its status is `retired`. Returns False if it is not a record of
+    that track, or already retired in it."""
+    if e["status"] != "record" or track not in (e.get("record_in") or []) or retired_in(e, track):
+        return False
+    e.setdefault("retired_in", {})[track] = now
+    e["reasons"] = (e.get("reasons") or [])[:19] + [f"{why} ({track})"]
+    if all(t in e["retired_in"] for t in e["record_in"]):
+        e["status"], e["retired"] = "retired", now
+    return True
 
 
 COMPACT_KEYS = ("id", "pr", "sha", "root", "author", "status", "queued", "finished", "tree", "attempts", "verdict",
@@ -328,24 +377,35 @@ def port_id(o, pin):
     return f"{o['id'][:len('pr') + len(str(o['pr'])) + 13]}-{pin[:8]}"
 
 
+def due_ports(st, pin):
+    """{track: the record to port to this pin}, for each track with no record standing at the pin
+    whose newest record is of an earlier pin, was not retired in that track, and has not been ported
+    here yet (a port evaluated once, whatever its verdict, is not repeated)."""
+    out = {}
+    for t, cur in standing(st, pin).items():
+        rs = records(st, t)
+        o = rs[0] if rs else None
+        if cur is not None or o is None or retired_in(o, t) or o.get("harness_commit") == pin \
+                or not o.get("tag") or find(st, port_id(o, pin)) is not None:
+            continue
+        out[t] = o
+    return out
+
+
 def due_port(st, pin):
-    """The record to port to this pin first, or None: when no record stands at the pin, the newest
-    record of all is of an earlier pin and was not retired, and it has not been ported here yet
-    (a port evaluated once, whatever its verdict, is not repeated)."""
-    if current_record(st, pin) is not None:
-        return None
-    rs = records(st)
-    o = rs[0] if rs else None
-    if o is None or o["status"] != "record" or o.get("harness_commit") == pin or not o.get("tag"):
-        return None
-    return o if find(st, port_id(o, pin)) is None else None
+    """The record to port to this pin first (the first track's, in `tracks` order), or None. One
+    port serves every track whose record is that entry."""
+    return next(iter(due_ports(st, pin).values()), None)
 
 
 def port(st, pr, pin, now, o=None):
     """A re-evaluation at a new pin: the record `o` (by default the pull request's newest record or
     other evaluated ACCEPT of an earlier pin), queued again as `<id>-<pin8>` on the same retained
-    commit, so the old record can keep the crown at the new pin. None if there is none
-    or it exists."""
+    commit, so the old record can keep its crowns at the new pin. A due port (`due_ports`) is a
+    candidate only in the tracks whose record it carries (`port_tracks`), so that two tracks'
+    records of different entries are each kept by their own port whatever the order the ports run
+    in; the owner's re-evaluation of another entry is a candidate in every track. None if there is
+    none or it exists."""
     if o is None:
         olds = [e for e in of_pr(st, pr) if e["status"] in ("record", "retired", "accepted", "unranked")
                 and e.get("harness_commit") != pin and e.get("tag")]
@@ -355,11 +415,13 @@ def port(st, pr, pin, now, o=None):
     nid = port_id(o, pin)
     if find(st, nid) is not None:
         return None
+    carried = [t for t, x in due_ports(st, pin).items() if x["id"] == o["id"]]
     keep = ("pr", "sha", "root", "author", "title", "agent", "builds_on", "opened", "tag", "notes", "readme", "tree")
     e = {k: o.get(k) for k in keep}
-    e.update(id=nid, port_of=o["id"], status=QUEUED, queued=now, started=None, finished=None, attempts=0,
-             verdict=None, score=None, comparable=False, truncated=False, reasons=[], run_url=None,
-             record_of=None, verified=False, harness_commit=None, prover_sha256=None)
+    e.update(id=nid, port_of=o["id"], port_tracks=carried or None, status=QUEUED, queued=now, started=None,
+             finished=None, attempts=0, verdict=None, score=None, comparable=False, truncated=False, reasons=[],
+             run_url=None, record_of=None, record_in=[], against=None, verified=False, harness_commit=None,
+             prover_sha256=None)
     st["submissions"].append(e)
     return e
 

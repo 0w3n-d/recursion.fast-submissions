@@ -10,7 +10,7 @@ message schedule stays in registers across rounds.
 
 ## Result
 
-S = 2.371 s (P̄ 2.019, V̄ 0.352), a 42 % gain over #5. The slowest step (a 2^20 chain) took 4.4 s.
+S = 3.234 s (P̄ 2.019, V̄ 1.215), a 37 % gain over #5; S× = 2.169 s. The slowest step (a 2^20 chain) took 4.4 s.
 
 ```
 step  n        P_i (s)  V_i (ms)  |π| (KiB)
@@ -26,4 +26,4 @@ encoding.
 
 ## What to try next
 
-The node verifier is now 0.35 s of the score; a smaller opening proof is the cheapest gain left.
+The node verifier is now 1.2 s of the sum; a smaller opening proof is the cheapest gain left.

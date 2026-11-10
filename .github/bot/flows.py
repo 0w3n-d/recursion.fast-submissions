@@ -1,4 +1,4 @@
-"""The bot's steps (TRUSTED): intake, sync, select, publish, and the sync of `main` to the record.
+"""The bot's steps (TRUSTED): intake, sync, select, publish, and the sync of `main` to the records.
 Each reads GitHub through `ctx.gh` and git through `gitdata.Repo(ctx.git_url)`, so the tests and
 `simulate.py` drive them against a local bare repository and a fake API.
 
@@ -361,14 +361,16 @@ def sync(ctx):
 
 
 # ---- select -------------------------------------------------------------------------------------
-def select(ctx, force_pr=None, retire_id=None, resume=False):
+def select(ctx, force_pr=None, retire_id=None, resume=False, retire_track=None):
     """Picks the next entry (`rfqueue.order`, AGENTS.md §9; `force_pr`: that pull request's waiting
     or errored entry), marks it running, and returns a copy of it (None: nothing to evaluate). Entries a
     previous run left running are reaped first (runs are serialised by `rf-eval`). `retire_id`: the
-    owner retires that record first. When no record stands at the pin and the last record is of an
-    earlier pin, its port to this pin is created and evaluated before anything else, forced runs
-    included, so no other entry can take the record before it. `resume`: the owner clears a pause
-    (and the error streak) first."""
+    owner retires that record in the track `retire_track` first. When a track has no record standing
+    at the pin and its last record is of an earlier pin, that record's port to this pin is created
+    and evaluated before anything else, forced runs included, so no other entry can take the record
+    before it; with two such tracks, one port after the other (one for both if one entry holds both).
+    `resume`: the owner clears a pause (and the error streak) first. A `retire_id` that retires
+    nothing (not a record of that track, or already retired in it) raises after writing nothing."""
     live, picked, notify, final = {}, {}, {}, {}
 
     def live_pr(n):
@@ -385,13 +387,16 @@ def select(ctx, force_pr=None, retire_id=None, resume=False):
         now = ctx.now()
         picked.clear()
         notify.clear()
-        changed = False
+        final.pop("retire_failed", None)
         changed = bool(st.get("_stale"))      # a pin move: rewrite the pin and its record at once
         if retire_id:
             r = rfqueue.find(st, retire_id)
-            if r is not None and r["status"] == "record":
-                rfqueue.retire(r, now, "retired by the owner")
-                changed = True
+            if r is None or not rfqueue.retire(r, retire_track, now, "retired by the owner"):
+                # the owner's retirement did nothing (a wrong id or track): change nothing, start
+                # nothing, and fail the run so the owner sees it
+                final["retire_failed"] = True
+                return None
+            changed = True
         if resume and (st.get("paused") or st.get("error_streak")):
             rfqueue.clear_errors(st)
             ctx.log("select: the owner cleared the pause")
@@ -443,10 +448,12 @@ def select(ctx, force_pr=None, retire_id=None, resume=False):
                 continue
             rfqueue.mark_running(e, now, ctx.run_url)
             e["run_attempt"] = ctx.run_attempt
-            rec = rfqueue.current_record(st, ctx.pin)
+            recs = [r for r in rfqueue.standing(st, ctx.pin).values() if r]
+            rec = max(recs, key=lambda r: (r.get("finished") or "", r["id"]), default=None)
             picked.update(copy.deepcopy(e))
             picked["record_cache"] = e.get("record_cache") is not False
-            # the record build cache may only be restored with the standing record's attested manifest
+            # the record build cache may only be restored with the attested manifest of the newest
+            # standing record (of either track: the cache holds the build of the newest record taken)
             picked["record_manifest"] = (rec or {}).get("build_manifest") or ""
             changed = True
             break
@@ -457,6 +464,9 @@ def select(ctx, force_pr=None, retire_id=None, resume=False):
         _write_state(ctx, ch, snap, st)
         return ch
     ctx.git().transact(DATA, mutate, "select")
+    if final.get("retire_failed"):
+        raise RuntimeError(f"select: {retire_id} is not a standing or earlier record of the track {retire_track!r} "
+                           "(or is already retired in it): nothing retired, nothing evaluated")
     try:
         sync_main(ctx, final["state"])    # heals a record a failed publish left off main
     except Exception as ex:  # noqa: BLE001 - never block the queue on it; publish raises it
@@ -513,17 +523,18 @@ def publish(ctx, eid, result_path):
         e = rfqueue.find(st, eid)
         if e is None or e["status"] != "running" or e.get("run_url") != ctx.run_url:
             return None
-        rec = rfqueue.current_record(st, ctx.pin)
-        # the records of other commits: every port of a record shares its commit, and keeps its crown
+        recs = rfqueue.standing(st, ctx.pin)
+        # the records of other commits, in any track: every port of a record shares its commit, and
+        # keeps its crowns
         provers = {r["prover_sha256"]: r["id"] for r in rfqueue.records(st)
                    if r.get("prover_sha256") and r.get("sha") != e.get("sha")}
-        rid = rec["id"] if rec else None
-        d = decide(result, ver, ctx.pin, rec, e.get("attempts", 1), provers)
+        rids = {t: r["id"] if r else None for t, r in recs.items()}
+        d = decide(result, ver, ctx.pin, recs, e.get("attempts", 1), provers, tracks=e.get("port_tracks"))
         now = ctx.now()
         ps = result.get("prover_sha256") if isinstance(result, dict) else None
         e["build_manifest"] = build_manifest_sha(result) if d["verified"] else None
         e.update({k: d[k] for k in ("verdict", "score", "comparable", "truncated", "harness_commit",
-                                    "verified", "record_of", "against", "reasons")},
+                                    "verified", "record_of", "against", "reasons")}, record_in=[], retired_in={},
                  prover_sha256=ps if isinstance(ps, str) and len(ps) == 64 and ps.isalnum() else None)
         # does this run count as the author's start in the fair order? a named organiser error never does
         rfqueue.settle_run(e, d["organiser_error"], error=d["verdict"] == "ERROR" or not d["verified"])
@@ -552,9 +563,8 @@ def publish(ctx, eid, result_path):
                 e["record_cache"] = False      # the retry builds clean: a sabotaged cache cannot fail it
             e.update(status="queued", finished=None)
         else:
-            e.update(status=d["status"], finished=now)
-        cur = rfqueue.current_record(st, ctx.pin)
-        done["record_changed"] = (cur or {}).get("id") != rid
+            e.update(status=d["status"], finished=now, record_in=d["took"])
+        done["record_changed"] = {t: r["id"] if r else None for t, r in rfqueue.standing(st, ctx.pin).items()} != rids
         if keep_raw:
             ch.put(f"results/{eid}.json", raw)
             e["result"] = f"results/{eid}.json"
@@ -588,15 +598,17 @@ def publish(ctx, eid, result_path):
 
 
 def sync_main(ctx, st):
-    """Makes `main` hold the standing record: its checked root (the tree at its retained commit,
-    replacing the roots of earlier records) and `records.json`, which names the pin and the standing
-    record whatever happens. With no record at this pin, only `records.json` changes (`record:
-    null`) and the last record's root stays until a new record replaces it. A no-op if `main`
-    already says so."""
-    rec = rfqueue.current_record(st, ctx.pin)
+    """Makes `main` hold the standing records: their checked roots (the trees at their retained
+    commits, replacing the roots of earlier records) and `records.json`, which names the pin and the
+    standing record of each track whatever happens. With no record standing in any track, only
+    `records.json` changes and the last records' roots stay until a new record replaces them. When
+    two standing records of different entries share a root name, the newer record's tree is the one
+    on `main` (the other stays at its tag). A no-op if `main` already says so."""
+    recs = {r["id"]: r for r in rfqueue.standing(st, ctx.pin).values() if r}
+    recs = sorted(recs.values(), key=lambda r: (r.get("finished") or "", r["id"]))      # oldest first: the newest wins a root
     want = render.records_json(st, ctx.pin)
     git = ctx.git()
-    if rec is None:
+    if not recs:
         def mutate_none(snap):
             if snap.read("records.json", 16 << 20) == want:
                 return None
@@ -604,12 +616,16 @@ def sync_main(ctx, st):
             ch.put("records.json", want)
             return ch
         return git.transact(ctx.default_branch, mutate_none, f"records: no record stands at the pin {ctx.pin[:12]}")
-    commit = git.fetch(f"refs/tags/{rec['tag']}", local="refs/rf/record")
-    if commit != rec["sha"]:
-        raise RuntimeError(f"sync_main: the tag {rec['tag']} is at {commit}, the record is {rec['sha']}")
-    tree = git.tree_of(commit, f"submissions/{rec['root']}")
-    if tree is None or (rec.get("tree") and tree != rec["tree"]):
-        raise RuntimeError(f"sync_main: the root of {rec['id']} at its tag is not the root that was checked")
+    trees = {}
+    for rec in recs:
+        commit = git.fetch(f"refs/tags/{rec['tag']}", local="refs/rf/record")
+        if commit != rec["sha"]:
+            raise RuntimeError(f"sync_main: the tag {rec['tag']} is at {commit}, the record is {rec['sha']}")
+        tree = git.tree_of(commit, f"submissions/{rec['root']}")
+        if tree is None or (rec.get("tree") and tree != rec["tree"]):
+            raise RuntimeError(f"sync_main: the root of {rec['id']} at its tag is not the root that was checked")
+        trees[rec["root"]] = tree             # a shared root name: the newer record's tree only
+    roots = set(trees)
 
     def mutate(snap):
         cur = snap.read("records.json", 16 << 20)
@@ -618,22 +634,29 @@ def sync_main(ctx, st):
         olds = set()
         try:
             j = json.loads(cur or b"null") or {}
-            for r in [j.get("record")] + list(j.get("history") or []):
+            rec_, hist = j.get("record"), j.get("history") or []
+            # version 2: {track: record} and {track: [records]}; version 1: one record and one list
+            rs = list(rec_.values()) if isinstance(rec_, dict) and "id" not in rec_ else [rec_]
+            for h in (hist.values() if isinstance(hist, dict) else [hist]):
+                rs += list(h) if isinstance(h, list) else []
+            for r in rs:
                 if isinstance(r, dict) and isinstance(r.get("root"), str) and ROOT_RE.match(r["root"]):
                     olds.add(r["root"])
         except (ValueError, AttributeError, TypeError):
             pass
         ch = Changes()
-        for old in sorted(olds - {rec["root"]}):
+        for old in sorted(olds - roots):
             ch.drop_dir(f"submissions/{old}")
-        ch.drop_dir(f"submissions/{rec['root']}")
-        ch.graft(f"submissions/{rec['root']}", tree)
+        for root, tree in sorted(trees.items()):
+            ch.drop_dir(f"submissions/{root}")
+            ch.graft(f"submissions/{root}", tree)
         ch.put("records.json", want)
         return ch
-    s = (rec.get("score") or {}).get("S")
-    return git.transact(ctx.default_branch, mutate,
-                        f"record: {rec['root']} ({rec['id']}, S = {render.num(s)} s) by {rec['author']}, "
-                        f"evaluated in {rec.get('run_url')}")
+    what = "; ".join(f"{', '.join(t for t, r in rfqueue.standing(st, ctx.pin).items() if r and r['id'] == rec['id'])}: "
+                     f"{rec['root']} ({rec['id']}, {render.scores_text(rec.get('score'))}) by {rec['author']}"
+                     for rec in recs)
+    return git.transact(ctx.default_branch, mutate, f"records: {what}, evaluated in "
+                        + ", ".join(dict.fromkeys(str(r.get("run_url")) for r in recs)))
 
 
 def record_build(ctx, result, build_dir, pin, eid):

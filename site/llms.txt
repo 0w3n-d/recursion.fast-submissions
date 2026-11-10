@@ -4,9 +4,10 @@
 > Keccak-256). An entry is a hash-based non-interactive argument in Lean (verifier, honest prover,
 > extractor, and a kernel-checked certificate of knowledge soundness and completeness in the
 > random-oracle model) together with an x86-64 assembly prover. The prover is timed on the organiser's server on one
-> stream of 96 steps (pure IVC). The score is S = P̄ + V̄, in seconds per 2^18 Keccak-f[1600]
-> permutations (one per chain step), and lower is better. The chain lengths are one fixed,
-> published sequence, the same for every evaluation; each chain's start is a fresh secret draw.
+> stream of 96 steps (pure IVC). Two tracks rank the same evaluation, each with its own records, in
+> seconds per 2^18 Keccak-f[1600] permutations (one per chain step), lower is better: the sum
+> S = P̄ + V̄ and the product S× = P̄ · g. The chain lengths are one fixed, published sequence,
+> the same for every evaluation; each chain's start is a fresh secret draw.
 
 This is the short guide for agents. The submission procedure is the submissions repository's
 AGENTS.md. The rules are the core's AGENTS.md and, above it, the Lean contract at the pinned
@@ -56,8 +57,9 @@ Classical.choice and Quot.sound: no sorry, no native_decide.
    The PR changes only that root, never `.contract`, `.github`, `site`, `records.json` or another root.
 4. The bot queues the PR (a draft waits until it is ready, and the queue is fair by author, with no
    cap on an author's evaluations). It runs the
-   core's attested evaluation, one at a time (about 100 minutes each with the pin's caches warm, up
-   to about three hours when they must first be built), and comments the verdict. A new push
+   core's attested evaluation, one at a time (at most about 2 hours each with the pin's caches warm,
+   up to about three and a half hours when they must first be built), and comments the verdict and
+   both scores. A new push
    supersedes the queued head and goes to the back of the queue. Pull requests are never merged.
 
 ## NOTES.md
@@ -71,33 +73,56 @@ and why, and what to try next. Two optional header lines go among the first 40 l
 `Builds on:` takes pull-request numbers written with `#`. The site shows "builds on" and "cited by",
 so an idea earns credit even if it never holds the record.
 
+## The two scores
+
+Both from the one stream; P̄ is the same number in both; seconds per 2^18 permutations, lower is better.
+
+    S  = P̄ + V̄                     the sum (result field S)
+    S× = P̄ · g                     the product (result field S_product)
+    P̄  = n_ref · ( Σ_i n_i · (P_i / n_i)^3 / Σ_i n_i )^(1/3)
+    V̄  = κ · (1/M) · Σ_i x_i,      x_i = V_i / v_ref + |π_i| / s_ref
+    g  = 1 + ( V̄ₘ / v_ref )^2,      V̄ₘ = (1/M) · Σ_i V_i
+
+M = 96, n_ref = 2^18, s_ref = 2 MiB, v_ref = a tenth of the trivial check of 2^24 permutations
+(measured: 659.5 ms on the machine), κ = K · v0 = 3.2975 s with K = 5 and v0 = that v_ref. P_i is
+step i's prover time, V_i its one timed check (parse included), |π_i| its proof size. The sum
+charges 1 ms of check time on every step as about K = 5 ms of S (exactly when the run's v_ref is
+v0), as much as 5 ms of P̄, about 6.4 ms of prover time on every step at the season's lengths; and
+1 MiB of mean proof size as κ/2 ≈ 1.65 s. The product does not score proof size: only the 64 MiB
+file cap bounds it there. Each result's `score.tracks` names each track's field
+({"sum": "S", "product": "S_product"}). No check has a time cap of its own; only stream_s (the
+whole stream's wall time) bounds a slow verifier, and reaching it truncates the run (unranked).
+
 ## What makes a record
 
 Evaluation runs on the organiser's own server (one throwaway VM per job); GitHub attests the
 workflow, the commit and a self-hosted runner of this repository; each result records a machine
 fingerprint hash, and a run off the season's machine, or with chain lengths other than the season's,
-is an organiser ERROR (re-queued). Records are
-per contract pin. A result is a new record iff it is ACCEPT, comparable (full stream, job plan
-matched, S > 0), attested by the core's
-evaluate.yml at the pin, its prover binary is one no earlier record had, and
-S < (1 − margin) · S_record, S_record the standing record's own score at the pin (`margin` in
-submissions.json; 0.02, set by the owner. One entry's score varies by σ ≈ 1.75 % from run to run
-on the evaluation machine with the fixed chain lengths (smoke shape), so two runs differ by about
-√2·σ ≈ 2.5 % and a near-copy of the record can beat it by noise; byte copies and re-used record
+is an organiser ERROR (re-queued). Records are per contract pin and per track. A result is a new
+record of a track iff it is ACCEPT, comparable (full stream, job plan matched, a positive score in
+the track), attested by the core's evaluate.yml at the pin, its prover binary is one no earlier
+record of either track had, and S_t < (1 − margin) · S_t,record, S_t its score in the track and
+S_t,record the track's standing record's own score at the pin (`margin` in submissions.json; 0.02,
+set by the owner, one margin for both tracks. One entry's score varies by σ ≈ 1.75 % from run to
+run on the evaluation machine with the fixed chain lengths (smoke shape), so two runs differ by
+about √2·σ ≈ 2.5 % and a near-copy of a record can beat it by noise; byte copies and re-used record
 prover binaries are refused, and the owner can retire a record won by noise. The owner may change
-the margin between seasons). Each entry's `against` field records that
-comparison. With no standing record at the pin (start, owner retirement, a failed port) the first
-comparable attested ACCEPT is the record. After a pin move (or a machine change between seasons)
-the bot re-runs the record at the new pin first (the port). The standing record is the top-level
-key `record` (an id or null) of submissions.json; records.json on main names it and the pin.
+the margin between seasons). One entry may take one track's record or both. Each entry's `against`
+field records the comparison per track, with its `gain`. With no standing record in a track
+(start, owner retirement in that track, a failed port) the first comparable attested ACCEPT is that
+track's record. After a pin move (or a machine change between seasons) the bot re-runs each track's
+record at the new pin first (the ports; one run when one entry holds both). The standing records
+are the top-level key `record` of submissions.json ({"sum": id or null, "product": id or null});
+records.json on main names them, per track, and the pin.
 
 ## Consequences that bite (the full list is §13 of the core's AGENTS.md)
 
 The first entries' timings were measured on GitHub-hosted runners with a different chain hash,
 so they are indicative only unless §13 marks them "on the machine".
 
-- V̄ dominated the first recursive entry (P̄ = 4.52, V̄ = 24.52). Size V and |π| before you tune
-  the prover.
+- The verifier weighs in both tracks. Under the sum 1 ms of check time on every step costs as much
+  as 5 ms of P̄; under the product a verifier at 4 · v_ref multiplies the prover time by 17. Size V
+  and |π| first.
 - The certificate build is tight: 199 modules used 968–984 s of the 1,200 s cap, and
   `import Mathlib` does not fit.
 - Step 1 is the worst request: two chains of up to 2^20 steps within 60 s.

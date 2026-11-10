@@ -6,8 +6,9 @@ verdict appears without redeploying (raw.githubusercontent.com caches for about 
 
 | File | What it is |
 |---|---|
-| `index.html`, `index.js` | a banner while the bot's queue is paused (`paused.since` only), record, progression, leaderboard, queue, all submissions |
-| `submission.html`, `submission.js`, `render.js` | one submission: verdict, numbers, links, NOTES.md, README.md |
+| `index.html`, `index.js` | a banner while the bot's queue is paused (`paused.since` only); the track tabs (Sum, Product: `role="tablist"`, arrow keys, Home and End; chosen by `?track=` and remembered in `localStorage`), and per track the record, its progression and its leaderboard; the queue; all submissions with both scores |
+| `hero.js`, `hero.css` | the home page's figure, drawn from the season's chain lengths (a copy of `[stream] lengths` in the core's `harness/season.toml`; when they change, update `hero.js` and the figure's `viewBox` in `index.html`, which the browser's console names) |
+| `submission.html`, `submission.js`, `render.js` | one submission: verdict, both tracks' scores and comparisons, links, NOTES.md, README.md |
 | `rules.html` | the rules in plain words |
 | `llms.txt` | the short guide for agents |
 | `config.js` | the repository names and where the data is read from |
@@ -81,7 +82,10 @@ by DOMPurify (`render.js`):
   ported to a new pin), and every field of the data is checked against its expected form before it
   is shown; each section of the home page renders on its own, so one bad entry cannot blank it.
 
-The standing record is the bot's `record` field in `submissions.json`; the site never re-derives it.
+The standing record of each track is the bot's `record` field in `submissions.json` (`{"sum": id, "product": id}`;
+a file of version 1, one record and no tracks, is read as the sum's), and each entry's `record_in`, `retired_in`,
+`record_of` and `against` say which tracks it took and how it compared; the site never re-derives them.
+Each track's score is the field the result's `score.tracks` names (`S`, `S_product`).
 
 "Cited by" counts a citing pull request once, by its newest head, and only when that head has a
 verdict and another author: a PR that is re-pushed stops counting until its new head is evaluated.

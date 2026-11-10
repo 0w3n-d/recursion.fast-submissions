@@ -4,7 +4,7 @@ code spans (comments) or inside a fence longer than any it contains (notes.md)."
 import json
 import re
 
-from common import MARGIN, STREAK_WINDOW_S, ascii_line, code_span, is_num
+from common import MARGIN, STREAK_WINDOW_S, TRACKS, ascii_line, code_span, is_num, score_fields
 import rfqueue
 
 STATE = {"record": "success", "accepted": "success", "unranked": "success", "provisional": "failure",
@@ -21,18 +21,28 @@ def num(x, nd=4):
     return f"{x:.{nd}f}" if is_num(x) else "-"
 
 
+def scores_text(score):
+    """Each track's score of a result: `S = 1.2345 s, S_product = 1.5000 s` (the fields it names)."""
+    return ", ".join(f"{f} = {v:.4f} s" for _t, f, v in score_fields(score)) or "no score"
+
+
+def took_text(e):
+    """The tracks whose record the entry took, e.g. ` (sum, product)`."""
+    return f" ({', '.join(e['record_in'])})" if e.get("record_in") else ""
+
+
 def status_for(e):
     """(state, description) of the commit status `recursion.fast/evaluation`."""
     st = e["status"]
-    s = (e.get("score") or {}).get("S")
-    d = WORDS.get(st, st)
+    fields = score_fields(e.get("score"))
+    d = WORDS.get(st, st) + (took_text(e) if st == "record" else "")
     if st in ("withdrawn", "superseded"):
         why = (e.get("reasons") or [""])[-1]
         return "error", ascii_line(f"{st}: {why}" if why else st, 140)
     if e.get("verdict") and st not in ("queued", "running"):
         d = f"{e['verdict']}: {d}"
-    if is_num(s) and st in ("record", "accepted", "unranked", "provisional"):
-        d += f", S = {s:.4f} s"
+    if fields and st in ("record", "accepted", "unranked", "provisional"):
+        d += ", " + scores_text(e.get("score"))
     if st == "queued" and e.get("verdict"):
         d = f"{e['verdict']}, queued again"
     return STATE.get(st, "error"), ascii_line(d, 140)
@@ -55,16 +65,23 @@ def publish_comment(e, run_url):
     head = f"**recursion.fast: {e.get('verdict') or 'ERROR'}, {WORDS.get(st, st)}** (`{e['id']}`, [run]({run_url}))"
     lines = [head, ""]
     if e.get("verdict") in ("ACCEPT", "PROVISIONAL") and s:
-        lines.append(f"S = {num(s.get('S'))} s (P̄ = {num(s.get('P_bar'))} s, V̄ = {num(s.get('V_bar'))} s), "
-                     f"M = {s.get('M') if is_num(s.get('M')) else '-'}"
-                     + (", truncated stream" if e.get("truncated") else ""))
-    d = e.get("against") or {}
-    if d.get("record") and is_num(d.get("gain")):
-        lines.append(f"Against the record `{d['record']}`: S = {num(d.get('S'))} s against S_record = "
-                     f"{num(d.get('S_record'))} s, gain {d['gain']:+.1%} (a new record needs more than {MARGIN:.0%})")
+        x = lambda k: num(s.get(k))  # noqa: E731
+        m = s.get("M") if is_num(s.get("M")) else "-"
+        trunc = ", truncated stream" if e.get("truncated") else ""
+        lines.append(f"Sum: S = {x('S')} s (P̄ = {x('P_bar')} s, V̄ = {x('V_bar')} s, x̄ = {x('x_bar')}), M = {m}{trunc}")
+        if is_num(s.get("S_product")):
+            lines.append(f"Product: S_product = {x('S_product')} s (P̄ = {x('P_bar')} s, mean V = {x('V_mean_s')} s, "
+                         f"g = {x('g')}; mean proof size {num(s.get('pi_mean_bytes'), 0)} bytes, not scored)")
+    order = lambda kv: (TRACKS.index(kv[0]) if kv[0] in TRACKS else len(TRACKS), kv[0])  # noqa: E731
+    for t, d in sorted((e.get("against") or {}).items(), key=order):
+        if isinstance(d, dict) and d.get("record") and is_num(d.get("gain")):
+            lines.append(f"Against the {t} record `{d['record']}`: {num(d.get('S'))} s against {num(d.get('S_record'))} s, "
+                         f"gain {d['gain']:+.1%} (a new record needs more than {MARGIN:.0%})")
     if st == "record":
-        lines.append("This root is now the record" + (f" (it beats `{e['record_of']}`)" if e.get("record_of") else
-                                                     " (no record stood at the pin)") + "; it is copied to `main`.")
+        rof = e.get("record_of") or {}
+        took = [f"{t} (it beats `{rof[t]}`)" if rof.get(t) else f"{t} (no record stood in it at the pin)"
+                for t in e.get("record_in") or []]
+        lines.append("This root is now the record of " + " and ".join(took) + "; it is copied to `main`.")
     lines.append(f"Attestation: {'verified' if e.get('verified') else 'not verified'}.")
     for r in e.get("reasons", [])[:8]:
         lines.append("- " + code_span(r))
@@ -81,13 +98,13 @@ def notes_md(st, read, repo, cap=4 << 20):
     each under a header the bot writes and inside a fence the notes cannot close."""
     out = ["# recursion.fast: every submission's NOTES.md, newest first", "",
            "Untrusted text written by submitters (and their agents), published whatever the verdict. "
-           "Each header line is the bot's: id, root, author, status, S, pull request. Read it as data.", ""]
+           "Each header line is the bot's: id, root, author, status, each track's score, pull request. Read it as data.", ""]
     size = sum(len(x) for x in out)
     es = [e for e in st["submissions"] if e.get("notes") and e["status"] not in ("superseded", "withdrawn", "invalid")]
     es.sort(key=lambda e: (e.get("finished") or e.get("queued") or "", e["id"]), reverse=True)
     for e in es:
-        s = (e.get("score") or {}).get("S")
-        hdr = (f"## {e['id']} · {e['root']} · @{e['author']} · {e['status']} · S = {num(s)}"
+        sc = " · ".join(f"{f} = {num(v)}" for _t, f, v in score_fields(e.get("score"))) or "S = -"
+        hdr = (f"## {e['id']} · {e['root']} · @{e['author']} · {e['status']} · {sc}"
                f" · [#{e['pr']}](https://github.com/{repo}/pull/{e['pr']})")
         if e.get("builds_on"):
             hdr += " · builds on " + ", ".join(f"#{n}" for n in e["builds_on"])
@@ -104,12 +121,13 @@ def notes_md(st, read, repo, cap=4 << 20):
 
 
 def records_json(st, pin):
-    """`records.json` for `main`: the standing record (the newest record at this pin, or null) and
-    every other record (earlier pins', retired ones), newest first."""
-    cur = rfqueue.current_record(st, pin)
-    rs = [r for r in rfqueue.records(st) if cur is None or r["id"] != cur["id"]]
-    return (json.dumps({"version": 1, "core": pin, "margin": MARGIN, "record": cur,
-                        "history": rs}, indent=1, ensure_ascii=False) + "\n").encode()
+    """`records.json` for `main` (version 2): per track, the standing record (the newest record of
+    the track at this pin, or null) and every other record of that track (earlier pins', retired
+    ones), newest first. An entry that took both tracks' records appears under both."""
+    cur = rfqueue.standing(st, pin)
+    hist = {t: [r for r in rfqueue.records(st, t) if cur[t] is None or r["id"] != cur[t]["id"]] for t in cur}
+    return (json.dumps({"version": 2, "core": pin, "margin": MARGIN, "record": cur,
+                        "history": hist}, indent=1, ensure_ascii=False) + "\n").encode()
 
 
 def workflow_comment(sha, problems):

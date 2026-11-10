@@ -2,7 +2,7 @@
 # Sets the one core pin (the owner's tool): the `.contract` gitlink (in the index) and the
 # `uses: …/evaluate.yml@<PIN>` and `core_ref: <PIN>` of .github/workflows/evaluate-next.yml, in one
 # change ready to commit on its own; also `core` in records.json (no record stands at a new pin, so
-# the record moves to its history) and the old pin in the demo fixtures, if they carry it.
+# each track's record moves to that track's history) and the old pin in the demo fixtures, if they carry it.
 # Before it changes anything it deletes every Actions cache whose key names the new commit, and
 # refuses while an evaluation is running (purge-caches.sh). Refuses a commit that is not on the
 # core's remote, whose evaluate.yml lacks an input the bot passes, or that uses an action by tag

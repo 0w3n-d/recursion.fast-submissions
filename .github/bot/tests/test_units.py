@@ -16,10 +16,19 @@ OK = {"attested": True, "record_ok": True, "reason": ""}
 
 
 def E(i, pr, author, status="queued", queued="2026-01-01T00:00:00Z", started=None, **kw):
+    """An entry; a `record` or `retired` one took the sum's record unless `record_in` says otherwise."""
     e = {"id": f"pr{pr}-{i:012x}", "pr": pr, "sha": f"{i:040x}", "root": "r", "author": author, "status": status,
          "queued": queued, "started": started, "finished": None, "attempts": 0, "reasons": [], "tree": kw.pop("tree", None)}
+    if status in ("record", "retired"):
+        e["record_in"] = ["sum"]
     e.update(kw)
     return e
+
+
+def TR(S=1.0, Sx=1.0, **kw):
+    """A result whose score names both tracks (sum `S`, product `S_product`)."""
+    return R(S=S, score={"S": S, "P_bar": S, "V_bar": 0.0, "S_product": Sx, "g": 1.0,
+                         "tracks": {"sum": "S", "product": "S_product"}}, **kw)
 
 
 def R(verdict="ACCEPT", S=1.0, comparable=True, harness=PIN, **kw):
@@ -216,21 +225,26 @@ class Queue(unittest.TestCase):
     def test_records_per_pin_and_retirement(self):
         s = self.st(E(1, 1, "a", status="record", finished="2026-01-01", harness_commit=PIN),
                     E(2, 2, "b", status="record", finished="2026-01-02", harness_commit="c" * 40))
-        self.assertEqual(rfqueue.current_record(s, PIN)["pr"], 1)
-        self.assertEqual(rfqueue.current_record(s, "c" * 40)["pr"], 2)
-        self.assertIsNone(rfqueue.current_record(s, "d" * 40))
-        rfqueue.retire(s["submissions"][0], "t", "x")
-        self.assertIsNone(rfqueue.current_record(s, PIN))          # a beaten record never stands again
+        self.assertEqual(rfqueue.current_record(s, PIN, "sum")["pr"], 1)
+        self.assertEqual(rfqueue.current_record(s, "c" * 40, "sum")["pr"], 2)
+        self.assertIsNone(rfqueue.current_record(s, "d" * 40, "sum"))
+        self.assertIsNone(rfqueue.current_record(s, PIN, "product"))       # it took the sum's record only
+        self.assertFalse(rfqueue.retire(s["submissions"][0], "product", "t", "x"))
+        self.assertTrue(rfqueue.retire(s["submissions"][0], "sum", "t", "x"))
+        self.assertFalse(rfqueue.retire(s["submissions"][0], "sum", "t", "x"))   # once
+        self.assertIsNone(rfqueue.current_record(s, PIN, "sum"))   # a retired record never stands again
+        self.assertEqual(s["submissions"][0]["status"], "retired")
         self.assertEqual([e["pr"] for e in rfqueue.records(s)], [2, 1])
 
     def test_dump_names_the_standing_record(self):
         st = rfqueue.empty("o/r", PIN)
-        self.assertIsNone(json.loads(rfqueue.dump(st))["record"])
+        none = {"sum": None, "product": None}
+        self.assertEqual(json.loads(rfqueue.dump(st))["record"], none)
         st["submissions"] += [E(1, 1, "a", "record", harness_commit=PIN, finished="2026-01-01T00:00:01Z"),
                               E(2, 2, "b", "record", harness_commit="1" * 40, finished="2026-01-01T00:00:02Z")]
-        self.assertEqual(json.loads(rfqueue.dump(st))["record"], "pr1-000000000001")   # the other pin's never stands
+        self.assertEqual(json.loads(rfqueue.dump(st))["record"], dict(none, sum="pr1-000000000001"))   # the other pin's never stands
         st["submissions"][0]["status"] = "retired"
-        self.assertIsNone(json.loads(rfqueue.dump(st))["record"])
+        self.assertEqual(json.loads(rfqueue.dump(st))["record"], none)
 
     def test_port(self):
         s = self.st(E(1, 1, "a", status="record", finished="2026-01-01", harness_commit=PIN, tag="rf-source/x"))
@@ -251,8 +265,108 @@ class Queue(unittest.TestCase):
         p["status"] = "rejected"
         self.assertIsNone(rfqueue.due_port(s, "c" * 40))
         self.assertIs(rfqueue.due_port(s, "d" * 40), rec)           # the next pin: the last standing record
-        rfqueue.retire(rec, "t", "x")
+        rfqueue.retire(rec, "sum", "t", "x")
         self.assertIsNone(rfqueue.due_port(s, "d" * 40))            # a retired record is not ported
+
+    def test_tracks_records_retirement_and_ports(self):
+        """Records per track: an entry may hold one track's record or both; retirement is per track;
+        a pin move ports each track's record (one port for an entry that holds both), and a port is a
+        candidate only in the tracks whose record it carries."""
+        a = E(1, 1, "a", "record", finished="2026-01-01", harness_commit=PIN, tag="rf-source/a", record_in=["sum", "product"])
+        b = E(2, 2, "b", "record", finished="2026-01-02", harness_commit=PIN, tag="rf-source/b", record_in=["product"])
+        s = self.st(a)
+        self.assertEqual(rfqueue.standing(s, PIN), {"sum": a, "product": a})
+        self.assertEqual(rfqueue.due_ports(s, "c" * 40), {"sum": a, "product": a})
+        p = rfqueue.port(s, 1, "c" * 40, "now", o=a)
+        self.assertEqual(p["port_tracks"], ["sum", "product"])                 # one port for both
+        self.assertEqual(rfqueue.due_ports(s, "c" * 40), {})
+        s = self.st(a, b)
+        self.assertEqual(rfqueue.standing(s, PIN), {"sum": a, "product": b})
+        self.assertEqual(rfqueue.due_ports(s, "c" * 40), {"sum": a, "product": b})
+        self.assertIs(rfqueue.due_port(s, "c" * 40), a)
+        self.assertEqual(rfqueue.port(s, 1, "c" * 40, "now", o=a)["port_tracks"], ["sum"])
+        self.assertIs(rfqueue.due_port(s, "c" * 40), b)
+        self.assertEqual(rfqueue.port(s, 2, "c" * 40, "now", o=b)["port_tracks"], ["product"])
+        self.assertIsNone(rfqueue.due_port(s, "c" * 40))
+        # retirement of one track: the entry keeps the other's crown; the retired track falls back to
+        # no record (the newest record of the track is retired, an older one never stands again)
+        s = self.st(a, b)
+        self.assertTrue(rfqueue.retire(b, "product", "t", "x"))
+        self.assertEqual((b["status"], rfqueue.standing(s, PIN)), ("retired", {"sum": a, "product": None}))
+        self.assertEqual(rfqueue.due_ports(s, "c" * 40), {"sum": a})           # a retired record is not ported
+        self.assertTrue(rfqueue.retire(a, "product", "t", "x"))
+        self.assertEqual((a["status"], a["retired_in"].keys() == {"product"}), ("record", True))
+        self.assertEqual(rfqueue.standing(s, PIN), {"sum": a, "product": None})
+        self.assertEqual([e["id"] for e in rfqueue.records(s, "product")], [b["id"], a["id"]])
+        self.assertEqual([e["id"] for e in rfqueue.records(s, "sum")], [a["id"]])
+        self.assertTrue(rfqueue.retire(a, "sum", "t", "x"))
+        self.assertEqual(a["status"], "retired")
+        # the decision: per track, against that track's standing record
+        ra = dict(a, status="record", retired_in={}, score={"S": 10.0, "S_product": 20.0, "tracks": {"sum": "S", "product": "S_product"}})
+        d = decide(TR(S=9.0, Sx=19.9), OK, PIN, {"sum": ra, "product": ra}, 1)
+        self.assertEqual((d["status"], d["took"], d["record_of"]), ("record", ["sum"], {"sum": ra["id"], "product": None}))
+        self.assertEqual((d["against"]["sum"]["beats"], d["against"]["product"]["beats"]), (True, False))
+        d = decide(TR(S=11.0, Sx=5.0), OK, PIN, {"sum": ra, "product": ra}, 1)
+        self.assertEqual((d["status"], d["took"]), ("record", ["product"]))
+        d = decide(TR(S=9.0, Sx=5.0), OK, PIN, {"sum": ra, "product": None}, 1)
+        self.assertEqual((d["status"], d["took"], d["against"]["product"]), ("record", ["sum", "product"], None))
+        d = decide(TR(S=11.0, Sx=21.0), OK, PIN, {"sum": ra, "product": ra}, 1)
+        self.assertEqual((d["status"], d["took"]), ("accepted", []))
+        d = decide(TR(S=9.0, Sx=5.0), OK, PIN, {}, 1, tracks=["product"])     # a port of the product's record
+        self.assertEqual((d["status"], d["took"]), ("record", ["product"]))
+        self.assertTrue(any("candidate only in" in r for r in d["reasons"]))
+        d = decide(TR(S=1.0, Sx=1.0, prover_sha256="p" * 64), OK, PIN, {}, 1, {"p" * 64: b["id"]})
+        self.assertEqual((d["status"], d["took"]), ("accepted", []))             # the binary of either track's record
+        d = decide(R(S=9.0), OK, PIN, {"sum": ra, "product": ra}, 1)            # an older result: the sum alone
+        self.assertEqual((d["status"], d["took"], d["against"]["product"]), ("record", ["sum"], None))
+        d = decide(TR(S=9.0, Sx=0.0), OK, PIN, {"sum": None, "product": None}, 1)   # no positive product score
+        self.assertEqual(d["took"], ["sum"])
+        d = decide(TR(S=0.0, Sx=0.0), OK, PIN, {}, 1)
+        self.assertEqual(d["status"], "unranked")
+
+    def test_score_sanitiser_keeps_the_tracks(self):
+        """`tracks` and the fields it names survive the sanitiser whatever the number and order of the
+        other keys: 60 filler keys in front, and a real score of the core (its mock smoke)."""
+        from decide import clean_score
+        import os
+        raw = {f"filler_{k:02d}": float(k) for k in range(60)}
+        raw.update(S=3.0, x=1, S_product=2.0, tracks={"sum": "S", "product": "S_product", "Bad": "x", "z": "tracks"})
+        sc = clean_score(raw)
+        self.assertEqual((sc["tracks"], sc["S"], sc["S_product"]), ({"sum": "S", "product": "S_product"}, 3.0, 2.0))
+        self.assertEqual(common.track_scores(sc), {"sum": 3.0, "product": 2.0})
+        self.assertEqual(decide(R(score=raw), OK, PIN, {}, 1)["took"], ["sum", "product"])
+        with open(os.path.join(os.path.dirname(__file__), "core_score.json")) as f:
+            core = json.load(f)
+        self.assertEqual(clean_score(core), core)
+        self.assertEqual(set(common.track_scores(clean_score(core))), {"sum", "product"})
+        self.assertIsNone(clean_score(None))
+
+    def test_score_fields(self):
+        sc = {"S": 2.0, "S_product": 3.0, "tracks": {"product": "S_product", "sum": "S"}}
+        self.assertEqual(common.score_fields(sc), [("sum", "S", 2.0), ("product", "S_product", 3.0)])
+        self.assertEqual(common.score_fields({"S": 2.0, "S_product": 3.0}), [("sum", "S", 2.0)])   # no tracks: the sum
+        self.assertEqual(common.score_fields({"S": 2.0, "x": 1.0, "tracks": {"Bad Name": "x", "new": "x", "z": "tracks",
+                                                                              "w": "missing"}}), [("new", "x", 1.0)])
+        self.assertEqual(common.score_fields(None), [])
+
+    def test_migrate_version_1(self):
+        """A version-1 state (one record, the sum's) is read as version 2 and rewritten at once."""
+        v1 = {"version": 1, "core": PIN, "margin": common.MARGIN, "record": "pr2-000000000002", "submissions": [
+            E(1, 1, "a", "retired", harness_commit=PIN, finished="2026-01-01", retired="2026-01-03", record_of=None,
+              against=None),
+            E(2, 2, "b", "record", harness_commit=PIN, finished="2026-01-02", record_of="pr1-000000000001",
+              against={"record": "pr1-000000000001", "S": 1.0, "S_record": 2.0, "gain": 0.5, "beats": True}),
+            E(3, 3, "c", "rejected", record_of=None, against=None)]}
+        for e in v1["submissions"]:
+            e.pop("record_in", None)
+        st = rfqueue.load(json.dumps(v1).encode(), "o/r", PIN)
+        self.assertTrue(st["_stale"])
+        a, b, c = st["submissions"]
+        self.assertEqual((a["record_in"], a["retired_in"], b["record_in"], "record_in" in c), (["sum"], {"sum": "2026-01-03"}, ["sum"], False))
+        self.assertEqual((b["record_of"], b["against"]["sum"]["S_record"], c["record_of"], c["against"]),
+                         ({"sum": "pr1-000000000001"}, 2.0, {"sum": None}, {"sum": None}))
+        out = json.loads(rfqueue.dump(st))
+        self.assertEqual((out["version"], out["record"]), (2, {"sum": "pr2-000000000002", "product": None}))
 
     def test_compaction_and_large_state(self):
         """A flood of pushes keeps the state bounded; a large state loads and orders fast."""
@@ -279,7 +393,7 @@ class Queue(unittest.TestCase):
 
     def test_load_rejects_foreign_state(self):
         with self.assertRaises(ValueError):
-            rfqueue.load(b'{"version": 2, "submissions": []}', "o/r", PIN)
+            rfqueue.load(b'{"version": 3, "submissions": []}', "o/r", PIN)
         with self.assertRaises(ValueError):
             rfqueue.load(b'{"version": 1, "submissions": [{"id": "x", "status": "hacked"}]}', "o/r", PIN)
         with self.assertRaises(ValueError):       # not a status of this format
@@ -292,6 +406,7 @@ class Queue(unittest.TestCase):
 
 class Decide(unittest.TestCase):
     rec = {"id": "pr1-aaaaaaaaaaaa", "sha": "a" * 40, "root": "r", "score": {"S": 10.0}}
+    recs = {"sum": rec}
 
     def test_first_record_and_verdicts(self):
         self.assertEqual(decide(R(), OK, PIN, None, 1)["status"], "record")
@@ -324,26 +439,27 @@ class Decide(unittest.TestCase):
         """The record rule: S < (1 - MARGIN) * S_record, against the standing record's own score."""
         self.assertEqual(common.MARGIN, 0.02)                       # the owner's margin, pinned
         m, edge = common.MARGIN, (1 - common.MARGIN) * 10.0         # the boundary, as the rule computes it
-        d = decide(R(S=edge - 0.01), OK, PIN, self.rec, 1)          # just inside: a record
-        self.assertEqual((d["status"], d["record_of"], d["requeue"]), ("record", self.rec["id"], False))
-        self.assertAlmostEqual(d["against"]["gain"], m + 0.001)
-        self.assertEqual((d["against"]["record"], d["against"]["S_record"], d["against"]["beats"]), (self.rec["id"], 10.0, True))
-        d = decide(R(S=edge), OK, PIN, self.rec, 1)                 # exactly (1 - MARGIN) * S_record: strict, not a record
-        self.assertEqual((d["status"], d["record_of"]), ("accepted", None))
-        self.assertFalse(d["against"]["beats"])
+        d = decide(R(S=edge - 0.01), OK, PIN, self.recs, 1)          # just inside: a record
+        self.assertEqual((d["status"], d["record_of"]["sum"], d["requeue"], d["took"]), ("record", self.rec["id"], False, ["sum"]))
+        self.assertAlmostEqual(d["against"]["sum"]["gain"], m + 0.001)
+        a = d["against"]["sum"]
+        self.assertEqual((a["record"], a["S_record"], a["beats"]), (self.rec["id"], 10.0, True))
+        d = decide(R(S=edge), OK, PIN, self.recs, 1)                 # exactly (1 - MARGIN) * S_record: strict, not a record
+        self.assertEqual((d["status"], d["record_of"]["sum"]), ("accepted", None))
+        self.assertFalse(d["against"]["sum"]["beats"])
         self.assertTrue(any("needs more than 2%" in r for r in d["reasons"]))
-        d = decide(R(S=edge + 0.01), OK, PIN, self.rec, 1)          # just outside: within the margin
-        self.assertEqual((d["status"], d["against"]["beats"]), ("accepted", False))
-        self.assertEqual(decide(R(S=9.9), OK, PIN, self.rec, 1)["status"], "accepted")   # 1 % faster is not enough
-        self.assertEqual(decide(R(S=9.7), OK, PIN, self.rec, 1)["status"], "record")     # 3 % faster is
-        self.assertEqual(decide(R(S=11.0), OK, PIN, self.rec, 1)["status"], "accepted")
-        self.assertEqual(decide(R(S=1.0), OK, PIN, self.rec, 1, margin=0.5)["status"], "record")
-        d = decide(R(S=1.0, prover_sha256="p" * 64), OK, PIN, self.rec, 1, {"p" * 64: "pr0-000000000000"})
+        d = decide(R(S=edge + 0.01), OK, PIN, self.recs, 1)          # just outside: within the margin
+        self.assertEqual((d["status"], d["against"]["sum"]["beats"]), ("accepted", False))
+        self.assertEqual(decide(R(S=9.9), OK, PIN, self.recs, 1)["status"], "accepted")   # 1 % faster is not enough
+        self.assertEqual(decide(R(S=9.7), OK, PIN, self.recs, 1)["status"], "record")     # 3 % faster is
+        self.assertEqual(decide(R(S=11.0), OK, PIN, self.recs, 1)["status"], "accepted")
+        self.assertEqual(decide(R(S=1.0), OK, PIN, self.recs, 1, margin=0.5)["status"], "record")
+        d = decide(R(S=1.0, prover_sha256="p" * 64), OK, PIN, self.recs, 1, {"p" * 64: "pr0-000000000000"})
         self.assertEqual(d["status"], "accepted")
         for res in (R(S=1.0, comparable=False), R(S=1.0, truncated=True, comparable=False)):
-            self.assertEqual(decide(res, dict(OK, record_ok=False), PIN, self.rec, 1)["status"], "unranked")
-        self.assertEqual(decide(R("REJECT"), OK, PIN, self.rec, 1)["status"], "rejected")
-        self.assertEqual(decide(R("ERROR"), OK, PIN, self.rec, 1)["status"], "queued")
+            self.assertEqual(decide(res, dict(OK, record_ok=False), PIN, self.recs, 1)["status"], "unranked")
+        self.assertEqual(decide(R("REJECT"), OK, PIN, self.recs, 1)["status"], "rejected")
+        self.assertEqual(decide(R("ERROR"), OK, PIN, self.recs, 1)["status"], "queued")
         for k in ("duel", "duel_now", "wins", "record_failed", "retire_record", "confirm_retry", "duel_retry", "cpu"):
             self.assertNotIn(k, d)
 
@@ -375,8 +491,9 @@ class Render(unittest.TestCase):
         self.assertEqual(render.status_for(e), ("failure", "REJECT: rejected"))
         e = {"status": "accepted", "verdict": "ACCEPT", "score": {"S": 2.0}}
         self.assertEqual(render.status_for(e), ("success", "ACCEPT: accepted (did not beat the record), S = 2.0000 s"))
-        e = {"status": "record", "verdict": "ACCEPT", "score": {"S": 1.23456}}
-        self.assertEqual(render.status_for(e)[0], "success")
+        e = {"status": "record", "verdict": "ACCEPT", "record_in": ["sum", "product"],
+             "score": {"S": 1.23456, "S_product": 2.0, "tracks": {"sum": "S", "product": "S_product"}}}
+        self.assertEqual(render.status_for(e), ("success", "ACCEPT: new record (sum, product), S = 1.2346 s, S_product = 2.0000 s"))
         self.assertLessEqual(len(render.status_for({"status": "x" * 500})[1]), 140)
 
     def test_comment_has_no_live_markdown_from_reasons(self):
@@ -386,9 +503,10 @@ class Render(unittest.TestCase):
         self.assertIn("- `'](http://evil) @owner`", body)
         self.assertNotIn("``", body)
         e = {"id": "pr2-aaaaaaaaaaaa", "status": "accepted", "verdict": "ACCEPT", "score": {"S": 9.9}, "verified": True,
-             "against": {"record": "pr1-aaaaaaaaaaaa", "S": 9.9, "S_record": 10.0, "gain": 0.01, "beats": False}}
+             "against": {"sum": {"record": "pr1-aaaaaaaaaaaa", "S": 9.9, "S_record": 10.0, "gain": 0.01, "beats": False},
+                         "product": None}}
         body = render.publish_comment(e, "https://run")
-        self.assertIn("Against the record `pr1-aaaaaaaaaaaa`: S = 9.9000 s against S_record = 10.0000 s, gain +1.0%", body)
+        self.assertIn("Against the sum record `pr1-aaaaaaaaaaaa`: 9.9000 s against 10.0000 s, gain +1.0%", body)
         self.assertNotIn("duel", body.lower())
 
     def test_notes_md_fence(self):
@@ -413,12 +531,16 @@ class Render(unittest.TestCase):
         st["submissions"] = [E(1, 1, "a", status="record", finished="2026-01-01", harness_commit=PIN),
                              E(2, 2, "b", status="record", finished="2026-01-02", harness_commit=PIN),
                              E(3, 3, "c", status="accepted", harness_commit=PIN)]
+        st["submissions"][1]["record_in"] = ["sum", "product"]
         r = json.loads(render.records_json(st, PIN))
-        self.assertEqual((r["record"]["pr"], [h["pr"] for h in r["history"]], r["margin"], r["core"]), (2, [1], common.MARGIN, PIN))
+        self.assertEqual((r["version"], r["record"]["sum"]["pr"], r["record"]["product"]["pr"], [h["pr"] for h in r["history"]["sum"]],
+                          r["history"]["product"], r["margin"], r["core"]), (2, 2, 2, [1], [], common.MARGIN, PIN))
         self.assertNotIn("record_wins", r)
-        self.assertIsNone(json.loads(render.records_json(rfqueue.empty("o/r", PIN), PIN))["record"])
+        empty = json.loads(render.records_json(rfqueue.empty("o/r", PIN), PIN))
+        self.assertEqual((empty["record"], empty["history"]), ({"sum": None, "product": None}, {"sum": [], "product": []}))
         r = json.loads(render.records_json(st, "c" * 40))       # another pin: no standing record, the history kept
-        self.assertEqual((r["record"], [h["pr"] for h in r["history"]]), (None, [2, 1]))
+        self.assertEqual((r["record"], [h["pr"] for h in r["history"]["sum"]], [h["pr"] for h in r["history"]["product"]]),
+                         ({"sum": None, "product": None}, [2, 1], [2]))
 
 
 class Pin(unittest.TestCase):
@@ -467,9 +589,14 @@ class Pin(unittest.TestCase):
     def test_repin_records(self):
         old = {"version": 1, "core": PIN, "margin": 0.02, "record": {"id": "pr1-000000000001"},
                "history": [{"id": "pr0-000000000000"}]}
-        r = json.loads(pin.repin_records(json.dumps(old).encode(), "c" * 40))
-        self.assertEqual((r["core"], r["record"], [h["id"] for h in r["history"]]),
-                         ("c" * 40, None, ["pr1-000000000001", "pr0-000000000000"]))
+        r = json.loads(pin.repin_records(json.dumps(old).encode(), "c" * 40))     # version 1: the sum's record
+        self.assertEqual((r["version"], r["core"], r["record"], [h["id"] for h in r["history"]["sum"]], r["history"]["product"]),
+                         (2, "c" * 40, {"sum": None, "product": None}, ["pr1-000000000001", "pr0-000000000000"], []))
+        two = {"version": 2, "core": PIN, "margin": 0.02, "record": {"sum": {"id": "pr1-000000000001"}, "product": {"id": "pr2-000000000002"}},
+               "history": {"sum": [{"id": "pr0-000000000000"}], "product": []}}
+        r = json.loads(pin.repin_records(json.dumps(two).encode(), "c" * 40))
+        self.assertEqual((r["record"], [h["id"] for h in r["history"]["sum"]], [h["id"] for h in r["history"]["product"]]),
+                         ({"sum": None, "product": None}, ["pr1-000000000001", "pr0-000000000000"], ["pr2-000000000002"]))
         launch = render.records_json(rfqueue.empty("o/r", PIN), PIN)
         self.assertEqual(pin.repin_records(launch, "c" * 40), render.records_json(rfqueue.empty("o/r", "c" * 40), "c" * 40))
         # a file of an earlier launch (another margin, the removed record_wins) re-pins to what the bot writes

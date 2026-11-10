@@ -1,1 +1,42 @@
-{"schema": "recursion.fast/v4/result-1", "verdict": "ACCEPT", "comparable": true, "truncated": false, "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de", "job": "scaraven/recursion.fast-submissions/actions/runs/104/attempts/1", "machine": {"fingerprint": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15", "expected": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15", "matches": true}, "runner": {"name": "rf-bench-3", "environment": "self-hosted", "labels": ["rf-bench"]}, "reasons": [], "prover_sha256": "0000000000000000000000000000000000000000000000000000000000009aab", "score": {"S": 4.118, "P_bar": 3.709, "V_bar": 0.409, "M": 96, "c_P": 1.031, "kappa": 0.9893, "v_ref_s": 0.6595, "retimed": 2}}
+{
+ "schema": "recursion.fast/v4/result-1",
+ "verdict": "ACCEPT",
+ "comparable": true,
+ "truncated": false,
+ "harness_commit": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
+ "job": "scaraven/recursion.fast-submissions/actions/runs/104/attempts/1",
+ "machine": {
+  "fingerprint": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15",
+  "expected": "3b7c9e159e159e159e159e159e159e159e159e159e159e159e159e159e159e15",
+  "matches": true
+ },
+ "runner": {
+  "name": "rf-bench-3",
+  "environment": "self-hosted",
+  "labels": [
+   "rf-bench"
+  ]
+ },
+ "reasons": [],
+ "prover_sha256": "0000000000000000000000000000000000000000000000000000000000009aab",
+ "score": {
+  "S": 5.1021,
+  "P_bar": 3.709,
+  "V_bar": 1.3931,
+  "x_bar": 0.4225,
+  "V_mean_s": 0.2,
+  "g": 1.092,
+  "S_product": 4.0501,
+  "pi_mean_bytes": 250000,
+  "M": 96,
+  "c_P": 1.031,
+  "K": 5,
+  "kappa": 3.2975,
+  "v_ref_s": 0.6595,
+  "retimed": 2,
+  "tracks": {
+   "sum": "S",
+   "product": "S_product"
+  }
+ }
+}

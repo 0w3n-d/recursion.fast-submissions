@@ -1,7 +1,13 @@
 {
- "version": 1,
- "core": "f3538eb2a198240d864eb773331a88bf16283688",
+ "version": 2,
+ "core": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
  "margin": 0.02,
- "record": null,
- "history": []
+ "record": {
+  "sum": null,
+  "product": null
+ },
+ "history": {
+  "sum": [],
+  "product": []
+ }
 }

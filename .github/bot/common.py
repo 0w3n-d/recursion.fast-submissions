@@ -9,8 +9,8 @@ import re
 CORE_REPO = "scaraven/recursion.fast"
 SIGNER_WORKFLOW = "scaraven/recursion.fast/.github/workflows/evaluate.yml"
 STATUS_CONTEXT = "recursion.fast/evaluation"
-# The record rule (AGENTS.md §10): a comparable, attested ACCEPT at the pin is a new record iff
-# S < (1 - MARGIN) * S_record, S_record the standing record's score at the pin.
+# The record rule (AGENTS.md §10), per track t: a comparable, attested ACCEPT at the pin is a new
+# record of t iff S_t < (1 - MARGIN) * S_t,record, S_t,record the standing record's score in t at the pin.
 # MARGIN is the owner's choice (2 %), not derived from the noise. For reference: σ, the relative
 # run-to-run spread of S for one entry on the evaluation machine with the fixed chain lengths, was
 # measured at 1.75 % over 10 runs at the smoke shape (the core's harness/smoke.toml; mostly per-step
@@ -22,6 +22,15 @@ STATUS_CONTEXT = "recursion.fast/evaluation"
 # change MARGIN between seasons (a stored state with another margin is rewritten at once,
 # rfqueue.load; README.md, "Changing the margin", lists every place that states it).
 MARGIN = 0.02
+# The tracks (the core's AGENTS.md §7, §8): two scores from the one evaluation, each with its own
+# records. A result's `score.tracks` names, per track, the field of `score` that is its score
+# ({"sum": "S", "product": "S_product"}); a score without `tracks` (an older result) has the sum
+# alone, `S`. The record rule runs once per track that the result names, with the one MARGIN.
+# TRACKS is the order the bot lists them in and the tracks `record` always names; a track a result
+# names that is not here is decided the same way, so a later track needs no bot change.
+TRACKS = ("sum", "product")
+LEGACY_TRACKS = {"sum": "S"}
+TRACK_RE = re.compile(r"[a-z][a-z0-9_]{0,15}\Z")
 MAX_ATTEMPTS = 2          # an organiser-side ERROR is evaluated once more, then left for the owner
 # Organiser errors the core names in a result (`organiser_error`), and `attestation`, which the bot
 # gives a result whose provenance does not verify (nothing an entry runs can reach the attest job).
@@ -113,3 +122,23 @@ def clean_reasons(rs, n=20, cap=300):
 
 def is_num(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x and abs(x) != float("inf")
+
+
+def score_fields(score):
+    """[(track, field, value)] of a result's `score` object, in TRACKS order: the field
+    `score.tracks[track]` names and its value, for each track whose score is a positive number (a
+    score without `tracks`: the sum's `S` only). At most 8 tracks."""
+    if not isinstance(score, dict):
+        return []
+    names = score.get("tracks") if isinstance(score.get("tracks"), dict) else LEGACY_TRACKS
+    out = []
+    for t, f in list(names.items())[:8]:
+        v = score.get(f) if isinstance(f, str) and f != "tracks" else None
+        if isinstance(t, str) and TRACK_RE.match(t) and is_num(v) and v > 0:
+            out.append((t, f, v))
+    return sorted(out, key=lambda x: (TRACKS.index(x[0]) if x[0] in TRACKS else len(TRACKS), x[0]))
+
+
+def track_scores(score):
+    """{track: the positive score in that track} of a result's `score` object (`score_fields`)."""
+    return {t: v for t, _f, v in score_fields(score)}

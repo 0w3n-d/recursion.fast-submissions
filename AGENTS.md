@@ -82,10 +82,11 @@ gains nothing lasting.
 
 **A worked example.** The core ships a minimal entry: it is certified at errors 0 and is not
 competitive. A copy passes the certificate and runs through the benchmark at the smoke shape
-(`harness/smoke.toml`). At the season shape it is REJECTed: its verifier re-checks every chain of
-the stream so far, so its check time grows with the stream's history and exceeds `verify_s` from
-about step 32 on the evaluation machine (with the caps lifted it would also exceed `stream_s` and
-the DoS column's caps). It shows the layout, not a competitive design. To copy it:
+(`harness/smoke.toml`). At the season shape it is accepted and scored, and far from competitive:
+its verifier re-checks every chain of the stream so far, so its check time grows with the stream's
+history (10.4 s at step 31 on the evaluation machine, about 1.2 µs per permutation of history; at
+that rate about 38 s at step 96), and its verifier term dominates both scores. It shows the layout,
+not a competitive design. To copy it:
 
 ```sh
 mkdir -p submissions/my-entry/prover
@@ -125,7 +126,8 @@ Builds on: #12, #15
 **Sections**, in this order:
 
 1. **Idea**: the construction and why it should be fast.
-2. **Result**: what you measured, and the verdict and `S` once you know them.
+2. **Result**: what you measured, and the verdict and both scores (`S` and `S_product`) once you
+   know them.
 3. **What failed, and why**: the dead ends, with numbers.
 4. **What to try next**: what you would do with more time.
 
@@ -151,8 +153,8 @@ python3 -I harness/evaluate.py all --entry ../submissions/ROOT --org "$PWD" \
 - **The season's shape locally.** `harness/season.toml` itself runs only on the evaluation machine:
   elsewhere its fingerprint check stops the benchmark as an organiser ERROR before your prover is
   built. Before you submit something you expect to rank, generate a local copy (the season with
-  `[machine] fingerprint = "any"`, `[calibration] ref_provisional = true` and
-  `[dos] item_cap = "verify_s"`, as the smoke has them) and run it:
+  `[machine] fingerprint = "any"` and `[calibration] ref_provisional = true`, as the smoke has
+  them) and run it:
 
   ```sh
   python3 -I harness/local-season.py > /tmp/season-local.toml
@@ -161,8 +163,9 @@ python3 -I harness/evaluate.py all --entry ../submissions/ROOT --org "$PWD" \
   ```
 
   Every shape and every other cap is then the season's, but your machine's speed is not the
-  evaluation machine's. The worked example of section 3 REJECTs at this shape (`verify_s`, from
-  about step 32 on the evaluation machine), as expected.
+  evaluation machine's. The worked example of section 3 spends about 1,800 s of `stream_s` on its
+  checks at this shape on the evaluation machine; on a slower machine it can reach `stream_s` and
+  be truncated, as expected.
 - Read `verdict` and `reasons` in the result. Set `RF_HARNESS_COMMIT` if `.contract` is not a git
   checkout.
 
@@ -203,10 +206,12 @@ gh pr create --repo scaraven/recursion.fast-submissions --base main --head LOGIN
    stale entries (section 9).
 3. **Evaluation**, one at a time, on the organiser's server. The bot picks the next entry (section
    9) and runs the core's attested `evaluate.yml` at the pin on that tag.
-4. **Publish.** The bot verifies the attestation, decides the status, writes `data`
-   (`submissions.json`, `results/<id>.json`, `notes.md`), comments the verdict, `S`, `P̄`, `V̄` and
-   the comparison with the standing record, and sets the commit status. On a new record it also copies the root to
-   `main`.
+4. **Publish.** The bot verifies the attestation, decides the status and the record of each track
+   (section 10), writes `data` (`submissions.json`, `results/<id>.json`, `notes.md`), comments the
+   verdict, both scores with their parts (sum: `S`, `P̄`, `V̄`, `x̄`; product: `S_product`, `P̄`,
+   mean `V`, `g`, and the mean proof size, which the product does not score) and the comparison
+   with each track's standing record, and sets the commit status. On a new record of either track
+   it also copies the root to `main`.
 
 An id is `pr<N>-<first 12 hex of the head sha>`. The re-evaluation of a record after a pin move (a
 port, section 10) adds `-<first 8 hex of the pin>`. The commit status has the context
@@ -216,10 +221,10 @@ port, section 10) adds `-<first 8 hex of the pin>`. The commit status has the co
 |---|---|---|
 | `queued` | pending: `queued` | waiting its turn (section 9). `ERROR, queued again`: an organiser-side failure, retried once (a machine-fingerprint or chain-lengths failure uses up no attempt) |
 | `running` | pending: `evaluating` | the evaluation is running |
-| `record` | success: `ACCEPT: new record, S = …` | the record (section 10); it keeps this status after it is beaten |
-| `retired` | (unchanged) | a record the owner removed from the throne |
-| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …` | certified and comparable, but it did not beat the standing record by the margin (section 10), or it has the same prover binary as an earlier record |
-| `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the job plan did not match, or there is no positive `S` |
+| `record` | success: `ACCEPT: new record (sum, product), S = …, S_product = …` | the record of one track or of both, named in the status (section 10); it keeps this status after it is beaten |
+| `retired` | (unchanged) | a record the owner removed from the throne of every track it held (a record retired in one track only stays `record`, and the site marks the retired track) |
+| `accepted` | success: `ACCEPT: accepted (did not beat the record), S = …, S_product = …` | certified and comparable, but it beat neither track's standing record by the margin (section 10), or it has the same prover binary as an earlier record of either track |
+| `unranked` | success: `ACCEPT: accepted, not comparable (not ranked), …` | certified, but the stream was truncated (`stream_s` reached), the job plan did not match, or there is no positive score |
 | `provisional` | failure: `PROVISIONAL: provisional (never ranked), …` | the Lean build succeeded but the certificate did not check (kernel rejection, `sorryAx`, a theorem other than the rendered one, the kernel cap); benchmarked and published |
 | `rejected` | failure: `REJECT: rejected` | the entry broke a rule or a cap; the comment gives the reason |
 | `error` | pending: `ERROR: waiting on the organiser (an organiser-side error)` | the organiser's side failed twice; the owner can re-run it |
@@ -299,7 +304,8 @@ round: the next entry goes to the author who waited longest.
 - **Compaction.** A superseded, withdrawn or invalid entry that is not its PR's newest is cut down
   to a stub, and its copied NOTES is deleted. A PR keeps at most 50 such stubs. Evaluated entries
   are kept whole.
-- **The owner** can hold a PR (label `hold`), force one evaluation, or retire a record.
+- **The owner** can hold a PR (label `hold`), force one evaluation, or retire a record in one
+  track.
 
 ## 10. The record rule
 
@@ -307,36 +313,73 @@ round: the next entry goes to the author who waited longest.
 repeated runs of one entry still differ a little, so a record must beat the standing one by a
 margin.
 
+**Two tracks** rank every evaluation, from the same stream, each with its own records (the core's
+[§7](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#7-the-scores); lower is better,
+seconds per `2^18`-permutation step):
+
+```
+S  = P̄ + V̄                                   the sum (the result's `S`)
+S× = P̄ · g                                   the product (the result's `S_product`)
+P̄  = n_ref · ( Σ_i n_i · (P_i / n_i)^3 / Σ_i n_i )^(1/3)
+V̄  = κ · (1/M) · Σ_i x_i,          x_i = V_i / v_ref + |π_i| / s_ref
+g  = 1 + ( V̄ₘ / v_ref )^2,          V̄ₘ = (1/M) · Σ_i V_i
+```
+
+with `M = 96`, `n_ref = 2^18`, `s_ref = 2 MiB`, `v_ref` a tenth of the trivial check of `2^24`
+permutations (measured on the machine: 659.5 ms), and `κ = K · v0 = 3.2975 s` (`K = 5`, `v0` that
+`v_ref`). `P̄` is the same number in both. The sum charges verifier time and proof size linearly:
+one millisecond of check time on every step costs about `K = 5` ms of `S` (exactly when the run's `v_ref` equals `v0`), as much as about 5 ms of `P̄`, which is about 6.4 ms of prover time on every step at the season's chain lengths; one mebibyte of mean proof size
+`κ / 2` s. The product multiplies the prover time by a verifier factor, 1 for a free verifier, 2 at
+`V̄ₘ = v_ref`, quadratic beyond; it does not score proof size, which only `file_cap` (64 MiB) bounds
+there (the site shows the mean `|π|` beside it). Each result's `score.tracks` names the field of each track's score.
+
 The rule is [§8](https://github.com/scaraven/recursion.fast/blob/main/AGENTS.md#8-verdicts-and-records)
-of the core. In short: a comparable, attested ACCEPT at the pin is the new record iff
-`S_yours < (1 − margin) · S_record`, where `S_record` is the standing record's own score and the
-margin is 2 %, set by the owner. It does not keep noise out: the run-to-run spread of one
-entry's score on the evaluation machine with the fixed chain lengths is σ ≈ 1.75 % (ten runs at the
-core's smoke shape; mostly per-step process overhead, likely smaller at the season shape), so two
-runs of one entry differ by about √2·σ ≈ 2.5 %, and a near-copy of the record can beat it by noise.
-Byte copies of an evaluated root and re-used record prover binaries are refused (section 8), and
-the owner can retire a record that won by noise. The owner may change the margin between seasons.
-With no standing
-record (at the start, after a retirement, or after a pin move whose port of the record failed), the
-first comparable, attested ACCEPT is the record.
+of the core. In short, per track: a comparable, attested ACCEPT at the pin is the new record of a
+track iff `S_t < (1 − margin) · S_t,record`, where `S_t` is its score in that track (`S` or `S×`) and
+`S_t,record` the standing record's own score in that track, and the margin is 2 %, set by the
+owner, the same for both tracks. One evaluation is judged in both tracks at once, so an entry can
+take one track's record, or both. A prover binary that took the record of either track never takes
+a record again (its own port excepted). The margin does not keep noise out: the run-to-run spread
+of one entry's score on the evaluation machine with the fixed chain lengths is σ ≈ 1.75 % (ten runs
+at the core's smoke shape; mostly per-step process overhead, likely smaller at the season shape),
+so two runs of one entry differ by about √2·σ ≈ 2.5 %, and a near-copy of a record can beat it by
+noise. The product's score moves a little more than the sum's for a given change of check time, so
+its spread is a little larger; the margin is the same. Byte copies of an evaluated root and re-used
+record prover binaries are refused (section 8), and the owner can retire a record that won by
+noise. The owner may change the margin between seasons. With no standing record in a track (at the
+start, after a retirement in that track, or after a pin move whose port of that track's record
+failed), the first comparable, attested ACCEPT is that track's record.
 
 - **Comparable** means the stream ran to the end and the job plan matched. A run whose machine
   fingerprint is missing or not the season's, or whose chain lengths are not the season's, is the
-  organiser's ERROR, re-queued in its place; never yours. With the pin's caches in place, an evaluation takes about 100 minutes of
-  the machine (a certificate job and a benchmark job of at most 50 minutes each, 60 for the certificate when the second kernel checker is on), one at a time;
-  when the caches must first be built, as after a pin move, up to about three hours.
-- **A pin move ports the record**: it is re-evaluated at the new pin before any other entry and keeps
-  the crown with a comparable, attested ACCEPT; its new score is the one to beat.
-- `records.json` on `main` names the pin (`core`), the standing record (`record`, null when none
-  stands) and every other record, of earlier pins and retired ones (`history`), newest first.
+  organiser's ERROR, re-queued in its place; never yours. With the pin's caches in place, an
+  evaluation holds the machine for at most about 2 hours (a certificate job of at most 50 minutes,
+  60 when the second kernel checker is on, and a benchmark job of at most 70), one at a time; when
+  the caches must first be built, as after a pin move, up to about three and a half hours. No check
+  has a time cap of its own: a slow verifier is priced by the scores and bounded only by `stream_s`.
+- **A pin move ports both records**: each track's standing record is re-evaluated at the new pin
+  before any other entry and keeps that track's crown with a comparable, attested ACCEPT; its new
+  score is the one to beat. One re-evaluation serves both tracks when one entry holds both; when
+  they are two entries, each port is a candidate only in its own track.
+- **Retirement is per track**: the owner retires a record in one track; it may still hold the
+  other.
+- `records.json` on `main` names the pin (`core`) and, per track, the standing record (`record.sum`,
+  `record.product`, null when none stands) and every other record of that track, of earlier pins
+  and retired ones (`history.sum`, `history.product`), newest first. `submissions.json` names the
+  standing records by id (`record`), and each entry's `record_in` (the tracks whose record it
+  took), `retired_in`, `record_of` (the record it beat, per track) and `against` (the comparison
+  and its `gain`, per track).
 
 ## 11. Building on the record
 
 *Why:* the fastest way to a record is usually the record plus one idea.
 
-- `main` holds the record's root, `submissions/<record root>/`, as it was checked, together with
-  `records.json` (`record.pr`, `record.id`, `record.root`, `record.score`). When no record stands
-  (`record: null`), the last record's root stays there, and `history[0]` names it.
+- `main` holds the standing records' roots, `submissions/<record root>/`, as they were checked (one
+  root when one entry holds both records), together with `records.json` (`record.sum.id`,
+  `record.sum.root`, `record.sum.score`, and the same under `record.product`). When no record
+  stands in either track, the last records' roots stay there, and `history.sum[0]` and
+  `history.product[0]` name them. When the two standing records are different entries with the
+  same root name, `main` holds the newer one's tree, and the other is at its tag.
 - Every evaluated commit, record or not, stays fetchable at its tag:
   `git fetch https://github.com/scaraven/recursion.fast-submissions tag rf-source/<id>`.
 - Copy the root, **change it** (an unchanged copy is refused, section 8), give it a new root name
@@ -344,7 +387,8 @@ first comparable, attested ACCEPT is the record.
 
 ## 12. Cooperation
 
-*Why:* a record is one root, but most progress comes from ideas that did not win on their own.
+*Why:* a record is one root per track, but most progress comes from ideas that did not win on
+their own.
 
 - **Read first.** Start every attempt with the [notes journal][notes] and the NOTES of the entries
   you build on.
@@ -362,8 +406,10 @@ of the core before you design: each item cost a real entry. The first entries' t
 measured on GitHub-hosted runners with a different chain hash, so they are indicative only unless
 marked "on the machine". The five that change what to do first:
 
-- **`V̄` dominates first**: the first recursive entry had `P̄ = 4.52`, `V̄ = 24.52`. Size `V` and `|π|` first.
+- **The verifier weighs in both tracks**: under the sum, 1 ms of check time on every step costs as much as
+  5 ms of `P̄`; under the product, a verifier at four times `v_ref` multiplies the prover time by 17. Size `V`
+  and `|π|` first.
 - **The certificate build is tight**: 199 modules used 968–984 s of 1,200 s; `import Mathlib` does not fit.
 - **Step 1 is the worst request**: two chains of up to `2^20` steps within `step_s = 60 s`. Test it.
-- **The DoS cap (`10 × v_ref`, 6.6 s per input on the machine) binds a heavy `V`**, also on random `π` under a genuine trace.
+- **Your verifier's start-up is on the stream clock**: each check batch, the canaries and each re-run's check start a badge process, so 1 s of start-up costs 13–22 s of `stream_s`.
 - **Unix socket paths are under 108 bytes**: keep local test directories shallow.

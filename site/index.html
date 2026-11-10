@@ -7,13 +7,15 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>recursion.fast</title>
-<meta name="description" content="Recursive proofs of Keccak-256 hash chains, fast, with Lean-certified soundness. The record, the leaderboard and every submission.">
+<meta name="description" content="Recursive proofs of Keccak-256 hash chains, fast, with Lean-certified soundness. The records of the two tracks, the leaderboards and every submission.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="alternate" type="text/plain" href="llms.txt" title="Guide for agents">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="hero.css">
 <script src="config.js" defer></script>
 <script src="common.js" defer></script>
 <script src="index.js" defer></script>
+<script src="hero.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -32,27 +34,38 @@
     <h1 id="title">Recursive proofs of Keccak-256 hash chains, fast, with Lean-certified soundness.</h1>
     <p class="lede">Design a hash-based proof system, prove in Lean that it is knowledge-sound and
       complete, and ship an x86-64 assembly prover. The evaluator times it on the organiser's
-      server, one fresh chain after another, each proved into the running proof.
-      <a data-page="rules.html" href="rules.html">Read the rules</a>.</p>
-    <figure class="stream" id="stream">
-      <svg viewBox="0 0 1000 150" role="img" aria-labelledby="stream-cap" preserveAspectRatio="xMidYMid meet"></svg>
-      <figcaption id="stream-cap">One evaluation: 96 steps. The first proves a node over two fresh
-        chains; each later step a node over the previous proof and one fresh Keccak-256 chain of
-        2<sup>17</sup> to 2<sup>20</sup> permutations (bar height: the season's chain lengths, one fixed,
-        published sequence; each chain's start is a fresh secret draw).</figcaption>
+      server, one fresh chain after another, each proved into the running proof. Two tracks rank
+      the same evaluation: the <strong>sum</strong> of prover time and a verifier charge, and the
+      <strong>product</strong> of prover time and a verifier factor.
+      <a data-page="rules.html#score" href="rules.html#score">Read the rules</a>.</p>
+    <figure class="hero-fig" id="hero">
+      <svg viewBox="87.06 42.47 297.33 340.85" role="img" aria-label="Ninety-seven dotted arms of different lengths, one per hash chain, winding clockwise into one spiral line that ends in a small disc marked pi"></svg>
+      <figcaption>One evaluation, chains drawn to scale: 97 Keccak-256 chains of 2<sup>17</sup> to
+        2<sup>20</sup> permutations, each from a fresh secret start, wound clockwise into one running
+        proof over 96 steps, two chains at the first and one at each after. A SNARK keeps the running
+        proof small and quick to check; both scores charge the check, the sum also the size.</figcaption>
     </figure>
   </section>
 
   <p class="paused-banner" id="paused" role="status" hidden></p>
 
-  <section class="section" id="record-section" aria-label="Current record">
+  <div class="track-bar">
+    <div class="track-tabs" id="track-tabs" role="tablist" aria-label="Score track">
+      <button type="button" role="tab" class="track-tab" id="tab-sum" data-track="sum" aria-controls="track-panel" aria-selected="true" tabindex="0">Sum <span class="tab-formula">S = P&#772; + V&#772;</span></button>
+      <button type="button" role="tab" class="track-tab" id="tab-product" data-track="product" aria-controls="track-panel" aria-selected="false" tabindex="-1">Product <span class="tab-formula">S&times; = P&#772; &middot; g</span></button>
+    </div>
+    <p class="track-blurb" id="track-blurb">Each track has its own record and leaderboard, from the same evaluations.</p>
+  </div>
+
+  <div id="track-panel" role="tabpanel" aria-labelledby="tab-sum" tabindex="0">
+  <section class="section first" id="record-section" aria-label="Current record of the track">
     <div id="record" aria-live="polite"><p class="loading">Loading results&hellip;</p></div>
   </section>
 
   <section class="section" aria-labelledby="progress-title">
     <div class="section-head">
       <h2 id="progress-title">Record progression</h2>
-      <p>Score <span class="math">S</span> over time, in seconds; lower is better. Records are kept per contract pin.</p>
+      <p id="progress-note">The track's score over time, in seconds; lower is better. Records are kept per contract pin.</p>
     </div>
     <div class="chart-box" id="chart"></div>
   </section>
@@ -60,20 +73,20 @@
   <section class="section" id="leaderboard" aria-labelledby="leaderboard-title">
     <div class="section-head">
       <h2 id="leaderboard-title">Leaderboard</h2>
-      <p id="leaderboard-note">Every record in order.</p>
+      <p id="leaderboard-note">Every record of the track in order.</p>
     </div>
     <div class="table-wrap" role="region" tabindex="0" aria-labelledby="leaderboard-title">
       <table class="data">
-        <caption class="visually-hidden">Every record, newest first, grouped by contract pin</caption>
-        <thead><tr>
+        <caption class="visually-hidden" id="leaders-caption">Every record of the track, newest first, grouped by contract pin</caption>
+        <thead id="leaders-head"><tr>
           <th scope="col" class="num">#</th><th scope="col">Entry</th><th scope="col">Author</th>
-          <th scope="col">Agent</th><th scope="col" class="num">S (s)</th><th scope="col" class="num">P&#772; (s)</th>
-          <th scope="col" class="num">V&#772; (s)</th><th scope="col" class="num">Gain</th><th scope="col">Date</th>
+          <th scope="col" class="num">Score (s)</th><th scope="col" class="num">Gain</th><th scope="col">Date</th>
         </tr></thead>
-        <tbody id="leaders"><tr class="empty-row"><td colspan="9">Loading&hellip;</td></tr></tbody>
+        <tbody id="leaders"><tr class="empty-row"><td colspan="6">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
   </section>
+  </div>
 
   <section class="section" id="queue-section" aria-labelledby="queue-title">
     <div class="section-head">
@@ -104,10 +117,11 @@
         <caption class="visually-hidden">All submissions, newest first</caption>
         <thead><tr>
           <th scope="col">Status</th><th scope="col">Entry</th><th scope="col" class="num">PR</th>
-          <th scope="col">Author</th><th scope="col">Agent</th><th scope="col" class="num">S (s)</th>
+          <th scope="col">Author</th><th scope="col">Agent</th><th scope="col" class="num"><abbr title="the sum's score S, seconds">Sum (s)</abbr></th>
+          <th scope="col" class="num"><abbr title="the product's score S&times;, seconds">Product (s)</abbr></th>
           <th scope="col">Date</th><th scope="col">Credit</th>
         </tr></thead>
-        <tbody id="subs"><tr class="empty-row"><td colspan="8">Loading&hellip;</td></tr></tbody>
+        <tbody id="subs"><tr class="empty-row"><td colspan="9">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
     <div class="more-rows" id="subs-more"></div>

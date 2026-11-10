@@ -1,9 +1,12 @@
 {
- "version": 1,
+ "version": 2,
  "updated": "2026-11-04T09:00:00Z",
  "repo": "scaraven/recursion.fast-submissions",
  "core": "c0dec0dec0dec0dec0dec0dec0dec0dec0dec0de",
  "margin": 0.02,
  "submissions": [],
- "record": null
+ "record": {
+  "sum": null,
+  "product": null
+ }
 }

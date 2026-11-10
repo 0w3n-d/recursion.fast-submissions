@@ -5,15 +5,15 @@
 # cancelled"). Every job runs on the organiser's server:
 # select and publish on `rf-light`, the core's evaluation on its own labels (`rf-bench`, `rf-light`).
 #
-#   select    picks the next entry (.github/bot/rfqueue.py: a due port of the record to a new pin,
+#   select    picks the next entry (.github/bot/rfqueue.py: a due port of a track's record to a new pin,
 #             then the fair order by author), marks it running on `data`, reaps any entry a
 #             previous run left running (a reaped run joins the error streak and may pause the
 #             queue); no entry code
 #   evaluate  the core's reusable workflow at the PIN, with the entry fetched from its retention tag
 #   publish   no entry code: verifies the attestation (.github/bot/attest.py, the checks of the
 #             core's harness/verify-record.sh, which it also runs for an ACCEPT), decides the status
-#             and the record (.github/bot/decide.py), updates `data`, comments, sets the commit
-#             status, copies a new record's root to `main`, and dispatches the next run
+#             and the records of both tracks (.github/bot/decide.py), updates `data`, comments, sets
+#             the commit status, copies a new record's root to `main`, and dispatches the next run
 #
 # THE PIN: the `uses: …@<PIN>`, `core_ref: <PIN>` and the publish job's core checkout `ref: <PIN>`
 # below and the `.contract` gitlink are one value, set only with .github/bot/pin-core.sh;
@@ -23,7 +23,16 @@ on:
   workflow_dispatch:
     inputs:
       pr: { description: "force this pull request's waiting or errored entry, or re-evaluate its record of an earlier pin (a due port runs first)", required: false, default: "" }
-      retire: { description: "retire this record id first (the owner's)", required: false, default: "" }
+      retire: { description: "retire this record id first, in the track below (the owner's)", required: false, default: "" }
+      track:
+        description: "the track of the record to retire (required with retire; the dash retires nothing)"
+        required: false
+        type: choice
+        options:
+          - "-"
+          - sum
+          - product
+        default: "-"
       resume: { description: "clear a paused queue first (the owner's, once the cause is fixed)", required: false, type: boolean, default: false }
   schedule:
     - cron: "17,47 * * * *"   # fallback: a lost dispatch delays the queue by at most 30 minutes
@@ -62,21 +71,22 @@ jobs:
           RF_CHECKOUT: ${{ github.workspace }}/bot-src
           PR: ${{ inputs.pr }}
           RETIRE: ${{ inputs.retire }}
+          TRACK: ${{ inputs.track }}
           RESUME: ${{ inputs.resume }}
-        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR" --retire "$RETIRE" --resume "$RESUME"
+        run: python3 -I bot-src/.github/bot/bot.py select --pr "$PR" --retire "$RETIRE" --track "$TRACK" --resume "$RESUME"
 
   evaluate:
     needs: select
     if: needs.select.outputs.id != ''
     # the core's evaluation, pinned by commit (THE PIN)
-    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@f3538eb2a198240d864eb773331a88bf16283688
+    uses: scaraven/recursion.fast/.github/workflows/evaluate.yml@7ecd179d4eabdda97e7caba492810dfc9c2ce9db
     permissions: { contents: read, id-token: write, attestations: write }
     with:
       entry_repo: ${{ github.repository }}
       entry_sha: ${{ needs.select.outputs.sha }}
       entry_path: ${{ needs.select.outputs.path }}
       pr_ref: ${{ needs.select.outputs.ref }}
-      core_ref: f3538eb2a198240d864eb773331a88bf16283688
+      core_ref: 7ecd179d4eabdda97e7caba492810dfc9c2ce9db
       # the record build cache (false after a failure that used it)
       record_cache: ${{ needs.select.outputs.record_cache != 'false' }}
       # the standing record's attested entry_build.manifest_sha256 ("" if none): the core refuses a
@@ -107,7 +117,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: scaraven/recursion.fast
-          ref: f3538eb2a198240d864eb773331a88bf16283688   # THE PIN (a literal: wfcheck rule 4)
+          ref: 7ecd179d4eabdda97e7caba492810dfc9c2ce9db   # THE PIN (a literal: wfcheck rule 4)
           path: core
           persist-credentials: false
           sparse-checkout: harness

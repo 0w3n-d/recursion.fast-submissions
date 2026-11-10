@@ -101,21 +101,27 @@ h3 { font-size: 17px; margin: 24px 0 6px; }
 .hero { padding-top: 28px; }
 .hero h1 { font-size: clamp(30px, 4.6vw, 48px); line-height: 1.08; letter-spacing: -.03em; margin: 0 0 16px; max-width: 25ch; font-weight: 720; text-wrap: balance; }
 .hero .lede a { white-space: nowrap; }
-.stream { margin: 28px 0 0; }
-.stream svg { display: block; width: 100%; height: auto; overflow: visible; }
-.stream figcaption { margin-top: 8px; font-size: 14px; color: var(--muted); max-width: 72ch; }
-.stream .bar { stroke: var(--line-2); stroke-linecap: round; }
-.stream .proof { stroke: var(--accent); stroke-width: 2.5; fill: none; stroke-linecap: round; }
-.stream .node { fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; }
-.stream .lbl { fill: var(--muted); font: italic 16px var(--math); }
-@media (prefers-reduced-motion: no-preference) {
-  .stream .proof.draw { stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: draw 1.6s cubic-bezier(.4,.1,.2,1) .15s forwards; }
-  .stream .node.draw { opacity: 0; animation: pop .25s ease-out forwards; }
-}
-@keyframes draw { to { stroke-dashoffset: 0; } }
-@keyframes pop { to { opacity: 1; } }
 
 /* record */
+/* the track tabs: one segmented control above the record, the chart and the leaderboard */
+.track-bar { margin-top: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
+.track-tabs { display: inline-flex; padding: 3px; gap: 3px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--sunk); }
+.track-tab { appearance: none; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--ink-2); font: 600 15px var(--sans); padding: 7px 14px; cursor: pointer; display: inline-flex; align-items: baseline; gap: 8px; min-height: 40px; }
+.track-tab:hover { color: var(--ink); }
+.track-tab[aria-selected="true"] { background: var(--surface); border-color: var(--line-2); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.tab-formula { font-family: var(--math); font-style: italic; font-weight: 400; font-size: 14.5px; color: var(--muted); white-space: nowrap; }
+.track-tab[aria-selected="true"] .tab-formula { color: var(--accent-ink); }
+.track-blurb { margin: 0; flex: 1 1 32ch; color: var(--muted); font-size: 14px; max-width: 70ch; }
+.section.first { margin-top: 18px; }
+table.data .unscored { color: var(--muted); }
+table.data tr.note-row td { white-space: normal; font-size: 13px; padding: 8px 12px; }
+.rec-mark { color: var(--accent-ink); }
+.track-head { font-size: 19px; margin: 28px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.track-head .tab-formula { font-size: 16px; }
+.metrics.m4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metrics.m5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.track-head + .metrics { margin-top: 12px; }
+
 .record { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--surface); }
 .record > div { padding: 20px 24px; min-width: 0; }
 .record .facts { border-left: 1px solid var(--line); }
@@ -298,7 +304,9 @@ details.readme[open] > summary { margin-bottom: 8px; }
   .record { grid-template-columns: minmax(0, 1fr); }
   .record .facts { border-left: 0; border-top: 1px solid var(--line); }
   .record > div { padding: 18px; }
-  .metrics { grid-template-columns: minmax(0, 1fr); }
+  .metrics, .metrics.m4, .metrics.m5 { grid-template-columns: minmax(0, 1fr); }
+  .track-tab { padding: 6px 10px; gap: 6px; font-size: 14.5px; }
+  .tab-formula { font-size: 13.5px; }
   .metrics > div { border-left: 0; border-top: 1px solid var(--line); }
   .metrics > div:first-child { border-top: 0; }
   .chart-box svg { height: 240px; }
@@ -309,5 +317,6 @@ details.readme[open] > summary { margin-bottom: 8px; }
 }
 @media (forced-colors: active) {
   .badge { border: 1px solid CanvasText; }
-  .chart-box .step, .stream .proof { stroke: CanvasText; }
+  .track-tab[aria-selected="true"] { border: 2px solid Highlight; }
+  .chart-box .step { stroke: CanvasText; }
 }

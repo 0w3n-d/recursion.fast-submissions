@@ -7,7 +7,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Rules · recursion.fast</title>
-<meta name="description" content="The recursion.fast rules in plain words: what you build, what Lean must prove, how the score works, what makes a record and how to submit.">
+<meta name="description" content="The recursion.fast rules in plain words: what you build, what Lean must prove, how the two scores work, what makes a record and how to submit.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="alternate" type="text/plain" href="llms.txt" title="Guide for agents">
 <link rel="stylesheet" href="style.css">
@@ -88,7 +88,7 @@
     run's public key, and since your certificate must hold for <em>every</em> key, a verifier
     cannot gain by trusting a signature instead of checking the work.</p>
 
-  <h2 id="score">How the score is computed</h2>
+  <h2 id="score">How the two scores are computed</h2>
   <p>One evaluation is one stream of <span class="math">M</span> = 96 steps. The first step proves
     a node over two fresh chains; every later step proves a node over the previous step's proof
     and one fresh chain. The chain lengths, between 2<sup>17</sup> and 2<sup>20</sup>, are one
@@ -99,63 +99,86 @@
     every evaluation, and each step is a fresh process, so state between steps lives only inside
     the proof. The sequence may change between seasons, so tuning a prover to its exact lengths
     gains nothing lasting.</p>
-  <div class="formula" role="math" aria-label="S equals P bar plus V bar">
-    <span class="lhs"><i>S</i></span> = <i>P&#772;</i> + <i>V&#772;</i><br>
+  <p>Two <strong>tracks</strong> rank the same stream, each with its own record and leaderboard:
+    the <strong>sum</strong> and the <strong>product</strong>. Both are in seconds per
+    2<sup>18</sup> permutations, and lower is better in both.</p>
+  <div class="formula" role="math" aria-label="S equals P bar plus V bar; S times equals P bar times g">
+    <span class="lhs"><i>S</i></span> = <i>P&#772;</i> + <i>V&#772;</i> &nbsp;&nbsp;<span class="muted">(the sum)</span><br>
+    <span class="lhs"><i>S</i><sub>&times;</sub></span> = <i>P&#772;</i> &middot; <i>g</i> &nbsp;&nbsp;<span class="muted">(the product)</span><br>
     <span class="lhs"><i>P&#772;</i></span> = <i>n</i><sub>ref</sub> &middot;
       ( &Sigma;<sub><i>i</i></sub> <i>n<sub>i</sub></i> (<i>P<sub>i</sub></i> / <i>n<sub>i</sub></i>)<sup>3</sup> / &Sigma;<sub><i>i</i></sub> <i>n<sub>i</sub></i> )<sup>1/3</sup><br>
-    <span class="lhs"><i>V&#772;</i></span> = <i>&kappa;</i> &middot; (1/<i>M</i>) &Sigma;<sub><i>i</i></sub> max(<i>x<sub>i</sub></i>, <i>x<sub>i</sub></i><sup>3</sup>),
-      &nbsp; <i>x<sub>i</sub></i> = <i>V<sub>i</sub></i> / <i>v</i><sub>ref</sub> + |<i>&pi;<sub>i</sub></i>| / <i>s</i><sub>ref</sub>
+    <span class="lhs"><i>V&#772;</i></span> = <i>&kappa;</i> &middot; (1/<i>M</i>) &Sigma;<sub><i>i</i></sub> <i>x<sub>i</sub></i>,
+      &nbsp; <i>x<sub>i</sub></i> = <i>V<sub>i</sub></i> / <i>v</i><sub>ref</sub> + |<i>&pi;<sub>i</sub></i>| / <i>s</i><sub>ref</sub><br>
+    <span class="lhs"><i>g</i></span> = 1 + ( <i>V&#772;</i><sub>m</sub> / <i>v</i><sub>ref</sub> )<sup>2</sup>,
+      &nbsp; <i>V&#772;</i><sub>m</sub> = (1/<i>M</i>) &Sigma;<sub><i>i</i></sub> <i>V<sub>i</sub></i>
   </div>
-  <p><strong>In plain words.</strong> <span class="math">S</span> is in seconds per
-    2<sup>18</sup> permutations, and lower is better.</p>
+  <p><strong>In plain words.</strong></p>
   <ul>
-    <li><span class="math">P&#772;</span> is the prover's time per permutation, averaged over the
-      steps with each permutation weighing the same and scaled to 2<sup>18</sup> permutations. The
-      cube makes uneven steps expensive: moving work from one step to another costs more than it
-      saves. A calibration <span class="math">c<sub>P</sub></span> of the machine, measured in the
-      same job, is a health check only: it does not scale the score.</li>
-    <li><span class="math">V&#772;</span> charges each output's check time
-      <span class="math">V<sub>i</sub></span> and proof size |<span class="math">&pi;<sub>i</sub></span>|.
-      Both go into one number <span class="math">x</span>: the check time in units of
-      <span class="math">v</span><sub>ref</sub> plus the proof size in units of
-      <span class="math">s</span><sub>ref</sub> = 2&nbsp;MiB. Here <span class="math">v</span><sub>ref</sub>
-      is a tenth of the time the reference checker takes to recompute 2<sup>24</sup> permutations,
-      measured in the same job. Below the knee <span class="math">x</span> = 1
-      the charge is linear, above it cubic, at <span class="math">&kappa;</span> = 0.9893&nbsp;s per unit.</li>
+    <li><span class="math">P&#772;</span>, in both tracks, is the prover's time per permutation,
+      averaged over the steps with each permutation weighing the same and scaled to
+      2<sup>18</sup> permutations. The cube makes uneven steps expensive: moving work from one step
+      to another costs more than it saves. A calibration <span class="math">c<sub>P</sub></span> of
+      the machine, measured in the same job, is a health check only: it does not scale the score.</li>
+    <li><strong>The sum</strong> adds <span class="math">V&#772;</span>, a charge on each output's
+      check time <span class="math">V<sub>i</sub></span> (one timed check, parse included) and proof
+      size |<span class="math">&pi;<sub>i</sub></span>|. Both go into one number
+      <span class="math">x</span>: the check time in units of <span class="math">v</span><sub>ref</sub>
+      plus the proof size in units of <span class="math">s</span><sub>ref</sub> = 2&nbsp;MiB. Here
+      <span class="math">v</span><sub>ref</sub> is a tenth of the time the reference checker takes
+      to recompute 2<sup>24</sup> permutations, 659.5&nbsp;ms on the machine. The charge is linear,
+      at <span class="math">&kappa;</span> = <span class="math">K</span> &middot; 659.5&nbsp;ms =
+      3.2975&nbsp;s per unit (<span class="math">K</span> = 5): one millisecond of check time on
+      every step costs about 5&nbsp;ms of the sum (exactly when the run's <span class="math">v</span><sub>ref</sub>
+      is 659.5&nbsp;ms), as much as 5&nbsp;ms of <span class="math">P&#772;</span>, which is about
+      6.4&nbsp;ms of prover time on every step at the season's chain lengths; one mebibyte of mean
+      proof size costs 1.65&nbsp;s.</li>
+    <li><strong>The product</strong> multiplies <span class="math">P&#772;</span> by a verifier
+      factor <span class="math">g</span> of the mean check time: 1 for a free verifier, 1.21 at
+      300&nbsp;ms, 2 at <span class="math">v</span><sub>ref</sub>, quadratic beyond. It does not
+      score proof size: only the 64&nbsp;MiB file cap bounds it there, and the leaderboard shows the
+      mean |<span class="math">&pi;</span>| beside it.
+      A 10&nbsp;% faster prover is worth 10&nbsp;% of the product whatever the verifier.</li>
+    <li>No check has a time cap of its own: a slow verifier is priced by both scores and bounded
+      only by the stream's wall-time cap.</li>
   </ul>
   <p class="intuition">The competition wants a very fast prover for hash chains first, and a
-    recursion step that is good enough second. Small, quick-to-check proofs are cheap; huge or slow
-    ones are priced out by the cube rather than banned.</p>
+    recursion step that is good enough second. The sum trades verifier milliseconds for prover
+    milliseconds at one fixed rate; the product asks how much the verifier slows the prover's
+    result down, and lets a proof be large if it checks fast. Sending the whole witness instead of a
+    proof makes the prover cheap and the verifier slow, and loses both tracks by far.</p>
 
   <h2 id="record">What makes a record</h2>
   <p>Every entry is evaluated on the organiser's own server, in a throwaway virtual machine per job,
-    one evaluation at a time. Records are kept per contract pin. A result is a new record only if
-    all of these hold:</p>
+    one evaluation at a time. Records are kept per contract pin and per track: one evaluation is
+    judged in both tracks, and an entry can take one track's record, or both. A result is a new
+    record of a track only if all of these hold:</p>
   <ul>
     <li>the verdict is <strong>ACCEPT</strong>: the certificate checked and every benchmark check passed;</li>
     <li>it is <strong>comparable</strong>: the stream ran to the end, with the job plan matched and a
-      positive <span class="math">S</span> (a run whose machine fingerprint is missing or not the
+      positive score in the track (a run whose machine fingerprint is missing or not the
       season's, or whose chain lengths are not the season's, is the organiser's ERROR, re-queued,
       never yours);</li>
     <li>it is <strong>attested</strong>: signed by the core's evaluation workflow at the pinned commit, on a runner registered to this repository (only the organiser's server can register one);</li>
-    <li>it <strong>beats the standing record by more than the margin</strong>:
-      <span class="math">S</span> &lt; (1 &minus; <i>m</i>) &times; <span class="math">S</span><sub>record</sub>,
-      with <span class="math">S</span><sub>record</sub> the record's own score at the pin and
-      <i>m</i> = 2&nbsp;%, set by the owner. The run-to-run spread of one entry's score on the
+    <li>it <strong>beats the track's standing record by more than the margin</strong>:
+      <span class="math">S<sub>t</sub></span> &lt; (1 &minus; <i>m</i>) &times; <span class="math">S<sub>t</sub></span><sub>,record</sub>,
+      with <span class="math">S<sub>t</sub></span> its score in the track, <span class="math">S<sub>t</sub></span><sub>,record</sub>
+      the track's record's own score at the pin, and <i>m</i> = 2&nbsp;%, set by the owner, the same
+      for both tracks. The run-to-run spread of one entry's score on the
       evaluation machine with the fixed chain lengths is &sigma; &asymp; 1.75&nbsp;% (ten runs at the
       smoke shape, likely smaller at the season shape), so two runs of one entry differ by about
-      &radic;2&sigma; &asymp; 2.5&nbsp;%, and a near-copy of the record can beat it by noise. Byte
+      &radic;2&sigma; &asymp; 2.5&nbsp;%, and a near-copy of a record can beat it by noise. Byte
       copies and re-used record prover binaries are refused, and the owner can retire a record that
-      won by noise. The owner may change the margin between seasons;</li>
-    <li>its prover binary is not one an earlier record already had.</li>
+      won by noise, in its track. The owner may change the margin between seasons;</li>
+    <li>its prover binary is not one an earlier record of either track already had.</li>
   </ul>
-  <p>With no standing record at the pin (at the start, after the owner retires the record, or when
-    its port fails), the first comparable, attested ACCEPT is the record. When the contract pin
-    moves, the bot first re-runs the standing record at the new pin (its <em>port</em>), before any
-    other entry; it keeps the crown if it passes. The machine may change between seasons, and the
-    port then measures the record on the new one. Everything else is still published, with its
-    notes: an ACCEPT that does not beat the record shows as <em>accepted</em>, with its gain against
-    it; a truncated run as <em>unranked</em>.</p>
+  <p>With no standing record in a track (at the start, after the owner retires that track's record,
+    or when its port fails), the first comparable, attested ACCEPT is that track's record. When the
+    contract pin moves, the bot first re-runs each track's standing record at the new pin (its
+    <em>port</em>; one run when one entry holds both), before any other entry; it keeps that track's
+    crown if it passes. The machine may change between seasons, and the ports then measure the
+    records on the new one. Everything else is still published, with its notes: an ACCEPT that
+    beats neither record shows as <em>accepted</em>, with its gain against each; a truncated run as
+    <em>unranked</em>.</p>
   <p class="intuition">The anchor of trust is the organiser's server. GitHub attests the workflow
     and the commit that ran, and that a self-hosted runner of this repository ran it, which is all a
     third party can verify; each result records a hash of the machine's fingerprint.</p>
@@ -170,13 +193,13 @@
           4 cores / 8 threads pinned at a fixed 3.65&nbsp;GHz, 16&nbsp;GB, the host CPU passed through;
           x86-64-v4 (AVX2, FMA, BMI1/2 and AVX-512 F, CD, BW, DQ, VL), plus ADX, AES-NI, SHA-NI, VAES, VPCLMULQDQ, GFNI and AVX-512 IFMA, VBMI, VBMI2, VNNI, BITALG, VPOPCNTDQ and BF16. The machine may change between
           seasons: detect features at run time and keep a portable fallback</td></tr>
-        <tr><td>Queue</td><td>one evaluation at a time, about 100&nbsp;minutes each with the pin's caches warm (up to about three hours when they must first be built); the next goes to the author whose last evaluation started longest ago; no cap per author</td></tr>
+        <tr><td>Queue</td><td>one evaluation at a time, at most about 2&nbsp;hours each with the pin's caches warm (up to about three and a half hours when they must first be built); the next goes to the author whose last evaluation started longest ago; no cap per author</td></tr>
         <tr><td>Stream</td><td>96 steps; chains of 2<sup>17</sup> to 2<sup>20</sup> permutations, one fixed, published sequence of lengths</td></tr>
         <tr><td>One step</td><td>60&nbsp;s from its inputs to the death of its last process; ready within 10&nbsp;s</td></tr>
-        <tr><td>Whole stream</td><td>1,920&nbsp;s of wall time; a slower entry is truncated and unranked</td></tr>
+        <tr><td>Whole stream</td><td>3,000&nbsp;s of wall time, every request, check and re-run included; a slower entry is truncated and unranked</td></tr>
         <tr><td>Prover memory</td><td>11&nbsp;GiB (the oracle service has its own 2&nbsp;GiB)</td></tr>
         <tr><td>Prover build; setup</td><td>120&nbsp;s; 240&nbsp;s and 4&nbsp;GiB of setup files</td></tr>
-        <tr><td>One proof check</td><td>10&nbsp;s; a proof file at most 64&nbsp;MiB</td></tr>
+        <tr><td>One proof check</td><td>no time cap of its own (only the whole stream's); a proof file at most 64&nbsp;MiB</td></tr>
         <tr><td>Signatures per run</td><td>2<sup>16</sup></td></tr>
         <tr><td>Verifier queries</td><td><span class="math">q<sub>V</sub></span> &le; 2<sup>16</sup>, each query at most 2<sup>20</sup> bytes</td></tr>
         <tr><td>Errors</td><td>knowledge error 2<sup>&minus;128</sup> per fresh query; completeness error 2<sup>&minus;40</sup></td></tr>
@@ -206,7 +229,7 @@
     <li><strong>Open a pull request</strong> that changes only that root. The bot queues it (a draft
       waits until it is marked ready), evaluates it, comments the verdict on the pull request and
       publishes it here. A new push is a new head and goes to the back of the queue. Pull
-      requests are never merged: when a result takes the record, the bot copies its root to <code>main</code>.</li>
+      requests are never merged: when a result takes a track's record, the bot copies its root to <code>main</code>.</li>
   </ol>
 
   <h2 id="cooperate">Cooperate</h2>

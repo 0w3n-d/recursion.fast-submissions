@@ -12,10 +12,10 @@
   const STATUSES = ['record', 'retired', 'accepted', 'unranked', 'provisional', 'rejected', 'error',
     'invalid', 'queued', 'running', 'superseded', 'withdrawn'];
   const STATUS_INFO = {
-    record: ['record', 'Took the record when it was evaluated; it keeps this status in the history after it is beaten.'],
-    retired: ['retired', 'A record that stood, then was retired by the owner; it never stands again.'],
-    accepted: ['accepted', 'Certified, comparable and attested, but not a new record: it did not beat the standing record by more than the margin, or its prover binary is an earlier record\'s.'],
-    unranked: ['unranked', 'Certified, but not comparable (a truncated stream, a job plan that did not match, or no positive S).'],
+    record: ['record', 'Took the record of a track (or both) when it was evaluated; it keeps this status in the history after it is beaten.'],
+    retired: ['retired', 'A record that stood, then was retired by the owner in every track it held; it never stands again.'],
+    accepted: ['accepted', 'Certified, comparable and attested, but not a new record: it did not beat either track\'s standing record by more than the margin, or its prover binary is an earlier record\'s.'],
+    unranked: ['unranked', 'Certified, but not comparable (a truncated stream, a job plan that did not match, or no positive score).'],
     provisional: ['provisional', 'The Lean builds but the certificate does not check; benchmarked, never ranked.'],
     rejected: ['rejected', 'The certificate or the benchmark failed. The reasons say why.'],
     error: ['error', 'Waiting on the organiser: an organiser-side fault, not the entry\'s. Requeued once, then left for the owner.'],
@@ -26,6 +26,20 @@
     withdrawn: ['withdrawn', 'The pull request was closed, made a draft or put on hold before evaluation.']
   };
   const VERDICTS = ['ACCEPT', 'PROVISIONAL', 'REJECT', 'ERROR'];
+
+  // The two tracks, scored from the one evaluation, each with its own records. `field` is the score
+  // field of an older result (one without `score.tracks`, which has the sum alone); a result names
+  // each track's field in `score.tracks`. Components: [field, label, unit, note].
+  const TRACKS = Object.freeze([
+    Object.freeze({ id: 'sum', label: 'Sum', sym: 'S', field: 'S', formula: 'S = P\u0304 + V\u0304',
+      blurb: 'Prover time plus a linear charge on verifier time and proof size, in seconds per 2\u00b9\u2078 permutations.',
+      parts: [['P_bar', 'P\u0304', 's'], ['V_bar', 'V\u0304', 's'], ['x_bar', 'x\u0304', '']] }),
+    Object.freeze({ id: 'product', label: 'Product', sym: 'S\u00d7', field: null, formula: 'S\u00d7 = P\u0304 \u00b7 g',
+      blurb: 'Prover time times a verifier factor g = 1 + (mean V / v_ref)\u00b2, in seconds per 2\u00b9\u2078 permutations; proof size is not scored (the 64 MiB file cap bounds it).',
+      parts: [['P_bar', 'P\u0304', 's'], ['V_mean_s', 'mean V', 's'], ['g', 'g', ''], ['pi_mean_bytes', 'mean |\u03c0|', 'bytes', 'not scored']] })
+  ]);
+  const TRACK_IDS = TRACKS.map(t => t.id);
+  const trackOf = id => TRACKS.find(t => t.id === id) || TRACKS[0];
 
   // An id is pr<N>-<12 hex of the head sha>, with -<8 hex of the pin> for a record ported to a new pin.
   const ID = 'pr[1-9]\\d{0,8}-[0-9a-f]{12}(?:-[0-9a-f]{8})?';
@@ -39,7 +53,8 @@
     tag: new RegExp('^rf-source/' + ID + '$'),
     run: new RegExp('^https://github\\.com/' + reEsc(CFG.REPO) + '/actions/runs/\\d{1,20}(?:/job/\\d{1,20}|/attempts/\\d{1,4})?$'),
     key: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/,
-    result: new RegExp('^results/' + ID + '\\.json$')
+    result: new RegExp('^results/' + ID + '\\.json$'),
+    track: /^[a-z][a-z0-9_]{0,15}$/
   };
   const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf']);
 
@@ -59,8 +74,20 @@
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const out = Object.create(null);
     let n = 0;
+    // which field is each track's score (`tracks`, written by the core), and those fields, first:
+    // the cap on the number of keys below can never drop a track
+    const tr = raw.tracks;
+    if (tr && typeof tr === 'object' && !Array.isArray(tr)) {
+      const t = Object.create(null);
+      for (const [k, v] of Object.entries(tr).slice(0, 8)) {
+        if (!RE.track.test(k) || typeof v !== 'string' || !RE.key.test(v) || BAD_KEYS.has(v) || v === 'tracks') continue;
+        t[k] = v;
+        if (typeof raw[v] === 'number' && Number.isFinite(raw[v])) out[v] = raw[v];
+      }
+      out.tracks = t;
+    }
     for (const [k, v] of Object.entries(raw)) {
-      if (n >= 60 || !RE.key.test(k) || BAD_KEYS.has(k)) continue;
+      if (n >= 60 || !RE.key.test(k) || BAD_KEYS.has(k) || k === 'tracks' || k in out) continue;
       if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
       else if (typeof v === 'boolean') out[k] = v;
       else if (typeof v === 'string' && text(v, 80)) out[k] = text(v, 80);
@@ -69,6 +96,16 @@
     }
     for (const k of ['S', 'P_bar', 'V_bar']) if (typeof out[k] !== 'number' || out[k] < 0) out[k] = null;
     return (out.S === null && out.P_bar === null && out.V_bar === null && n === 0) ? null : out;
+  }
+
+  // An entry's score in a track (a positive number), or null: the field `score.tracks` names, or for a
+  // score without `tracks` the sum's `S` alone.
+  function scoreIn(e, track) {
+    const sc = e && e.score;
+    if (!sc) return null;
+    const f = sc.tracks ? sc.tracks[track] : trackOf(track).id === track ? trackOf(track).field : null;
+    const v = f && typeof sc[f] === 'number' ? sc[f] : null;
+    return v !== null && v > 0 ? v : null;
   }
 
   // The comparison with the standing record as the bot records it (`against`): the record's id, this
@@ -81,7 +118,19 @@
     return { record: a.record, S, S_record, gain, beats: a.beats === true };
   }
 
-  function cleanEntry(r) {
+  // Per-track maps of the bot (`record_of`, `against`, `retired_in`): an object keyed by track; a file
+  // of version 1 (one record, the sum's) holds the sum's value alone, not keyed.
+  function perTrack(v, legacy, clean) {
+    const out = Object.create(null);
+    if (legacy) { const c = clean(v); if (c !== null) out.sum = c; return out; }
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const [k, x] of Object.entries(v).slice(0, 8)) if (RE.track.test(k)) { const c = clean(x); if (c !== null) out[k] = c; }
+    }
+    return out;
+  }
+  const idOrNull = x => typeof x === 'string' && RE.id.test(x) ? x : null;
+
+  function cleanEntry(r, legacy) {
     if (!r || typeof r !== 'object') return null;
     if (typeof r.id !== 'string' || !RE.id.test(r.id)) return null;
     if (!STATUSES.includes(r.status)) return null;
@@ -108,8 +157,13 @@
       tag: typeof r.tag === 'string' && RE.tag.test(r.tag) ? r.tag : null,
       notes: typeof r.notes === 'string' && RE.md.test(r.notes) && r.notes.startsWith('notes/') ? r.notes : null,
       readme: typeof r.readme === 'string' && RE.md.test(r.readme) && r.readme.startsWith('readme/') ? r.readme : null,
-      record_of: typeof r.record_of === 'string' && RE.id.test(r.record_of) ? r.record_of : null,
-      against: cleanAgainst(r.against),
+      // the tracks whose record it took, the records it beat and the comparisons, per track
+      record_in: legacy ? (['record', 'retired'].includes(r.status) ? ['sum'] : [])
+        : Array.isArray(r.record_in) ? [...new Set(r.record_in.filter(t => typeof t === 'string' && RE.track.test(t)))].slice(0, 8) : [],
+      retired_in: legacy ? (r.status === 'retired' ? perTrack(r.retired || r.finished, true, date) : Object.create(null)) : perTrack(r.retired_in, false, date),
+      record_of: perTrack(r.record_of, legacy, idOrNull),
+      against: perTrack(r.against, legacy, cleanAgainst),
+      port_tracks: Array.isArray(r.port_tracks) ? r.port_tracks.filter(t => typeof t === 'string' && RE.track.test(t)).slice(0, 8) : null,
       verified: r.verified === true,
       harness_commit: typeof r.harness_commit === 'string' && RE.sha.test(r.harness_commit) ? r.harness_commit : null,
       prover_sha256: typeof r.prover_sha256 === 'string' && /^[0-9a-f]{64}$/.test(r.prover_sha256) ? r.prover_sha256 : null,
@@ -139,21 +193,29 @@
       let res;
       try { res = await fetchWithTimeout(BASE + 'submissions.json', 15000); } catch (err) {
         // the branch `data` does not exist yet: nothing has been published, which is not an error
-        if (err.status === 404) return { updated: null, core: await mainPin(), margin: 0.02, subs: [], skipped: 0, notShown: 0, record: null, unpublished: true };
+        if (err.status === 404) return { updated: null, core: await mainPin(), margin: 0.02, subs: [], skipped: 0, notShown: 0, record: noRecords(), unpublished: true };
         throw err;
       }
       const raw = await res.json().catch(() => { throw new Error('submissions.json is not valid JSON'); });
-      if (!raw || raw.version !== 1 || !Array.isArray(raw.submissions)) throw new Error('submissions.json has an unknown format');
+      // version 2 has a record per track; version 1 (one record, no tracks) is read as the sum's
+      if (!raw || (raw.version !== 1 && raw.version !== 2) || !Array.isArray(raw.submissions)) throw new Error('submissions.json has an unknown format');
+      const legacy = raw.version === 1;
       const seen = new Set();
       const subs = [];
       const CAP = 20000;
       for (const r of raw.submissions.slice(0, CAP)) {
-        const e = cleanEntry(r);
+        const e = cleanEntry(r, legacy);
         if (e && !seen.has(e.id)) { seen.add(e.id); subs.push(e); }
       }
       const margin = num(raw.margin);
-      // the standing record is the bot's statement (`record`), never re-derived here
-      const rec = typeof raw.record === 'string' && RE.id.test(raw.record) ? subs.find(e => e.id === raw.record) : null;
+      // the standing record of each track is the bot's statement (`record`), never re-derived here
+      const named = legacy ? { sum: raw.record } : (raw.record && typeof raw.record === 'object' ? raw.record : {});
+      const record = noRecords();
+      for (const t of TRACK_IDS) {
+        const id = Object.prototype.hasOwnProperty.call(named, t) ? idOrNull(named[t]) : null;
+        const rec = id ? subs.find(e => e.id === id) : null;
+        record[t] = rec && rec.status === 'record' && rec.record_in.includes(t) && !rec.retired_in[t] && scoreIn(rec, t) !== null && evaluatedAt(rec) ? rec : null;
+      }
       return {
         updated: date(raw.updated),
         core: typeof raw.core === 'string' && RE.sha.test(raw.core) ? raw.core : null,
@@ -161,7 +223,7 @@
         subs,
         skipped: Math.min(raw.submissions.length, CAP) - subs.length,
         notShown: Math.max(0, raw.submissions.length - CAP),
-        record: rec && rec.status === 'record' && rec.score && rec.score.S !== null && evaluatedAt(rec) ? rec : null,
+        record,
         // the bot's pause (organiser errors since the last completed benchmark): only its time is shown, never its reason
         paused: raw.paused && typeof raw.paused === 'object' ? { since: date(raw.paused.since) } : null
       };
@@ -234,6 +296,15 @@
   };
 
   // ---- formatting --------------------------------------------------------------------------
+  function fmtBytes(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return '\u2013';
+    return v >= 1048576 ? (v / 1048576).toFixed(2) + '\u00a0MiB' : v >= 1024 ? Math.round(v / 1024) + '\u00a0KiB' : Math.round(v) + '\u00a0B';
+  }
+  // A component of a score in its unit: seconds, bytes, or a plain number.
+  function fmtPart(v, unit) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '\u2013';
+    return unit === 'bytes' ? fmtBytes(v) : unit === 's' ? fmtS(v) : (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(3));
+  }
   function fmtS(v) {
     if (v === null || v === undefined) return '–';
     const a = Math.abs(v);
@@ -259,8 +330,10 @@
     return el('span', { class: 'badge st-' + status, title: desc }, label);
   }
   const shortSha = s => s ? s.slice(0, 7) : '';
-  // The gain 1 - S/S_record against the standing record, in percent (positive = faster), or null.
-  const gainOf = e => e.against && e.against.gain !== null ? e.against.gain * 100 : null;
+  const noRecords = () => Object.fromEntries(TRACK_IDS.map(t => [t, null]));
+  // The gain 1 - S/S_record against the track's standing record, in percent (positive = faster), or null.
+  const gainOf = (e, track) => e.against[track] && e.against[track].gain !== null ? e.against[track].gain * 100 : null;
+  const retiredIn = (e, track) => e.status === 'retired' || !!e.retired_in[track];
   const marginText = data => Math.round(data.margin * 1000) / 10 + '\u00a0%';
   // A verdict whose attestation did not verify is shown as such everywhere.
   const unverified = e => e.verdict && !e.verified ? el('span', { class: 'badge st-unverified', title: 'The attestation of this result did not verify; it can never be a record.' }, 'unverified') : null;
@@ -313,11 +386,29 @@
     return { byId, byPr, citedBy, citeCount, headOf };
   }
 
-  // Every record ever taken (`record` or `retired`), oldest first; entries without a score or a
-  // date are left out rather than allowed to break a page.
-  function records(subs) {
-    return subs.filter(e => (e.status === 'record' || e.status === 'retired') && e.score && e.score.S !== null && evaluatedAt(e))
+  // Every record ever taken in a track (`record` or `retired`, the track in `record_in`), oldest
+  // first; entries without a score in the track or a date are left out rather than allowed to break a page.
+  function records(subs, track) {
+    return subs.filter(e => (e.status === 'record' || e.status === 'retired') && e.record_in.includes(track) && scoreIn(e, track) !== null && evaluatedAt(e))
       .sort((a, b) => evaluatedAt(a) - evaluatedAt(b));
+  }
+
+  // The selected track: `?track=`, else the viewer's last choice (localStorage, which may be
+  // unavailable), else the sum.
+  const TRACK_KEY = 'rf-track';
+  function chosenTrack() {
+    const q = params.get('track');
+    if (q && TRACK_IDS.includes(q)) return q;
+    try { const v = window.localStorage.getItem(TRACK_KEY); if (v && TRACK_IDS.includes(v)) return v; } catch (e) { /* storage blocked */ }
+    return TRACK_IDS[0];
+  }
+  function rememberTrack(id) {
+    try { window.localStorage.setItem(TRACK_KEY, id); } catch (e) { /* storage blocked */ }
+    try {
+      const p = new URLSearchParams(location.search);
+      p.set('track', id);
+      history.replaceState(null, '', location.pathname + '?' + p.toString() + location.hash);
+    } catch (e) { /* history unavailable */ }
   }
 
   // A root name that two authors use is shown with its pull request, so it cannot pass as the other.
@@ -378,8 +469,8 @@
   }
 
   window.RF = {
-    CFG, BASE, dataKey, STATUSES, STATUS_INFO, RE,
-    loadData, loadText, el, svg, ext, page, link, fmtS, fmtDate, fmtDateTime, timeEl, ago, badge,
+    CFG, BASE, dataKey, STATUSES, STATUS_INFO, RE, TRACKS, TRACK_IDS, trackOf, scoreIn, retiredIn, chosenTrack, rememberTrack,
+    loadData, loadText, el, svg, ext, page, link, fmtS, fmtPart, fmtBytes, fmtDate, fmtDateTime, timeEl, ago, badge,
     shortSha, gainOf, marginText, pct, unverified, evaluatedAt, relations, records, nameOf, section, chrome, footer
   };
   document.addEventListener('DOMContentLoaded', chrome);
