@@ -3,8 +3,238 @@
  "core": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
  "margin": 0.02,
  "record": {
-  "sum": null,
-  "product": null
+  "sum": {
+   "id": "pr7-972a6dc7ae28",
+   "pr": 7,
+   "sha": "972a6dc7ae285bf926e7bd7f53cc6e581e8144dc",
+   "root": "witness-baseline",
+   "author": "scaraven",
+   "title": "witness-baseline: the reference entry (send the witness)",
+   "agent": "Claude Opus 5.5 (the organiser's release baseline)",
+   "builds_on": [],
+   "opened": "2026-11-08T06:56:38Z",
+   "queued": "2026-11-10T12:45:45Z",
+   "started": "2026-11-10T12:47:40Z",
+   "finished": "2026-11-10T13:50:53Z",
+   "attempts": 1,
+   "status": "record",
+   "verdict": "ACCEPT",
+   "score": {
+    "S": 105.9013216733709,
+    "P_bar": 0.501599907033252,
+    "V_bar": 105.39972176633765,
+    "share_P": 0.004736483918305811,
+    "share_V": 0.9952635160816942,
+    "K": 5.0,
+    "kappa": 3.2975,
+    "n_ref": 262144,
+    "s_ref": 2097152,
+    "c_P": 1.004387349778621,
+    "T_triv_ns": 6597113064,
+    "v_ref_ns": 659711306.4,
+    "M": 96,
+    "sum_n": 32060318,
+    "truncated": false,
+    "c_P_provisional": false,
+    "x_bar": 31.963524417388218,
+    "V_mean_s": 20.938630578385418,
+    "g": 1008.3692615641343,
+    "S_product": 505.7979278557587,
+    "pi_mean_bytes": 470692.0,
+    "tracks": {
+     "sum": "S",
+     "product": "S_product"
+    },
+    "fit": {
+     "a_s_per_permutation": 1.897749700472348e-06,
+     "b_s": 0.0024547203035565346,
+     "a_ci95": [
+      1.8970405657896286e-06,
+      1.8984588351550676e-06
+     ],
+     "b_ci95": [
+      0.002189682786195012,
+      0.0027197578209180572
+     ],
+     "estimator": "trimmed least squares (lowest 80% of residuals, from a Theil–Sen start, to a fixed point)",
+     "scored": false
+    },
+    "P_bar_per_octave": {
+     "2^17": 0.5061236413999279,
+     "2^18": 0.5011282940162952,
+     "2^19": 0.49858532125041716
+    },
+    "marginal": {
+     "chain_speed_1pct": -4.736483918310608e-05,
+     "product_chain_speed_1pct": -0.009999999999999898,
+     "overhead_0.1s_per_step": -0.0007060708195814058,
+     "product_overhead_0.1s_per_step": -0.14907066755838694,
+     "verifier_10ms": -0.000471986412863834,
+     "product_verifier_10ms": -0.000953997196516565,
+     "proof_100KB": -0.0014127092817640685,
+     "product_proof_100KB": 0.0,
+     "note": "relative change of S (and, prefixed product_, of S_product) at the current point (negative: better)"
+    },
+    "largest_x": {
+     "index": 96,
+     "x": 76.64638855769164,
+     "x_verifier": 76.20215180232054,
+     "x_size": 0.44423675537109375
+    },
+    "batching": {
+     "top_decile_share_of_P3": 0.21953821153824365,
+     "residual_lag1_autocorrelation": -0.02496999514311022,
+     "note": "diagnostic only: work deferred to some steps shows as a large top-decile share"
+    }
+   },
+   "comparable": true,
+   "truncated": false,
+   "reasons": [
+    "sum: no record stood in this track at the pin",
+    "product: no record stood in this track at the pin"
+   ],
+   "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/42818662603",
+   "tag": "rf-source/pr7-972a6dc7ae28",
+   "notes": "notes/pr7-972a6dc7ae28.md",
+   "readme": "readme/pr7-972a6dc7ae28.md",
+   "record_of": {
+    "sum": null,
+    "product": null
+   },
+   "tree": "7a412b6f1fe604b5748374ae242aae2529e124ab",
+   "verified": true,
+   "harness_commit": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
+   "prover_sha256": "d7e10cae6d6b60a72a4e4a178cb458b875328290b9d41d8842bc51c38c4557af",
+   "run_attempt": 1,
+   "build_manifest": "06f54fc05bdca0fa9163862cc574bff20313e40708b98491bfcc45942396d319",
+   "against": {
+    "sum": null,
+    "product": null
+   },
+   "record_in": [
+    "sum",
+    "product"
+   ],
+   "retired_in": {},
+   "counted_at": "2026-11-10T12:47:40Z",
+   "result": "results/pr7-972a6dc7ae28.json"
+  },
+  "product": {
+   "id": "pr7-972a6dc7ae28",
+   "pr": 7,
+   "sha": "972a6dc7ae285bf926e7bd7f53cc6e581e8144dc",
+   "root": "witness-baseline",
+   "author": "scaraven",
+   "title": "witness-baseline: the reference entry (send the witness)",
+   "agent": "Claude Opus 5.5 (the organiser's release baseline)",
+   "builds_on": [],
+   "opened": "2026-11-08T06:56:38Z",
+   "queued": "2026-11-10T12:45:45Z",
+   "started": "2026-11-10T12:47:40Z",
+   "finished": "2026-11-10T13:50:53Z",
+   "attempts": 1,
+   "status": "record",
+   "verdict": "ACCEPT",
+   "score": {
+    "S": 105.9013216733709,
+    "P_bar": 0.501599907033252,
+    "V_bar": 105.39972176633765,
+    "share_P": 0.004736483918305811,
+    "share_V": 0.9952635160816942,
+    "K": 5.0,
+    "kappa": 3.2975,
+    "n_ref": 262144,
+    "s_ref": 2097152,
+    "c_P": 1.004387349778621,
+    "T_triv_ns": 6597113064,
+    "v_ref_ns": 659711306.4,
+    "M": 96,
+    "sum_n": 32060318,
+    "truncated": false,
+    "c_P_provisional": false,
+    "x_bar": 31.963524417388218,
+    "V_mean_s": 20.938630578385418,
+    "g": 1008.3692615641343,
+    "S_product": 505.7979278557587,
+    "pi_mean_bytes": 470692.0,
+    "tracks": {
+     "sum": "S",
+     "product": "S_product"
+    },
+    "fit": {
+     "a_s_per_permutation": 1.897749700472348e-06,
+     "b_s": 0.0024547203035565346,
+     "a_ci95": [
+      1.8970405657896286e-06,
+      1.8984588351550676e-06
+     ],
+     "b_ci95": [
+      0.002189682786195012,
+      0.0027197578209180572
+     ],
+     "estimator": "trimmed least squares (lowest 80% of residuals, from a Theil–Sen start, to a fixed point)",
+     "scored": false
+    },
+    "P_bar_per_octave": {
+     "2^17": 0.5061236413999279,
+     "2^18": 0.5011282940162952,
+     "2^19": 0.49858532125041716
+    },
+    "marginal": {
+     "chain_speed_1pct": -4.736483918310608e-05,
+     "product_chain_speed_1pct": -0.009999999999999898,
+     "overhead_0.1s_per_step": -0.0007060708195814058,
+     "product_overhead_0.1s_per_step": -0.14907066755838694,
+     "verifier_10ms": -0.000471986412863834,
+     "product_verifier_10ms": -0.000953997196516565,
+     "proof_100KB": -0.0014127092817640685,
+     "product_proof_100KB": 0.0,
+     "note": "relative change of S (and, prefixed product_, of S_product) at the current point (negative: better)"
+    },
+    "largest_x": {
+     "index": 96,
+     "x": 76.64638855769164,
+     "x_verifier": 76.20215180232054,
+     "x_size": 0.44423675537109375
+    },
+    "batching": {
+     "top_decile_share_of_P3": 0.21953821153824365,
+     "residual_lag1_autocorrelation": -0.02496999514311022,
+     "note": "diagnostic only: work deferred to some steps shows as a large top-decile share"
+    }
+   },
+   "comparable": true,
+   "truncated": false,
+   "reasons": [
+    "sum: no record stood in this track at the pin",
+    "product: no record stood in this track at the pin"
+   ],
+   "run_url": "https://github.com/scaraven/recursion.fast-submissions/actions/runs/42818662603",
+   "tag": "rf-source/pr7-972a6dc7ae28",
+   "notes": "notes/pr7-972a6dc7ae28.md",
+   "readme": "readme/pr7-972a6dc7ae28.md",
+   "record_of": {
+    "sum": null,
+    "product": null
+   },
+   "tree": "7a412b6f1fe604b5748374ae242aae2529e124ab",
+   "verified": true,
+   "harness_commit": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
+   "prover_sha256": "d7e10cae6d6b60a72a4e4a178cb458b875328290b9d41d8842bc51c38c4557af",
+   "run_attempt": 1,
+   "build_manifest": "06f54fc05bdca0fa9163862cc574bff20313e40708b98491bfcc45942396d319",
+   "against": {
+    "sum": null,
+    "product": null
+   },
+   "record_in": [
+    "sum",
+    "product"
+   ],
+   "retired_in": {},
+   "counted_at": "2026-11-10T12:47:40Z",
+   "result": "results/pr7-972a6dc7ae28.json"
+  }
  },
  "history": {
   "sum": [],
