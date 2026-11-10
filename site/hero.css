@@ -2,7 +2,6 @@
 .hero-fig { margin: 32px 0 0; }
 /* overflow: visible lets the arms swing in from outside the box during the load animation */
 .hero-fig svg { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto; overflow: visible; }
-.hero-fig figcaption { max-width: 360px; margin: 10px auto 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
 /* the chains' fade: --ink at .85 to .52 keeps every dot at 3:1 or more against --page, light and dark */
 .hero-fig .f0 { stop-color: var(--ink); stop-opacity: .85; }
 .hero-fig .f1 { stop-color: var(--ink); stop-opacity: .52; }
