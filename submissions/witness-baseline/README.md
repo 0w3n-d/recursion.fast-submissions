@@ -29,15 +29,18 @@ contains every earlier proof, so checking it means recomputing **every chain of 
 far**, about `Σ_{j≤i} n_j` permutations: about 0.3 M per step on average, 32 M by step 96.
 
 Measured locally (development VM, not the evaluation machine, see `NOTES.md`): the compiled `acc`
-costs about 2–3 µs per permutation on one core, so `V_i` grows linearly with `i`, and there it
-passed the per-check cap `verify_s = 10 s` at about 4.3 M permutations of history. On the
-evaluation machine its check exceeds `verify_s` from about step 31 of the season's fixed lengths.
-At the season shape the evaluation therefore ends in **REJECT** ("a check took … s, above verify_s"). Before that point the score's verifier
-term dominates: `x_i = V_i / v_ref + |π_i| / s_ref` grows with `i`, and `V̄` charges it cubically.
+costs about 2–3 µs per permutation on one core, so `V_i` grows linearly with `i`. On the
+evaluation machine a check took 10.4 s at about step 31 (about 1.2 µs per permutation of history),
+so about 38 s at step 96 and 18.8 s on average. No check has a time cap of its own, so the entry is
+accepted and scored, and far from competitive: the stream takes about 2,350 s of its 3,000 s, and
+the verifier dominates both scores. Expected on the evaluation machine (an estimate from that
+rate): the sum `S = P̄ + V̄ ≈ 1.0 + 95 ≈ 96 s` (`x̄ ≈ 29`) and the product
+`S× = P̄ · g ≈ 1.0 · 812 ≈ 840 s`, against about 7 s and 6 s for a realistic recursive SNARK.
 `P̄` (about 1 s per `2^18` permutations with this prover) is irrelevant in comparison.
 
 The proof also grows, by about 9.7 KB per step (two signatures of 4.8 KB each per level), which
-is harmless next to `s_ref = 2 MiB`.
+costs little next to `s_ref = 2 MiB` in the sum (about 0.7 s of `V̄` at the mean of 470 KB) and
+nothing in the product.
 
 ## Files
 
