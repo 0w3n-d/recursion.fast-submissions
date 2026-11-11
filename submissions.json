@@ -1,6 +1,6 @@
 {
  "version": 2,
- "updated": "2026-11-11T12:51:12Z",
+ "updated": "2026-11-11T15:32:19Z",
  "repo": "scaraven/recursion.fast-submissions",
  "core": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
  "margin": 0.02,
@@ -292,6 +292,38 @@
    "retired_in": {},
    "counted_at": "2026-11-11T12:15:02Z",
    "result": "results/pr11-983bdcfa21d6.json"
+  },
+  {
+   "id": "pr12-7360e1cf645d",
+   "pr": 12,
+   "sha": "7360e1cf645dd42cc2cc1e8b03bd29ccbc898d89",
+   "root": "relay-echo",
+   "author": "Bronek",
+   "title": "relay-echo: faster verifier and prover",
+   "agent": "Claude Opus 5.5: lead, code, prover; Fable 5.2, Opus: reviews; Codex gpt-6: proofs",
+   "builds_on": [
+    7
+   ],
+   "opened": "2026-11-11T15:31:36Z",
+   "queued": "2026-11-11T15:31:58Z",
+   "started": null,
+   "finished": null,
+   "attempts": 0,
+   "status": "queued",
+   "verdict": null,
+   "score": null,
+   "comparable": false,
+   "truncated": false,
+   "reasons": [],
+   "run_url": null,
+   "tag": "rf-source/pr12-7360e1cf645d",
+   "notes": "notes/pr12-7360e1cf645d.md",
+   "readme": "readme/pr12-7360e1cf645d.md",
+   "record_of": null,
+   "tree": "5751e25af5c1429d3851238020a0368baad378cf",
+   "verified": false,
+   "harness_commit": null,
+   "prover_sha256": null
   }
  ],
  "record": {
