@@ -85,9 +85,15 @@ Local, this machine (Ryzen 9 7950X3D, Zen 4 as the evaluation machine; a desktop
   at 2/cycle) puts the issue-bound floor for this ~2800-op permutation near 700 cycles;
   the record's hand-generated allocator reaches ≈ 730; mine is codegen-limited at ≈ 1260
   (~345 ns at 3.65 GHz), so `P̄ ≈ 0.09`.
-- With the library's `V` (~1.2 µs per permutation of history on the evaluation
-  machine), the expected scores at the season's shape are `S ≈ 90+`, `S× ≈ 70+` — far
-  from both records; the run is `accepted` at best.
+- **The full local season shape (`harness/local-season.py`, real service, real badge)
+  is ACCEPT, all 96 steps, not truncated**: **`P̄ = 0.089`** through the harness (SIGN,
+  I/O and kill included — ≈ 345 ns per permutation effective), `V̄ = 121.1` with the
+  library's `V` (its checks average 26.7 s each on this machine: ≈ 1.7 µs per
+  permutation of history, slower than the evaluation machine's ≈ 1.2 µs), so
+  `S = 121.2`, `S× = 118.3` locally; at the evaluation machine's check rate the same
+  entry projects to `S ≈ 95`, `S× ≈ 77`. The smoke (`harness/smoke.toml`) is ACCEPT
+  too. Far from both records: the run is `accepted` at best, and the numbers measure
+  exactly why — the verifier term dominates everything about witness sending.
 - A fast `V` is what the product track really prices: with relay-echo-class compiled
   checks (~267 ns/perm → `g ≈ 41`) even this prover would score `S× ≈ 3.7`; with the
   library's `V` (`g ≈ 800+`) nothing about the prover matters. The verifier work
