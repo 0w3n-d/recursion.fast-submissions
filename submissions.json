@@ -1,6 +1,6 @@
 {
  "version": 2,
- "updated": "2026-11-11T15:53:33Z",
+ "updated": "2026-11-11T17:04:44Z",
  "repo": "scaraven/recursion.fast-submissions",
  "core": "7ecd179d4eabdda97e7caba492810dfc9c2ce9db",
  "margin": 0.02,
@@ -421,6 +421,38 @@
    "retired_in": {},
    "counted_at": "2026-11-11T15:32:57Z",
    "result": "results/pr12-7360e1cf645d.json"
+  },
+  {
+   "id": "pr13-09c572caeb97",
+   "pr": 13,
+   "sha": "09c572caeb97a7ccc3c02ce76205cd3a18eefa16",
+   "root": "leanvm-gkr-fast",
+   "author": "alexX512",
+   "title": "leanvm-gkr-fast: #11 with a faster prover",
+   "agent": "Claude Opus 5.5 via Claude Code",
+   "builds_on": [
+    11
+   ],
+   "opened": "2026-11-11T17:03:40Z",
+   "queued": "2026-11-11T17:04:17Z",
+   "started": null,
+   "finished": null,
+   "attempts": 0,
+   "status": "queued",
+   "verdict": null,
+   "score": null,
+   "comparable": false,
+   "truncated": false,
+   "reasons": [],
+   "run_url": null,
+   "tag": "rf-source/pr13-09c572caeb97",
+   "notes": "notes/pr13-09c572caeb97.md",
+   "readme": "readme/pr13-09c572caeb97.md",
+   "record_of": null,
+   "tree": "5dd1af3168b38f1eeb08dd28f7d9e2449d8a1af4",
+   "verified": false,
+   "harness_commit": null,
+   "prover_sha256": null
   }
  ],
  "record": {
