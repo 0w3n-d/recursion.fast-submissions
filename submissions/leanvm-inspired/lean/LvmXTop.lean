@@ -46,7 +46,7 @@ def capWX : ℕ := 5 + capRecOff pX / 8
 /-- The tape word of `f₁`. -/
 def f1WX : ℕ := 5 + f1Off pX / 8
 
-theorem layoutX : pLX = 147529 ∧ capWX = 1732 ∧ f1WX = 26271 ∧ f1Off pX % 8 = 0 ∧
+theorem layoutX : pLX = 147691 ∧ capWX = 1732 ∧ f1WX = 26433 ∧ f1Off pX % 8 = 0 ∧
     alphaPos pX 0 = 1035 := by
   refine ⟨?_, ?_, ?_, ?_, layout_P20.2.2.1⟩
   · rw [pLX, piSize_eq]; rfl
@@ -226,9 +226,9 @@ private theorem segTSs : ∀ (u : ℕ) (bs : List Blk), segSize (blkTSegs u bs) 
   | u, b :: bs => by
     rw [blkTSegs, segSize, segTSs _ bs, segTS_u, List.map_cons, List.sum_cons, ← segTS b]; omega
 
-private theorem segAll : (segCost pSegL = 8444342 ∧ segCost trSegL = 8877123 ∧
+private theorem segAll : (segCost pSegL = 8450174 ∧ segCost trSegL = 8882955 ∧
       segCost (.cp 0 597) = 21506) ∧
-    (segOuts pSegL = 147524 ∧ segOuts trSegL = 250045 ∧ segOuts (.cp 0 597) = 597) ∧
+    (segOuts pSegL = 147686 ∧ segOuts trSegL = 250207 ∧ segOuts (.cp 0 597) = 597) ∧
     (segSize pSegL = 64160 ∧ segSize trSegL = 67390 ∧ segSize (.cp 0 597) = 50) := by
   obtain ⟨h1, h2, h3, h4, h5, h6⟩ := layout_all_P20.2.2.2.2.2.2.2
   refine ⟨⟨?_, ?_, rfl⟩, ⟨?_, ?_, rfl⟩, ⟨?_, ?_, rfl⟩⟩
@@ -239,7 +239,7 @@ private theorem segAll : (segCost pSegL = 8444342 ∧ segCost trSegL = 8877123 �
   · rw [pSegL, segSize, segSize, segPSs, h5]
   · rw [trSegL, segSize, segSize, segSize, segSize, segSize, segSize, segSize, segTSs, h6]; rfl
 
-theorem segCosts : segCost pSegL = 8444342 ∧ segCost trSegL = 8877123 ∧ segCost (.cp 0 597) = 21506 :=
+theorem segCosts : segCost pSegL = 8450174 ∧ segCost trSegL = 8882955 ∧ segCost (.cp 0 597) = 21506 :=
   segAll.1
 
 /-- **The node output's cost.** -/
@@ -280,10 +280,10 @@ theorem cost_decX (t : ℕ) : cost decX t ≤ 2 ^ 39 + t / 5 * 11895 + t * 168 :
 theorem outs_tcpIR (a n t : ℕ) (hn : n < 2 ^ 64) : outs (tcpIR a n) t = n := by
   simp [tcpIR, tcpBody, outs, toNat_toWord hn]
 
-theorem segOutsV : segOuts pSegL = 147524 ∧ segOuts trSegL = 250045 ∧ segOuts (.cp 0 597) = 597 :=
+theorem segOutsV : segOuts pSegL = 147686 ∧ segOuts trSegL = 250207 ∧ segOuts (.cp 0 597) = 597 :=
   segAll.2.1
 
-theorem outs_outIR (m t : ℕ) : outs (outIR m) t ≤ 398781 := by
+theorem outs_outIR (m t : ℕ) : outs (outIR m) t ≤ 399105 := by
   have h1 := outs_segIR apC pSegL 0 t
   have h2 := outs_segIR apC trSegL 0 t
   have h3 := outs_segIR apC (.cp 0 597) 0 t

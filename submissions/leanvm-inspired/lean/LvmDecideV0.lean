@@ -32,6 +32,12 @@ with `f₂ = Eq'(ρ, ρ') Σ_q W̃(μ, q) yS_q`, the `Y` slices at `(ρ', μ, 1,
 Claims: the two ring switches at those points, and the constant lanes `in_l = c_l`
 (`l = 8 … 24`; `c_16 = 0x80 << 56`) at `(ρ', slot l)`.
 
+**lvm2 (BLUEPRINT2 §2.1): the link is gated by the chain length `n`** (`m = n − 1`, A9 deleted): it
+constrains the rows `k ≤ m` only. The kernels become `S_n(ρ, k) = eq(ρ, k − 1)·[1 ≤ k ≤ m]` and
+`E'_n(ρ, k) = eq(ρ, k)·[k < m]`, the target `C·lt̃_m(ρ)`, the constant lanes' values
+`c_l·lt̃_n(ρ')`; `V` evaluates them in closed form (`ltEvalF`, `gShiftEvalF`, `gMaskEvalF`,
+`LvmDecideKeccak`) in place of `1 + eq(ρ, 1^logN)`, `S(ρ, ρ')`, `Eq'(ρ, ρ')` and `c_l`.
+
 **`KS` link** (`kchal = ρ (ksLog) ‖ λ (5)`; `ω_l = eq(λ, l)`). For every row,
 `in_i[l] = cont_i Y_{i−1}[l] + [l < 17] Msg_l[i]` (`cont_0 = 0`). One sumcheck with claim `0` of
 `Sc(ρ, k) Y_ω(k) + eq(ρ, k) (in_ω(k) + Msg_ω(k))`, `Sc(ρ, k) = eq(ρ, k + 1) cont_{k+1}`,
@@ -108,15 +114,17 @@ def padConst (om : Array (Array FE)) : FE :=
     if (0x43 : Nat).testBit p then some ((om.getD 0 #[]).getD p 0) else none) +
     (om.getD 4 #[]).getD 8 0
 
-/-- The shift sumcheck's claim `C (1 + eq(ρ, 1^logN))`. -/
-def chShiftTarget0 (p : Params) (chal : List FE) : FE :=
+/-- The shift sumcheck's claim `C·lt̃_m(ρ)`, `m = n − 1` (lvm2's gated link; v1:
+`C (1 + eq(ρ, 1^logN))`). -/
+def chShiftTarget0 (p : Params) (pub : Pub) (chal : List FE) : FE :=
   let (rho, lam, zeta) := chSplit p chal
-  padConst (omegaCH lam zeta) * (1 + eqOnes rho)
+  padConst (omegaCH lam zeta) * ltEvalF rho (pub.n - 1)
 
-/-- The two-round sumcheck's claim `f₁ + S(ρ, ρ') Σ_p eq(ζ, p) inS_p`. -/
-def chSc2Target0 (p : Params) (chal : List FE) (shift : List FE × FE) (inS : List FE) : FE :=
+/-- The two-round sumcheck's claim `f₁ + S̃_n(ρ, ρ') Σ_p eq(ζ, p) inS_p` (v1: `S(ρ, ρ')`). -/
+def chSc2Target0 (p : Params) (pub : Pub) (chal : List FE) (shift : List FE × FE) (inS : List FE) :
+    FE :=
   let (rho, _, zeta) := chSplit p chal
-  shift.2 + shiftEval rho shift.1 * dot (eqKernel zeta) inS
+  shift.2 + gShiftEvalF rho shift.1 (pub.n - 1) * dot (eqKernel zeta) inS
 
 /-- The `CH` link's check and claims. -/
 def chLink0 (p : Params) (blk : Placement) (ySlot : Nat) (i : ChLinkIn) : Bool × List (Com × BlockClaim) :=
@@ -126,14 +134,16 @@ def chLink0 (p : Params) (blk : Placement) (ySlot : Nat) (i : ChLinkIn) : Bool �
   let mu := i.sc2.1
   let eMu := eqKernel mu
   let wt (q : Nat) : FE := sumE ((List.range 4).map fun m => eMu.getD m 0 * padWeight om m q)
-  let ok := i.sc2.2 == eqMasked rho rho' * sumE ((List.range 64).map fun q => wt q * i.ySlices.getD q 0)
+  let ok := i.sc2.2 == gMaskEvalF rho rho' (i.pub.n - 1) *
+    sumE ((List.range 64).map fun q => wt q * i.ySlices.getD q 0)
   let inPt := rho' ++ lam ++ [0, 0, 0]
   let yPt := rho' ++ mu ++ selectorPoint (ySlot >>> 2) (slotLog - 2)
   let ring (pt : List FE) (r : FE × List FE) : BlockClaim := ⟨blk, fun x => ringWeight pt x r.2, r.1⟩
+  let ltN := ltEvalF rho' i.pub.n
   let consts := (List.range 17).map fun j =>
     let l := 8 + j
     BlockClaim.point blk (rho' ++ selectorPoint l slotLog)
-      (FE.ofK (if l = 16 then ⟨(0x80 : UInt64) <<< 56⟩ else 0))
+      (FE.ofK (if l = 16 then ⟨(0x80 : UInt64) <<< 56⟩ else 0) * ltN)
   (ok, ([ring inPt i.ringIn, ring yPt i.ringY] ++ consts).map (.main, ·))
 
 /-! ## The `KS` link -/

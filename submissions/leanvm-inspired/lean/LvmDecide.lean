@@ -163,10 +163,10 @@ def decideProg (p : Params) (m : M3) (vk c : Vector UInt8 32) : DM Acc := do
   let chClaims := keccakClaims m.chBlock ko ring ++ chFixedClaims p m.chBlock m.chYSlot r v pub
   -- 5] CH link
   let chal ← samples (p.logN + 3 + 6)
-  let shift ← sumcheck (m.chShiftTarget chal) 3 (List.replicate p.logN none)
+  let shift ← sumcheck (m.chShiftTarget pub chal) 3 (List.replicate p.logN none)
   let inS ← readEs kBits
   let ringIn ← ringRaw inS
-  let sc2 ← sumcheck (m.chSc2Target chal shift inS) 3 [none, none]
+  let sc2 ← sumcheck (m.chSc2Target pub chal shift inS) 3 [none, none]
   let yS ← readEs kBits
   let ringY ← ringRaw yS
   let constLanes ← samples laneBits

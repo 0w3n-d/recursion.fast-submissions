@@ -248,9 +248,44 @@ pub fn piece_tables(c: &Compiled, tb: &loopir::Tables) -> Vec<TableW> {
 }
 
 pub fn group_tables(c: &Compiled, tb: &loopir::Tables, groups: &[Grp]) -> Vec<TableW> {
-    groups
-        .iter()
-        .map(|g| {
+    // P-QUICK lever 5a: the groups are independent; plain scoped threads (not the pool: the build runs beside
+    // the CH witness's dispatch, lever 3) take them one at a time, and the tables keep the groups' order
+    let threads = GROUP_THREADS.min(groups.len());
+    if threads <= 1 {
+        return groups.iter().map(|g| group_table(c, tb, g)).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut out: Vec<Option<TableW>> = (0..groups.len()).map(|_| None).collect();
+    std::thread::scope(|s| {
+        let hs: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if i >= groups.len() {
+                            break mine;
+                        }
+                        mine.push((i, group_table(c, tb, &groups[i])));
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            for (i, t) in h.join().expect("a group table") {
+                out[i] = Some(t);
+            }
+        }
+    });
+    out.into_iter().map(|t| t.expect("every group's table")).collect()
+}
+
+/// Threads of `group_tables`.
+const GROUP_THREADS: usize = 4;
+
+fn group_table(c: &Compiled, tb: &loopir::Tables, g: &Grp) -> TableW {
+    {
+        {
             let p0 = &c.pieces[g.mem[0].0];
             let s = &p0.shape;
             let com = s.committed();
@@ -305,8 +340,8 @@ pub fn group_tables(c: &Compiled, tb: &loopir::Tables, groups: &[Grp]) -> Vec<Ta
                 flushes.push(FlushW { push: false, coords: [vec![sep, addr, c_of(ix(V::C(Var::Fin)))], v].concat(), count: None });
             }
             TableW { tau: g.tau, cols, com: [vec![true; com.len()], vec![false; fc.len()]].concat(), cons, flushes, pre: Vec::new(), hdr: false }
-        })
-        .collect()
+        }
+    }
 }
 
 fn c_of(i: usize) -> Coord {

@@ -16,6 +16,42 @@ Notation:
 - P20 is the production parameter set and P8 the test set.
 - [e] marks an estimate.
 
+## Changes since pr11-983bdcfa21d6
+
+pr11-983bdcfa21d6 was accepted on the evaluation machine: S = 10.17 (P̄ 6.88, V̄ 3.29), S× = 8.19 (mean V 0.288 s,
+g 1.19), mean |π| 1,180,192 B. This version changes the chain link, the prover and the native verifier. The kinds, the
+fields, the commitments, Fiat–Shamir, the extractor, the claim and the theorem's statement are unchanged.
+
+- **The chain link is gated by `n`, so the prover's work grows with `n`.** In pr11 the chain table proved 2^20
+  Keccak-f rows for every `n`, and steps took 12–14 s at every `n` (dev VM).
+  - The dead rows `i ≥ n` hold the zero input, and the link `in_{i+1} = Pad43(Y_i)` is only asserted on the live
+    rows (`i + 1 < n`). With `m = n − 1`, the shift sumcheck's kernels carry the masks `[1 ≤ k ≤ m]` and `[k < m]`,
+    its target is `C·lt̃_m(ρ)`, and the 17 constant-lane claims are `c_l·lt̃_n(ρ')`. `V` evaluates every mask
+    extension in closed form from `m`'s bits (`LvmMask`, `LvmMaskF`).
+  - The prover runs the GKR on the written prefix with leanVM's padding block, and sums the dead rows in closed form.
+  - The child's verifier circuit checks the gated link with a closed-form gadget (`n ≤ 2^20` from the child's
+    header) and a borrow chain over `n`'s 20 bits. `chain_of_CH` needs the link only on the live rows.
+  - Re-frozen record: P20 (22, 1, 17, **4,253**), 88 groups (pr11: 4,199, 84). `|π|` grows by 1,296 B to
+    **1,181,488 B**; `qS` 11,832 is unchanged.
+- **Prover levers** (proof bytes unchanged by each): the node program is built before `ready`; the chain and sponge
+  walks use the vendored AVX-512 Keccak-f; the chain walk, the sponge walk and the recursion tables overlap; the
+  group tables are built on 4 threads; the LoopIR table writer resolves each column once per piece.
+- **Faster `V`:** fast twins in `LvmVFast`, each proved equal to the code it replaces, ending in `VS20F_eq` as before:
+  group leaves computed once per (piece, column) with an array MLE; cached BITS address columns; a closed form for
+  the sponge link's shift term; bus values computed directly from the static key polynomials, without building a
+  `Form` (`decideProgB_eq`, `busFinalV_agree`). On pr11's proofs this alone took `V` from 505 to 264 ms per check.
+- **Measured, local season shape** (dev VM, 8 pinned CPUs, caps unchanged, one run): **ACCEPT**, S = **8.76**
+  (P̄ 6.05, V̄ 2.71), S× = **6.46** at the local `v_ref` (1,068 ms); mean `V` **275.5 ms** (median 272 ms); steps
+  4.9–11.7 s, step 1 9.7 s; fit `P(n) = 4.34 + 7.60·n/2^20` s; prover peak 7.67 GiB. pr11 on the same harness:
+  S = 16.21 (P̄ 12.76, V̄ 3.45), S× = 15.74, mean `V` 506 ms.
+- **Expected on the evaluation machine [e]:** pr11's evaluation-to-local ratios (P̄ 0.54, `V` 0.57) give P̄ ≈ 3.3 s
+  and mean `V` ≈ 0.16 s, so S ≈ 5.9 and S× ≈ 3.5. The ratio for P̄ may be worse now: pr11's step was mostly the GKR,
+  which Zen 4's GFNI/VPCLMULQDQ tiers speed up most, and the fixed, oracle-bound commit is now a larger share. At a
+  ratio of 0.7, P̄ ≈ 4.2 s, S ≈ 6.8 and S× ≈ 4.4.
+- **Also in the root:** `LvmTapeRel` and `LvmWire*`, not imported by `Solution`, and generic-shape statements added
+  to `LvmKeccak{Start,Gkr,Candidate}` (imported; their earlier statements are unchanged). They are sorry-free work
+  towards a later version.
+
 ## Idea
 
 ### Trust surface: what is proved, and what is checked when V runs
@@ -33,11 +69,11 @@ Notation:
   - The native `V` refines the compiled IOP verifier (`refines_VSL`, `VS20F_eq`).
   - The extractor's output and cost (`computesX` at the declared fuel).
 - **Discharged by kernel `decide` at the frozen record.** These are facts about the concrete program `Q`
-  and its 149 tables:
+  and its tables:
   - `fitsR`, the table shapes and the `chkB` checks (`chkFit_P20`, 23.7 s of kernel);
   - the 23 layout and input-map fields (`LvmQAsmFacts*`);
   - the cell bounds of the position fields (`posCellsB_P20`, 15.6 s);
-  - the positions and lanes of every phase (`harNum20`, `okA/B/C/E_P20`, `posLanesR20/M20`, `hbs20`).
+  - the positions and lanes of every phase (`harNum20`, `okAG/BG/CG_P20`, `okN_P20`, `okE_P20`, `posLanesR20/M20`, `hbs20`).
 - **Checked when V runs: the A24 guard.** Five static facts are not kernel-decidable within the caps:
   - no computed-address read in `Q_arith`;
   - `Q.wf`;
@@ -72,7 +108,7 @@ Notation:
 
 A flag `b` selects leaf mode (`b = 0`, step 1's first proof) or node mode. There is one shape and one
 schedule, so every proof has the same size and makes the same queries. The chain table always has
-2^20 rows. `traceDigest []` is constant, so one `σ_leaf` (one SIGN) serves the whole stream, and one
+2^20 rows; the rows `i ≥ n` hold the zero input, so the prover's work grows with `n`. `traceDigest []` is constant, so one `σ_leaf` (one SIGN) serves the whole stream, and one
 WOTS walk per proof remains. A `W` proof never starts with `'S'` (`encode_first_byte`), so `V`
 dispatches on `π[0]`.
 
@@ -84,6 +120,9 @@ dispatches on `π[0]`.
   polynomial and carries nothing into the next word.
 - So the link is proved bitwise: a 20-round shift sumcheck (non-cyclic kernel, closed form), two
   ring-switched bit-slice claims, and 17 constant-lane word claims.
+- The link is gated: with `m = n − 1`, the shift sumcheck's kernels are masked to the live rows (`[1 ≤ k ≤ m]`,
+  `[k < m]`, target `C·lt̃_m(ρ)`), and the constant-lane claims are `c_l·lt̃_n(ρ')`. `V` evaluates the masks in
+  closed form from `m`'s bits; the prover sums the dead rows in closed form.
 - The boundaries are `in_0 = Pad43(s)` and `Y(n−1) = h`, and `chain_of_CH` gives `chainEnd s n = h`.
 
 **Sponge table `KS` (2^15 rows).** The same GKR, with a word-linear sponge link. It holds the child's
@@ -167,45 +206,46 @@ specified `VS20` (`VS20F_eq`).
 
 ## Result
 
-**Harness (local, dev VM pinned to 8 CPUs; the evaluation machine's numbers come from this PR's run).**
+**Harness.**
 
-| measure | value |
+| run | result |
 |---|---|
-| certificate: `build_s` (cap 1,200) / comparator (cap 600) | 686 s / 448 s (kernel replay 364 s, export 66 s, lake checks 30 s); status ok, axioms `propext`, `Classical.choice`, `Quot.sound` |
-| benchmark at the smoke shape | ACCEPT; step 1 26.8 s, steps 2–6 12.9–14.2 s, V 0.46–0.64 s per check, prover peak 8.2 GB |
-| verdict, `S`, `S_product` on the evaluation machine | from this PR's evaluation (projected S ≈ 19, S× ≈ 23) |
-| `prover setup` variant on Zen 4 | v4 expected (cpuid); this VM runs v4p |
+| pr11-983bdcfa21d6, evaluation machine | ACCEPT; S = 10.17 (P̄ 6.88, V̄ 3.29), S× = 8.19 (mean V 0.288 s, g 1.19) |
+| pr11-983bdcfa21d6, local season shape (dev VM, 8 CPUs) | ACCEPT; S = 16.21 (P̄ 12.76, V̄ 3.45), S× = 15.74, mean V 0.506 s; `build_s` 683 s, comparator 444 s |
+| this version, local season shape (dev VM, 8 CPUs) | ACCEPT; S = 8.76 (P̄ 6.05, V̄ 2.71), S× = 6.46, mean V 0.276 s; `build_s` 662 s, comparator 513 s (cap 600); axioms `propext`, `Classical.choice`, `Quot.sound` |
+| this version, evaluation machine | from this PR's evaluation (projected S ≈ 5.9–6.8, S× ≈ 3.5–4.4) |
+| `prover setup` variant on Zen 4 | v4 expected (cpuid); the dev VM runs v4p |
 
-**Frozen P20 record** (busDepth, leafdec, rounds, evals) = (22, 1, 17, 4,199).
+**Frozen P20 record** (busDepth, leafdec, rounds, evals) = (22, 1, 17, 4,253).
 
 | quantity | value |
 |---|---|
-| `|π|` | **1,180,192 B** |
+| `|π|` | **1,181,488 B** |
 | `qS` | **11,832** (`qV` 16,384) |
-| trace | 250,044 lanes (0.898 of `C_rec`'s capacity) |
-| signed file | 3,185,335 B (cap 64 MiB) |
-| tables | 149 tables, 84 groups, 1,226 fixed columns, **6.79 M committed words** (`C_main`'s free region is 7.34 M) |
-| `Q` words | 5.87 M: `Q_link` 1.51 M, `Q_sig` 0.16 M, `Q_arith` 4.19 M |
-| bus | 2.39 M push leaves |
+| trace | 250,206 lanes (0.898 of `C_rec`'s capacity) |
+| signed file | 3,187,927 B (cap 64 MiB) |
+| tables | 88 groups, 4,253 evaluations, **6.83 M committed words** (`C_main`'s free region is 7.34 M) |
+| `Q` words | 5.90 M |
 
 **Prover, dev VM.** QEMU, 8 threads, shared host. Its cpuid hides PCLMULQDQ, but the instruction executes;
 VPCLMULQDQ and GFNI do not, so the evaluation variant v4 cannot start there. The runs use the dev variant
 v4p (AVX-512 + PCLMUL) and the shipped binary with the embedded program blob. The P8 and P20 streams
-(b = 0; b = 1 over b' = 0 and over b' = 1) are accepted by the Lean `V_S`.
-- First step: **30.8 s** (`S,0` 15.4 + `S,1` 14.7).
-- Later steps: **≈ 15.5 s** (15.2–15.7).
-- Peak RSS: **7.8 GiB** (cap 11).
-- Per step (s): chain+sponge 0.6, witness 0.9–1.1, commit 2.3–2.6 (bound by the oracle), bus+tables 0.3,
-  accumulator 0.04, CH GKR 8.6–9.1, KS GKR 0.35, links 0.2.
-- Zen 4 [e]: the GFNI/VPCLMULQDQ tiers make the GKR 2–3× faster, so ≈ 8–10 s per step.
+(b = 0; b = 1 over b' = 0 and over b' = 1, including children with n = 1, 2^17 + 1 and 2^20) are accepted by the
+Lean `V_S`, and tampered links (n ± 1, the shift round, the slice claims) are rejected.
+- Local season shape: step 1 **9.7 s**; later steps **4.9–11.7 s**; a fit over the stream gives
+  `P(n) ≈ 4.3 + 7.6·n/2^20` s.
+- Peak RSS: **7.67 GiB** (cap 11).
+- In pr11 the steps took 12–14 s whatever `n`, of which the CH GKR was 8.6–9.1 s; it now scales with `n`. The fixed
+  part (≈ 4.3 s) is mostly the 2^26 commitment, bound by the oracle.
+- Zen 4 [e]: the GFNI/VPCLMULQDQ tiers make the GKR 2–3× faster.
 
-**Verifier**, measured with the harness badge on the dev VM (one core):
-- **≈ 0.5 s per check** (483–552 ms with the guard), over the 0.35 s target.
-- Start-up **3.1 s** per process (1.5 s of it is `staticOkB`).
-- Split [e]: `decideCore` 260–340 ms; the `Φ̃` sweep over the fixed columns ≈ 160 ms.
+**Verifier**, measured on the dev VM (one core):
+- **275.5 ms per check** (harness mean, local season shape; median 272, p10 258, p90 299 ms). pr11: 506 ms.
+- Start-up is not charged; it is 10.7–11.4 s per process on the loaded dev VM (`staticOkB`, shared table parts,
+  caches).
 
-**Score [e].** With `κ = 3.2975 s`, `v_ref = 659.5 ms` and `s_ref = 2 MiB`, using the dev-VM step time as
-`P̄`: **S ≈ 19** and S× ≈ 23, against #7's S = 105.9 and S× = 505.8. Zen 4 times would lower both.
+**Score.** pr11-983bdcfa21d6 scored S = 10.17 and S× = 8.19 on the evaluation machine, against #7's S = 105.9 and
+S× = 505.8.
 
 **Error budget (model, P20, per fresh query, log₂).**
 
@@ -216,14 +256,16 @@ v4p (AVX-512 + PCLMUL) and the shipped binary with the embedded program blob. Th
 | WHIR λ batching / stacked-claim batching | −183.7 / −182.4 |
 | WHIR folds (main 0–3, rec) | −168.4, −172, −175, −178, −174.4 |
 | WHIR positions (main 0–3, rec) | −129.08, −129.51, −129.49, −129.58, −129.51 |
+| gated link round, slot round | −191 |
 | accumulator `κ_j` / `t` | −192 / −187 |
 | extractor luck / hash | −174.4 / −151.4 |
 | **worst + luck + hash** | **−129.08** |
 
 **Extractor.** `fuel = 2^46 + 8192·t`; the decode's fixed cost (≤ 2^38 steps) is 2^8 below `fuel_base`.
 
-**Lean.** 475 flat modules, ≈ 136 k lines. The heaviest decide module is `LvmQAsmFactsDec` (47 s,
-5.4 GB). Comparator time was cut from 705 s to 462 s on the dev VM by proof-only changes (`rfl`-lemma `simp` replays, one-pass checkers).
+**Lean.** 481 flat modules, ≈ 142 k lines; `Solution`'s import closure holds 452 of them. The heaviest decide module is
+`LvmQAsmFactsDec` (47 s, 5.4 GB). In v1, comparator time was cut from 705 s to 462 s on the dev VM by proof-only changes
+(`rfl`-lemma `simp` replays, one-pass checkers).
 
 ## What failed, and why
 
@@ -248,7 +290,7 @@ v4p (AVX-512 + PCLMUL) and the shipped binary with the embedded program blob. Th
   Both were replaced by the self-fold accumulator (A23).
 - **`C_rec`'s direct final check** cost ≥ 3.28 M words. It was dropped; ε and `Ex` are unchanged, since
   WHIR's final-level check has the same postcondition.
-- **Ungrouped tables** would send 9,806 evaluations instead of 440. The final count is still 4,199
+- **Ungrouped tables** would send 9,806 evaluations instead of 440. The final count is still 4,253
   (24 B each in `π`), mostly from BITS (2,975).
 - **The assembler fixpoint** (record ↦ program ↦ record) oscillated between 76 and 81 groups once
   `Q_arith` was complete. Padding `Q` to the record made it converge (P20 +16 k words).
@@ -279,15 +321,13 @@ v4p (AVX-512 + PCLMUL) and the shipped binary with the embedded program blob. Th
 
 ## What to try next
 
-1. **V-PERF-2: `V` from 0.5 s to ≈ 0.35 s** (≈ −0.75 on `S`).
-   - Fold the leaf-decomposition block weights into the form coefficients (`busFinalR` ≈ 100 ms).
-   - Shared `eq` tables in the BITS sweep, and a cheaper uniform-stride path for the 1,226 fixed columns.
-   - Faster Lean Keccak and Merkle paths for the openings (≈ 50 ms).
+1. **`V` below 275 ms.** `|π|` is now the larger part of `V̄` on the evaluation machine (0.56 of ≈ 0.8 per check [e]).
+   - WHIR final claims keyed by their point inside the bus step (10–15 ms [e]).
+   - One shared `eq` table per (height, size) within a group (−20–25 ms [e]); leaves for the non-uniform rows.
+   - The Keccak GKR checks on arrays; faster Lean Keccak and Merkle paths for the openings.
    - Fewer BITS evaluations: fixed count columns, no `w` column, one address column per class.
 2. **Prover speed.**
-   - Chain shapes 2^18 and 2^19 behind a shape mux: `P̄` is today the 2^20 step for every
-     `n ∈ [2^17, 2^20]` (≈ 4 s [e] for small `n`).
-   - The CH GKR is 60 % of a step.
+   - The fixed part of a step (≈ 4.3 s) now dominates at `n` near 2^17, where most of `P̄`'s weight is.
    - The commit is bound by the oracle: 12 M service permutations for the 512 B level-0 leaves.
 3. **Smaller proofs.** Openings are ≈ 64 % of `π`:
    - prune Merkle paths, use rate 1/4 at level 0, and add grinding (−16 % queries, plus a completeness

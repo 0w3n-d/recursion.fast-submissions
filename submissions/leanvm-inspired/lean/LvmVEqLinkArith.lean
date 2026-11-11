@@ -1,8 +1,10 @@
--- New for lvm (WP-14a, H3): V_S's CH/KS link formulas (LvmDecideV0: `shiftEval`, `eqMasked`, `omegaCH`,
--- `padWeight`, `padConst`, the link targets and checks, `contShift`) and its caller-placed ring switch
--- (LvmDecide `ringRaw`) over `E`: WP-8's `shiftEvalE`, `eqMaskedE`, `omegaE`, `padWeightE`, `padConstE`,
--- `chShiftTargetE`, `chSc2TargetE`, `wtE`, `contShiftE` and leanVM's `ringSwitch` (LvmVCore).
+-- New for lvm (WP-14a, H3): V_S's CH/KS link formulas (LvmDecideV0: `omegaCH`, `padWeight`,
+-- `padConst`, the link targets and checks, `contShift`) and its caller-placed ring switch (LvmDecide
+-- `ringRaw`) over `E`: WP-8's `omegaE`, `padWeightE`, `padConstE`, `chShiftTargetE`, `chSc2TargetE`,
+-- `wtE`, `contShiftE` and leanVM's `ringSwitch` (LvmVCore).
+-- lvm2 (S1-V): the gated link's targets and check, through the closed forms' twins (LvmMaskF).
 import LvmVEqClaims
+import LvmMaskF
 
 /-!
 # The link formulas over `E`
@@ -59,18 +61,6 @@ theorem toExt3_getD_eqKernelA (p : List FE) {i : ℕ} (hi : i < 2 ^ p.length) :
     FE.toExt3 ((Lvm.eqKernelA p).getD i 0) = eqAt (p.map FE.toExt3) i := by
   rw [getD_eqKernelA, toExt3_getD_eqKernel p hi]
 
-/-! ## `shiftEval`, `eqMasked` -/
-
-theorem toExt3_shiftEval (x y : List FE) :
-    FE.toExt3 (Lvm.shiftEval x y) = Lvm.KG.shiftEvalE (x.map FE.toExt3) (y.map FE.toExt3) := by
-  unfold Lvm.shiftEval Lvm.KG.shiftEvalE
-  simp only [toExt3_sumE, toExt3_prodE, List.map_map, Function.comp_def, tE_mul, tE_add, tE_one,
-    getD_map_toExt3, List.length_map]
-
-theorem toExt3_eqMasked (x y : List FE) :
-    FE.toExt3 (Lvm.eqMasked x y) = Lvm.KG.eqMaskedE (x.map FE.toExt3) (y.map FE.toExt3) := by
-  simp only [Lvm.eqMasked, Lvm.KG.eqMaskedE, Lvm.eqOnes, tE_add, tE_mul, toExt3_eqEval, toExt3_prodE]
-
 /-! ## The `CH` link's weights -/
 
 theorem omegaCH_getD (lam zeta : List FE) {m p : ℕ} (hm : m < 2 ^ lam.length)
@@ -112,19 +102,22 @@ theorem toExt3_padConst (lam zeta : List FE) (hl : lam.length = 3) (hz : zeta.le
 theorem chSplit_P20 (chal : List FE) :
     Lvm.chSplit P20 chal = (chal.take 20, (chal.drop 20).take 3, chal.drop 23) := rfl
 
-theorem toExt3_chShiftTarget0 (chal : List FE) (hc : chal.length = 29) :
-    FE.toExt3 (Lvm.chShiftTarget0 P20 chal) = Lvm.KG.chShiftTargetE 20 (chal.map FE.toExt3) := by
+/-- The gated shift sumcheck's claim `C·lt̃_m(ρ)`. -/
+theorem toExt3_chShiftTarget0 (pub : Pub) (chal : List FE) (hc : chal.length = 29) :
+    FE.toExt3 (Lvm.chShiftTarget0 P20 pub chal) =
+      Lvm.KG.chShiftTargetE 20 pub.n (chal.map FE.toExt3) := by
   simp only [Lvm.chShiftTarget0, chSplit_P20, Lvm.KG.chShiftTargetE, Lvm.KG.chLam, Lvm.KG.chZeta,
-    Lvm.KG.chRho, tE_mul, tE_add, tE_one, Lvm.eqOnes, toExt3_prodE, ← List.map_take, ← List.map_drop]
+    Lvm.KG.chRho, tE_mul, toExt3_ltEvalF, ← List.map_take, ← List.map_drop]
   rw [toExt3_padConst _ _ (by simp [hc]) (by simp [hc])]
 
-theorem toExt3_chSc2Target0 (chal : List FE) (shift : List FE × FE) (inS : List FE)
+/-- The two-round sumcheck's claim `f₁ + S̃_n(ρ, ρ')·Σ_p eq(ζ, p) inS_p`. -/
+theorem toExt3_chSc2Target0 (pub : Pub) (chal : List FE) (shift : List FE × FE) (inS : List FE)
     (hc : chal.length = 29) (hin : inS.length = 64) :
-    FE.toExt3 (Lvm.chSc2Target0 P20 chal shift inS) =
-      Lvm.KG.chSc2TargetE 20 (chal.map FE.toExt3) (shift.1.map FE.toExt3, FE.toExt3 shift.2)
+    FE.toExt3 (Lvm.chSc2Target0 P20 pub chal shift inS) =
+      Lvm.KG.chSc2TargetE 20 pub.n (chal.map FE.toExt3) (shift.1.map FE.toExt3, FE.toExt3 shift.2)
         (inS.map FE.toExt3) := by
   simp only [Lvm.chSc2Target0, chSplit_P20, Lvm.KG.chSc2TargetE, Lvm.KG.chZeta, Lvm.KG.chRho,
-    tE_mul, tE_add, toExt3_shiftEval, toExt3_dot, map_eqKernel, ← List.map_take, ← List.map_drop,
+    tE_mul, tE_add, toExt3_gShiftEvalF, toExt3_dot, map_eqKernel, ← List.map_take, ← List.map_drop,
     Nat.reduceAdd]
   congr 2
   have hz : ((chal.drop 23).map FE.toExt3).length = 6 := by simp [hc]
@@ -134,16 +127,16 @@ theorem toExt3_chSc2Target0 (chal : List FE) (shift : List FE × FE) (inS : List
   have hp' := Finset.mem_range.1 hp
   rw [eqKernel_getD, hz, ite_eq_left (by norm_num; omega)]
 
-/-- The `CH` link's check. -/
-theorem toExt3_chOk (lam zeta mu rho rho' yS : List FE) (hl : lam.length = 3) (hz : zeta.length = 6)
-    (hmu : mu.length = 2) :
-    FE.toExt3 (Lvm.eqMasked rho rho' * Lvm.sumE ((List.range 64).map fun q =>
+/-- The gated `CH` link's check (`Ẽ'_n(ρ, ρ')`, `t = n − 1`). -/
+theorem toExt3_chOk (t : ℕ) (lam zeta mu rho rho' yS : List FE) (hl : lam.length = 3)
+    (hz : zeta.length = 6) (hmu : mu.length = 2) :
+    FE.toExt3 (Lvm.gMaskEvalF rho rho' t * Lvm.sumE ((List.range 64).map fun q =>
         Lvm.sumE ((List.range 4).map fun m =>
           (Lvm.eqKernel mu).getD m 0 * Lvm.padWeight (Lvm.omegaCH lam zeta) m q) * yS.getD q 0)) =
-      Lvm.KG.eqMaskedE (rho.map FE.toExt3) (rho'.map FE.toExt3) *
+      Lvm.KG.gMaskEvalE (rho.map FE.toExt3) (rho'.map FE.toExt3) t *
         ∑ q ∈ range 64, Lvm.KG.wtE (lam.map FE.toExt3) (zeta.map FE.toExt3) (mu.map FE.toExt3) q *
           (yS.map FE.toExt3).getD q 0 := by
-  rw [tE_mul, toExt3_eqMasked, toExt3_sumE_range]
+  rw [tE_mul, toExt3_gMaskEvalF, toExt3_sumE_range]
   congr 1
   refine Finset.sum_congr rfl fun q hq ↦ ?_
   rw [tE_mul, toExt3_sumE_range, getD_map_toExt3]
@@ -157,7 +150,7 @@ theorem toExt3_chOk (lam zeta mu rho rho' yS : List FE) (hl : lam.length = 3) (h
 
 /-- `contRows P20` is in `[1, 2^15)`. -/
 theorem contRows_bound : ∀ i ∈ contRows P20, 1 ≤ i ∧ i < 2 ^ 15 := by
-  have hs : spongeBlocks P20 = 14709 := sizes_P20.2.2.2.2.2.2.2.2
+  have hs : spongeBlocks P20 = 14719 := sizes_P20.2.2.2.2.2.2.2.2
   have h14 : P20.recRowsLog = 14 := rfl
   intro i hi
   simp only [contRows, List.mem_append, List.mem_map, List.mem_range, hs, h14, Nat.reducePow,

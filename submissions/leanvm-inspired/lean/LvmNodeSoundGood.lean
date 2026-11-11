@@ -59,7 +59,7 @@ def Bnd (x : List UInt8) (qm : Column 26) : Prop :=
 
 /-- **The Keccak half** of a good pair (`kgSpec`'s relations, then the boundary claims). -/
 def GoodK (x : List UInt8) (p : Column 26 × Column 19) : Prop :=
-  CHRel 20 52 (colM p.1) ∧
+  CHRel 20 52 (colM p.1) (hdrOf x).n ∧
   KSRel 15 14 ksY2 (contRows P20) (colM p.1) (ksCol p.1) (msgM p.2) (msgX p.1) ∧ Bnd x p.1
 
 /-- **The bus/table half** of a good pair (WP-9b `midBusTableSpecS`'s precondition). -/

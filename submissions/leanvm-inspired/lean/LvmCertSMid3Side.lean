@@ -60,9 +60,9 @@ theorem retOK_callerProg (h : ℕ) (hh : 4 ≤ h) : RetOK (CallerRet h) (Lvm.KG.
   exact ⟨hr, hv, fun c hc ↦ hr ▸ hres.1 c hc, hres.2, hring⟩
 
 /-- Every return of the `CH` link: `ρ'` has `h` coordinates, the ring weights are multiaffine. -/
-theorem retOK_chLinkProg (h ys : ℕ) :
+theorem retOK_chLinkProg (h ys n : ℕ) :
     RetOK (fun lo : Lvm.KG.ChLinkOut ↦ lo.shift.1.length = h ∧ (∀ n, IsMultiaffine n lo.ringIn.2) ∧
-      ∀ n, IsMultiaffine n lo.ringY.2) (Lvm.KG.chLinkProg h ys) := by
+      ∀ n, IsMultiaffine n lo.ringY.2) (Lvm.KG.chLinkProg h ys n) := by
   unfold Lvm.KG.chLinkProg
   refine RetOK.bind_true fun _ ↦ (retOK_sumcheck _ _ _).bind fun shift hs ↦
     RetOK.bind_true fun _ ↦ (retOK_ringSwitch _ _).bind fun ringIn hi ↦ RetOK.bind_true fun _ ↦
@@ -78,9 +78,9 @@ theorem retOK_ksLinkProg (hk r : ℕ) (rows : List ℕ) :
     RetOK.bind_true fun _ ↦ RetOK.bind_true fun _ ↦ RetOK.ret ⟨hk', by simpa using hs⟩
 
 /-- **Every return of V_S phases 4–7 meets `KgRet`.** -/
-theorem retOK_kgProgS : RetOK KgRet kgProgS := by
+theorem retOK_kgProgS (n : ℕ) : RetOK KgRet (kgProgS n) := by
   unfold kgProgS
-  refine ((retOK_callerProg _ (by norm_num)).bind fun co hco ↦ (retOK_chLinkProg _ _).bind
+  refine ((retOK_callerProg _ (by norm_num)).bind fun co hco ↦ (retOK_chLinkProg _ _ _).bind
     fun lo hlo ↦ RetOK.ret (Q := fun ch : CallerOut × Lvm.KG.ChLinkOut ↦
       CallerRet 20 ch.1 ∧ ch.2.shift.1.length = 20 ∧ (∀ n, IsMultiaffine n ch.2.ringIn.2) ∧
         ∀ n, IsMultiaffine n ch.2.ringY.2) ⟨hco, hlo⟩).bind fun ch hch ↦

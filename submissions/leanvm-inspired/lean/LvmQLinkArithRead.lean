@@ -73,10 +73,10 @@ theorem require_run_lk (c : Bool) (sig : ByteArray) (s : RS) :
 /-- **Phase 5 of `decideProg`** (`LvmDecide.lean`, "5] CH link"), verbatim. -/
 def chLinkPhase (p : Params) (m : M3) (r v : List FE) (pub : Pub) : DM (Bool × List (Com × BlockClaim)) := do
   let chal ← samples (p.logN + 3 + 6)
-  let shift ← sumcheck (m.chShiftTarget chal) 3 (List.replicate p.logN none)
+  let shift ← sumcheck (m.chShiftTarget pub chal) 3 (List.replicate p.logN none)
   let inS ← readEs kBits
   let ringIn ← ringRaw inS
-  let sc2 ← sumcheck (m.chSc2Target chal shift inS) 3 [none, none]
+  let sc2 ← sumcheck (m.chSc2Target pub chal shift inS) 3 [none, none]
   let yS ← readEs kBits
   let ringY ← ringRaw yS
   let constLanes ← samples laneBits
@@ -102,10 +102,10 @@ def samplesAt (v : Nat → FE) (P n : Nat) : List FE := (List.range n).map fun i
 /-- **What phase 5 reads**, from the view `v` and the phase's start `P`. -/
 def chLinkView (p : Params) (m : M3) (v : Nat → FE) (P : Nat) (r w : List FE) (pub : Pub) : ChLinkIn :=
   let chal := samplesAt v P (p.logN + 3 + 6)
-  let shift := scSpec v 3 (chP1 p P) (m.chShiftTarget chal) (List.replicate p.logN none)
+  let shift := scSpec v 3 (chP1 p P) (m.chShiftTarget pub chal) (List.replicate p.logN none)
   let inS := scalarsAt v (chP2 p P + 40) kBits
   let ringIn := ringOf inS (samplesAt v (chP2 p P + 24 * kBits) ringStages)
-  let sc2 := scSpec v 3 (chP3 p P) (m.chSc2Target chal shift inS) [none, none]
+  let sc2 := scSpec v 3 (chP3 p P) (m.chSc2Target pub chal shift inS) [none, none]
   let yS := scalarsAt v (chP4 p P + 40) kBits
   let ringY := ringOf yS (samplesAt v (chP4 p P + 24 * kBits) ringStages)
   ⟨chal, shift, inS, ringIn, sc2, yS, ringY, samplesAt v (chP5 p P) laneBits, r, w, pub⟩

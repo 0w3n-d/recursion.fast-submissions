@@ -145,7 +145,7 @@ def qarithT (C : QCfg) (D : QData) (o : P47Out) : BM Unit := do
     -- ring switches and claims of phases 4–7 (HAR-RC)
     let rgC ← ringGkr (p.logN - 4) (aLane p 2) z.n
     let chF ← chFixedG p.logN 52 chB z.n one.n (bsB C) ((sigIn C).bn + 2) o.r o.v
-    let clC ← chLinkG p.logN (aLane p 3) z.n one.n chB 52
+    let clC ← chLinkGG p.logN (aLane p 3) z.n one.n ((sigIn C).bn + 2) chB 52
     let rgK ← ringGkr (p.ksLog - 4) (aLane p 6) z.n
     let clK ← ksLinkG p (aLane p 7) z.n one.n
     -- phases 8–9 (HAR-WH)

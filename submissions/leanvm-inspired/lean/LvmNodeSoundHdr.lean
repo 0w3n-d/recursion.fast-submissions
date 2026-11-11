@@ -41,7 +41,7 @@ def nodeLenOk (e : PE) : Bool :=
 /-- **The static facts at P20**: node queries of 64 bytes, and `8 + Σ clen = piSize` (the plan's
 one-pass decision, `LvmPlanP20`). -/
 theorem plan_static_P20 :
-    ((plan P20).all nodeLenOk && (8 + ((plan P20).map clen).sum == 1180192)) = true := by
+    ((plan P20).all nodeLenOk && (8 + ((plan P20).map clen).sum == 1181488)) = true := by
   have hc : clen = Lvm.PlanChk.clenC := by
     funext e
     rcases e with ⟨k, len⟩

@@ -1,8 +1,10 @@
 -- New for lvm (HAR; WP-16b: the checks through WP-16a2's one-pass `SLokF`, moved here from `LvmFinDec`):
--- QA1's link soundness at `P20` (`logN = 20`, `ksLog = 15`, `recRowsLog = 14`):
+-- QA1's link soundness at `P20` (`logN = 20`, `ksLog = 15`, `recRowsLog = 14`; lvm2 S1-INT: S1-Q's gated
+-- CH-link templates, from S1-Q's `SLokG`):
 -- the template checks (`SLok`) decided as for `P8` (QA1's `LvmQLinkArithP8`), the KS template
 -- (`okE`) after the re-freeze.
 import LvmQLinkArithP8
+import LvmQLinkArithCHSound
 
 set_option autoImplicit false
 
@@ -81,32 +83,103 @@ namespace Lvm.Q1
 
 open Lvm Lvm.Loop Lvm.Loop.Build
 
-theorem okA_P20 (Q : Nat) : SLok (chGlueA 20 Q) = true := by
-  rw [← SLok_shape]
-  simp only [chGlueA, List.map_append]
-  rw [loadsAt_shape]
+/-! ### The gated `CH` link's templates (lvm2 S1-Q: `chGlueAG/BG/CG`, `ltNIns`; v1's `chGlueA/B/C` checks
+are gone with v1's gadget) -/
+
+theorem borrowIns_shape (nb : Nat) : ∀ (a j k : Nat) (cy : Src),
+    (borrowIns nb a j k cy).map Ins.shape = (borrowIns 0 a j k cy.shape).map Ins.shape
+  | _, _, 0, _ => rfl
+  | a, j, k + 1, cy => by
+    simp only [borrowIns, List.map_append, List.map_cons, List.map_nil, shape_mulI, shape_addI, shape_shape,
+      borrowIns_shape nb (a + 2) (j + 1) k (.loc (a + 1)), shape_loc]
+    rfl
+
+theorem ltRecL_shape (n : Nat) : ∀ (ys bs : List Src) (L0 : Src),
+    (ltRecL n (ys.map Src.shape) (bs.map Src.shape) L0.shape).shape = (ltRecL n ys bs L0).shape
+  | _ :: _, _ :: _, _ => by simp [ltRecL, shape_loc]
+  | [], _, _ => by simp [ltRecL, shape_shape]
+  | _ :: _, [], _ => by simp [ltRecL, shape_shape]
+
+theorem ltRecP_shape (n : Nat) : ∀ (ys bs : List Src) (P0 : Src),
+    (ltRecP n (ys.map Src.shape) (bs.map Src.shape) P0.shape).shape = (ltRecP n ys bs P0).shape
+  | _ :: _, _ :: _, _ => by simp [ltRecP, shape_loc]
+  | [], _, _ => by simp [ltRecP, shape_shape]
+  | _ :: _, [], _ => by simp [ltRecP, shape_shape]
+
+theorem ltRecIns_shape (z : Src) (n : Nat) : ∀ (ys bs : List Src) (L0 P0 : Src),
+    (ltRecIns z n ys bs L0 P0).map Ins.shape =
+      (ltRecIns z.shape n (ys.map Src.shape) (bs.map Src.shape) L0.shape P0.shape).map Ins.shape
+  | y0 :: y, b0 :: bs, L0, P0 => by
+    simp only [List.map_cons, ltRecIns, List.map_append, ltRecIns_shape z n y bs L0 P0, List.length_map]
+    congr 1
+    simp only [ltLevel, List.map_cons, List.map_nil, shape_mulI, shape_linI, shape_shape, shape_loc,
+      ltRecL_shape, ltRecP_shape]
+  | [], _, _, _ => rfl
+  | _ :: _, [], _, _ => rfl
+
+theorem okAG_P20 (Q nb : Nat) : SLok (chGlueAG 20 Q nb) = true := by
+  rw [← SLok_shape, show (chGlueAG 20 Q nb).map Ins.shape = (chGlueAG 20 0 0).map Ins.shape from rfl, SLok_shape]
   apply Lvm.Fin.SLok_of_F
   decide +kernel
 
-theorem okB_P20 (Q : Nat) (oA sh : LoopOut) :
-    SLok (chGlueB (chQB 20 Q) (rhoC oA 20) (rho'C sh 20) (eZC oA 20) (sh.cell 5 (20 - 1))) = true := by
+theorem preRecDOut_shape (n : Nat) : ∀ (xs bs : List Src) (base : Src × Src × Src),
+    preRecDOut n (xs.map Src.shape) (bs.map Src.shape) (base.1.shape, base.2.1.shape, base.2.2.shape) =
+      ((preRecDOut n xs bs base).1.shape, (preRecDOut n xs bs base).2.1.shape, (preRecDOut n xs bs base).2.2.shape)
+  | _ :: _, _ :: _, _ => by simp [preRecDOut, shape_loc]
+  | [], _, _ => by simp [preRecDOut]
+  | _ :: _, [], _ => by simp [preRecDOut]
+
+theorem preRecDIns_shape (z : Src) (n : Nat) : ∀ (xs ys bs : List Src) (base : Src × Src × Src),
+    (preRecDIns z n xs ys bs base).map Ins.shape =
+      (preRecDIns z.shape n (xs.map Src.shape) (ys.map Src.shape) (bs.map Src.shape)
+        (base.1.shape, base.2.1.shape, base.2.2.shape)).map Ins.shape
+  | x0 :: x, y0 :: y, b0 :: bs, base => by
+    simp only [List.map_cons, preRecDIns, List.map_append, preRecDIns_shape z n x y bs base, List.length_map,
+      preRecDOut_shape]
+    congr 1
+    simp only [preLevelD, List.map_cons, List.map_nil, shape_mulI, shape_linI, shape_addI, shape_shape, shape_loc]
+  | [], _, _, _ => rfl
+  | _ :: _, [], _, _ => rfl
+  | _ :: _, _ :: _, [], _ => rfl
+
+theorem okBG_P20 (Q : Nat) (oA sh : LoopOut) :
+    SLok (chGlueBG (chQB 20 Q) (rhoC oA 20) (rho'C sh 20) (eZC oA 20) (mbC oA 20) (sh.cell 5 (20 - 1))) = true := by
   rw [← SLok_shape]
-  simp only [chGlueB, List.map_append]
-  rw [loadsAt_shape, dotIns_shape, shiftRecIns_shape]
-  simp only [List.map_append, List.map_cons, List.map_nil, List.map_map, Function.comp_def, shape_cellSrc, shape_mulI, shape_linI, shape_addI, shape_loc, shape_shape, shape_getD_cellSrc, rhoC, rho'C, eZC, eLC, preP, List.length_map, List.length_range, shape_ins_mk, shape_getD_mapCellSrc, eMus_any]
+  simp only [chGlueBG, List.map_append]
+  rw [loadsAt_shape, dotIns_shape, preRecDIns_shape]
+  simp only [List.map_append, List.map_cons, List.map_nil, List.map_map, Function.comp_def, shape_cellSrc,
+    shape_mulI, shape_linI, shape_addI, shape_loc, shape_shape, shape_getD_cellSrc, rhoC, rho'C, eZC, mbC,
+    List.length_map, List.length_range, shape_ins_mk, shape_getD_mapCellSrc]
   apply Lvm.Fin.SLok_of_F
   decide +kernel
 
-theorem okC_P20 (Q : Nat) (gate : Cell) (oA sh sc2 oB : LoopOut) :
-    SLok (chGlueC (chQC 20 Q) [sc2.cell 2 0, sc2.cell 2 1] (eLC oA 20) (eZC oA 20) (rho'C sh 20)
-      (oA.cell (2 * 20 + 163) 0) (oB.cell (8 * 20 + 123) 0) (sc2.cell 5 1) gate) = true := by
+theorem okCG_P20 (Q : Nat) (gate : Cell) (oA sc2 oB : LoopOut) :
+    SLok (chGlueCG (chQC 20 Q) [sc2.cell 2 0, sc2.cell 2 1] (eLC oA 20) (eZC oA 20)
+      (oB.cell (14 * 20 + 126) 0) (sc2.cell 5 1) gate) = true := by
   rw [← SLok_shape]
-  simp only [chGlueC, List.map_append]
+  simp only [chGlueCG, List.map_append]
   rw [loadsAt_shape, eqTabGo_shape, dotIns_shape, dotIns_shape (n := 78), dotIns_shape (n := 82),
-    dotIns_shape (n := 138), mulChainIns_shape]
-  simp only [List.map_append, List.map_cons, List.map_nil, List.map_map, Function.comp_def, shape_cellSrc, shape_mulI, shape_linI, shape_addI, shape_loc, shape_shape, shape_getD_cellSrc, rhoC, rho'C, eZC, eLC, preP, List.length_map, List.length_range, shape_ins_mk, shape_getD_mapCellSrc, eMus_any]
+    dotIns_shape (n := 138)]
+  simp only [List.map_append, List.map_cons, List.map_nil, List.map_map, Function.comp_def, shape_cellSrc,
+    shape_mulI, shape_linI, shape_addI, shape_loc, shape_shape, shape_getD_cellSrc, eZC, eLC,
+    List.length_map, List.length_range, shape_ins_mk, shape_getD_mapCellSrc, eMus_any]
   apply Lvm.Fin.SLok_of_F
   decide +kernel
+
+theorem okN (nb : Nat) (l : List Cell) :
+    (ltNIns nb l).map Ins.shape = (ltNIns 0 (List.replicate l.length default)).map Ins.shape := by
+  simp only [ltNIns, List.map_append, List.map_cons, List.map_nil, List.length_replicate]
+  rw [borrowIns_shape, borrowIns_shape 0 2 0 l.length, ltRecIns_shape, ltRecIns_shape (n := 2 * l.length + 2)
+    (ys := (List.replicate l.length default).map cellSrc)]
+  simp only [List.length_replicate, List.map_map, Function.comp_def, shape_cellSrc, List.map_const',
+    List.map_replicate]
+  rfl
+
+theorem okN_P20 (nb : Nat) (l : List Cell) (hl : l.length = 20) : SLok (ltNIns nb l) = true := by
+  rw [← SLok_shape, okN, hl, SLok_shape]
+  apply Lvm.Fin.SLok_of_F
+  decide +kernel
+
 
 -- `okE` at `P20` depends on the sponge-block count literally (`preRecIns` walks its bits): decided after the
 -- re-freeze, as `okE_P8`.

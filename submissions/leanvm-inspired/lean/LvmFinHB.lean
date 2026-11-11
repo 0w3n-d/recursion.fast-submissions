@@ -120,6 +120,7 @@ structure BVFacts : Prop where
   nb : ∀ vk c x qm qr, HBPrem hτ' hτT vk c x qm qr →
     Lvm.Har.NBits (mem20 hτ' x qm qr).k ((sigIn cfg20).bn + 2) P20.logN
   n1 : ∀ vk c x qm qr, HBPrem hτ' hτT vk c x qm qr → 1 ≤ (pubOf vk (hdrOf x).cL (sig20 qr)).n
+  n2 : ∀ vk c x qm qr, HBPrem hτ' hτT vk c x qm qr → (pubOf vk (hdrOf x).cL (sig20 qr)).n ≤ 2 ^ P20.logN
   posr : ∀ vk c x qm qr, HBPrem hτ' hτT vk c x qm qr →
     Lvm.Har.PosOk (Lvm.Har.cfgRec P20 (Lvm.Har.posBase cfg20)) (mem20 hτ' x qm qr) (sig20 qr) 0
       P20.recLevels (Lvm.Har.openU P20 + 15)
@@ -175,7 +176,7 @@ theorem harith20 {P4 P5 P6 P7 P8 : ℕ}
     rw [show cfg20.p = P20 from rfl]; exact BV.posm vk c x qm qr P
   obtain ⟨h1, h2⟩ := Lvm.Har.harith_core cfg20 data20 M3.G20 vk (hdrOf x).cL hH h hS hin.flag
     (vk_cells hpub (okS_vk hok)) (BV.sb vk c x qm qr P) (BV.nb vk c x qm qr P) (BV.n1 vk c x qm qr P)
-    hposr hposm hend S.hwr S.hwm
+    (BV.n2 vk c x qm qr P) hposr hposm hend S.hwr S.hwm
   rw [real_cfg20] at h1 h2
   exact ⟨h1, h2.trans (accC_eq hpub)⟩
 

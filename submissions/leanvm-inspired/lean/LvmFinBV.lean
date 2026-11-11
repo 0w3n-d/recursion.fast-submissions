@@ -236,6 +236,48 @@ theorem n1_20 {bpl : ℕ → ℕ → Bool × ℕ} {rest : List Tab}
       (kAt (sigma P20 (wsOf (Lvm.X.laneOf (wOfCol qr)))) (8 * 24)).val from rfl, hk]
   exact h1
 
+/-- **`n' ≤ 2^20`** (`harith_core`'s `hn2`, lvm2's gated link): Q_sig's `ChildOk` on the child's header lane `n'` (stream
+lane 24), which is `pubOf`'s `n` on `Σ' = sigma` (`traceBytesB_decode`, `kAt_sigma`). -/
+theorem n2_20 {bpl : ℕ → ℕ → Bool × ℕ} {rest : List Tab}
+    (hT : ∀ x, T x = lvmTabs (Qn (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0) pl groups (arrsX x)
+      (aux cfg20 D))
+    (hst : ∀ x, AuxStatic (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0 pl groups (aux cfg20 D)
+      (arrsX x))
+    (hinb : ∀ vk c x qm qr, okS vk c x = true → (hdrOf x).b = 1 → GoodN T hτ x qm qr →
+      ((Qn (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0).interp
+        (inKOf (Qn (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0) pl groups (arrsX x) (aux cfg20 D)
+          lay26 (hτ' x) (stackOf lay26 qm qr))
+        (inEOf (Qn (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0) pl groups (arrsX x) (aux cfg20 D)
+          lay26 (hτ' x) (stackOf lay26 qm qr))).inb = true)
+    (hS : StreamOk P20)
+    (haux : aux cfg20 D = (sigSpecs (sigIn cfg20) (qsig (sigIn cfg20) (p1 (lay cfg20) (nK cfg20) 0)).1 bpl).map
+      BitsTab.BSpec.tab ++ rest)
+    (hR : SigRegLt ((Qn (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0).cells .K) (sigIn cfg20))
+    (hP : (p2 (lay cfg20) (sigIn cfg20) (nK cfg20) 0).k ≤
+      (Qn (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0).cells .K) :
+    ∀ vk c x qm qr, okS vk c x = true → (hdrOf x).b = 1 → GoodN T hτ x qm qr →
+      InMapN (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0 pl groups arrsX (aux cfg20 D) hτ' vk x qm qr →
+      LaneLink P20 (wsOf (Lvm.X.laneOf (wOfCol qr))) →
+      (pubOf vk (hdrOf x).cL (traceBytesB (decode P20 (wsOf (Lvm.X.laneOf (wOfCol qr)))))).n ≤ 2 ^ P20.logN := by
+  intro vk c x qm qr hok hb hG mp hL
+  have H := auxH20 hT hst hinb hok hb hG
+  have hTabs : SigTabsIn (sigIn cfg20) (qsig (sigIn cfg20) (p1 (lay cfg20) (nK cfg20) 0)).1 bpl (aux cfg20 D) := by
+    rw [haux]; exact sigTabsIn_append _ _ bpl rest
+  have hks := sigKSin_of_goodK hG.2 mp.xs mp.ys mp.yc mp.yls mp.yns
+  obtain ⟨-, hch⟩ := sig_of_aux H mp.flag hks bpl hTabs (sigCellsLt_qsig bpl hR hP) rfl
+  have h1 : ((memX (lay cfg20) (sigIn cfg20) (qarith cfg20) (nK cfg20) 0 pl groups arrsX (aux cfg20 D) hτ'
+      x qm qr).k ((sigIn cfg20).hd + 13)).val.toNat ≤ 2 ^ (sigIn cfg20).ln := hch.2.2.2.1
+  rw [mp.hd 13 (by norm_num)] at h1
+  have hlen := hashedLen_ge hS
+  have hws : (wsOf (Lvm.X.laneOf (wOfCol qr))).length = 17 * 2 ^ 14 := by simp [wsOf]
+  have hk := kAt_sigma P20 (wsOf (Lvm.X.laneOf (wOfCol qr))) 24 (by omega) (by omega)
+  rw [traceBytesB_decode hS hL]
+  show (laneAt (sigma P20 _) (headerAt 112)).toNat ≤ 2 ^ 20
+  rw [show headerAt 112 = 8 * 24 from rfl,
+    show laneAt (sigma P20 (wsOf (Lvm.X.laneOf (wOfCol qr)))) (8 * 24) =
+      (kAt (sigma P20 (wsOf (Lvm.X.laneOf (wOfCol qr)))) (8 * 24)).val from rfl, hk]
+  exact h1
+
 /-- **`NodeBase.hpos`**: Q_link's position bit cells are the answers' bits (QL's `qin_bits`, from the
 position classes' `bit` outputs `posBits_of` and the stream cells `stream_cells`). -/
 theorem hpos20

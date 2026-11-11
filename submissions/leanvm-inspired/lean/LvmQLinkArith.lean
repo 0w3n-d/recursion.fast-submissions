@@ -188,20 +188,20 @@ theorem padConst_eq (lam zeta : List FE) (hl : lam.length = 3) (hz : zeta.length
     h 4 8 (by omega) (by omega)]
   ring
 
-/-- **The `CH` shift sumcheck's claim** in closed form. -/
-theorem chShiftTarget0_eq (p : Params) (chal : List FE) (hc : chal.length = p.logN + 9) :
-    chShiftTarget0 p chal =
+/-- **The `CH` shift sumcheck's claim** in closed form (S1, gated: `C·lt_{n−1}(ρ)` by S1-V's `ltEvalF`). -/
+theorem chShiftTarget0_eq (p : Params) (pub : Pub) (chal : List FE) (hc : chal.length = p.logN + 9) :
+    chShiftTarget0 p pub chal =
       (eqW ((chal.drop p.logN).take 3) 0 * (eqW (chal.drop (p.logN + 3)) 0 + eqW (chal.drop (p.logN + 3)) 1 +
         eqW (chal.drop (p.logN + 3)) 6) + eqW ((chal.drop p.logN).take 3) 4 * eqW (chal.drop (p.logN + 3)) 8) *
-      (1 + (chal.take p.logN).prod) := by
-  unfold chShiftTarget0 chSplit eqOnes
+      ltEvalF (chal.take p.logN) (pub.n - 1) := by
+  unfold chShiftTarget0 chSplit
   simp only []
-  rw [padConst_eq _ _ (by simp; omega) (by simp; omega), prodE_eq_prod]
+  rw [padConst_eq _ _ (by simp; omega) (by simp; omega)]
 
-/-- The two-round sumcheck's claim: `f₁ + S(ρ, ρ')·Σ_p eq(ζ, p)·inS_p`. -/
-theorem chSc2Target0_eq (p : Params) (chal : List FE) (shift : List FE × FE) (inS : List FE)
+/-- The two-round sumcheck's claim (S1, gated): `f₁ + S̃(ρ, ρ')·Σ_p eq(ζ, p)·inS_p`. -/
+theorem chSc2Target0_eq (p : Params) (pub : Pub) (chal : List FE) (shift : List FE × FE) (inS : List FE)
     (hc : chal.length = p.logN + 9) (hi : inS.length = 64) :
-    chSc2Target0 p chal shift inS = shift.2 + shiftEval (chal.take p.logN) shift.1 *
+    chSc2Target0 p pub chal shift inS = shift.2 + gShiftEvalF (chal.take p.logN) shift.1 (pub.n - 1) *
       ∑ q ∈ Finset.range 64, eqW (chal.drop (p.logN + 3)) q * inS.getD q 0 := by
   unfold chSc2Target0 chSplit
   simp only []

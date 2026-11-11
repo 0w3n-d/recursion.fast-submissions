@@ -32,7 +32,19 @@ pub trait Oracle: Sync + Send {
             *o = self.ask(&buf);
         }
     }
+    /// `out[i] = H(0^pad ‖ rows[i·row_bytes ..][.. row_bytes])` on the calling thread: `ask_many_here` on those
+    /// queries (the service overrides it and sends the rows without copying them).
+    fn ask_rows_here(&self, out: &mut [Digest], rows: &[u8], row_bytes: usize, pad: usize) {
+        self.ask_many_here(out, &|i, buf: &mut Vec<u8>| {
+            buf.resize(buf.len() + pad, 0);
+            buf.extend_from_slice(&rows[i * row_bytes..][..row_bytes]);
+        })
+    }
 }
+
+/// P-QUICK lever 6: items at least this long go through `ask_rows_here` (the leaves); shorter ones (the
+/// 64-byte nodes) are cheaper to copy than to describe by `iovec`s.
+const ROWS_MIN: usize = 256;
 
 /// The service's keyed hash computed in-process (no service): `Keccak-256(k ‖ q)`.
 pub struct Local(Keyed);
@@ -160,7 +172,11 @@ fn requests_for(items: usize, bytes: usize) -> u64 {
 pub fn hash_items(c: Class, data: &[u8], len: usize, out: &mut [Digest]) {
     assert_eq!(data.len(), len * out.len());
     let t = Instant::now();
-    get().ask_many_here(out, &|i, buf: &mut Vec<u8>| buf.extend_from_slice(&data[i * len..][..len]));
+    if len >= ROWS_MIN {
+        get().ask_rows_here(out, data, len, 0);
+    } else {
+        get().ask_many_here(out, &|i, buf: &mut Vec<u8>| buf.extend_from_slice(&data[i * len..][..len]));
+    }
     note(c, requests_for(out.len(), data.len()), std::iter::repeat_n(len, out.len()), t);
 }
 
@@ -170,10 +186,14 @@ pub fn hash_padded(c: Class, rows: &[u8], row_bytes: usize, leaf_bytes: usize, o
     assert!(row_bytes <= leaf_bytes);
     let pad = leaf_bytes - row_bytes;
     let t = Instant::now();
-    get().ask_many_here(out, &|i, buf: &mut Vec<u8>| {
-        buf.resize(buf.len() + pad, 0);
-        buf.extend_from_slice(&rows[i * row_bytes..][..row_bytes]);
-    });
+    if row_bytes >= ROWS_MIN {
+        get().ask_rows_here(out, rows, row_bytes, pad);
+    } else {
+        get().ask_many_here(out, &|i, buf: &mut Vec<u8>| {
+            buf.resize(buf.len() + pad, 0);
+            buf.extend_from_slice(&rows[i * row_bytes..][..row_bytes]);
+        });
+    }
     note(c, requests_for(out.len(), leaf_bytes * out.len()), std::iter::repeat_n(leaf_bytes, out.len()), t);
 }
 

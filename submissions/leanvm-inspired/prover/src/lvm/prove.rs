@@ -93,7 +93,9 @@ fn whir_config(levels: &[Level]) -> crate::lv::pcs::whir::ProverConfig {
 /// Builds the recursion tables once the commitments' fixed contents are written (CH, KS, the stream, `σ'`)
 /// and the header is complete (`h`): `(header, C_main, C_rec) ↦ tables` (WP-15c: the M3 section's tables,
 /// whose aliased input arrays read the commitments and whose public array reads the header).
-pub type Build<'a> = dyn Fn(&Header, &[F64], &[F64]) -> Vec<crate::lvm::m3::TableW> + 'a;
+/// The second argument reads `len` words at offset `o` of `C_rec` (`true`) or `C_main` (`false`).
+pub type Col<'a> = dyn Fn(bool, usize, usize) -> Vec<F64> + 'a;
+pub type Build<'a> = dyn Fn(&Header, &Col) -> Vec<crate::lvm::m3::TableW> + Sync + 'a;
 
 /// Prove the `S` statement of `hd` (with `hd.h` filled in here) at parameter set `p` on the installed oracle.
 /// The recursion tables are `rec.tables`, or `build`'s (then `p` must already carry their M3 numbers).
@@ -122,6 +124,10 @@ pub fn prove(p: &Params, mut hd: Header, mut rec: RecWitness, build: Option<&Bui
     assert_eq!(hd.acc_in.pt.len(), p.acc_d(), "acc_in has D coordinates");
     let n = hd.n as usize;
     assert!(n >= 1 && n <= 1 << p.log_n, "1 ≤ n ≤ 2^log_n (A1)");
+    // S1 (BLUEPRINT2 §2.1): rows ≥ n hold the zero input and the CH link is gated by `[k ≤ m]`. The prover runs the
+    // written prefix with leanVM's padding block and sums the padding in closed form; `LVM_PGATE=dense` runs and sums
+    // every row instead, the byte-identity oracle (the same proof bytes).
+    let dense = std::env::var("LVM_PGATE").is_ok_and(|m| m == "dense");
 
     // ---- witness: CH, KS, C_main, C_rec
     // the two sequential Keccak walks, side by side
@@ -129,23 +135,79 @@ pub fn prove(p: &Params, mut hd: Header, mut rec: RecWitness, build: Option<&Bui
     if let Ok(path) = std::env::var("LVM_REC_DUMP") {
         std::fs::write(&path, rec.dump()).expect("LVM_REC_DUMP");
     }
-    let (chain, ks) = std::thread::scope(|sc| {
-        let k = sc.spawn(|| Sponge::run(p.ks_log, cont, rec.msg));
-        let c = Chain::run(p.log_n, &hd.s);
-        (c, k.join().expect("the sponge walk"))
+    // P-QUICK lever 3 (prover-only: the same columns and tables, computed in another order): the serial chain
+    // walk runs on its own thread; meanwhile this thread runs the sponge walk, allocates the commitments and
+    // writes KS, σ' and the stream. The recursion tables need `h = chainEnd s n` (the header) and read
+    // C_rec and C_main outside the CH block: they are built on a third thread from row n − 1 of the walk on,
+    // beside the CH witness. A read that would touch the CH columns (in, mid, Y) is not served there: the
+    // build is then redone after the CH witness (the old order).
+    let (ch_lo, ch_hi) = (lay.ch_off, lay.ch_off + (50usize << p.log_n));
+    let (y_lo, y_hi) = (lay.ch_y(0), lay.ch_y(0) + (4usize << p.log_n));
+    let rec_msg = std::mem::take(&mut rec.msg);
+    let t0w = Instant::now();
+    let tl = std::env::var_os("LVM_LOG").is_some();
+    let (chain, ks, mut cmain, mut crec, ch_w, ks_w, built, h) = std::thread::scope(|sc| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let s = hd.s;
+        let walk = sc.spawn(move || Chain::run_gated_notify(p.log_n, &s, n, dense, move |h| tx.send(h).expect("the end of the chain")));
+        let ks = Sponge::run(p.ks_log, cont, rec_msg);
+        let mut cmain = vec![F64::ZERO; 1 << p.nu_main];
+        let mut crec = vec![F64::ZERO; 1 << p.nu_rec()];
+        let ks_w = tables::write_ks(&lay, &ks, &mut cmain, &mut crec);
+        for (i, &w) in rec.sigma.iter().enumerate() {
+            crec[lay.rec_col(REC_STREAM_COLS) + i] = F64(w);
+        }
+        let h = rx.recv().expect("the walk reaches row n − 1");
+        let t_h = t0w.elapsed().as_secs_f64();
+        let mut hd_b = hd.clone();
+        hd_b.h = h;
+        let (chain, ch_w, built) = std::thread::scope(|si| {
+            let (a, rest) = cmain.split_at_mut(ch_lo);
+            let (mid, c) = rest.split_at_mut(ch_hi - ch_lo);
+            let (a, c, cr, hd_b) = (&*a, &*c, &crec, &hd_b);
+            let tabs = build.map(|b| {
+                si.spawn(move || {
+                    let hit = std::cell::Cell::new(false);
+                    let col = |r: bool, o: usize, len: usize| -> Vec<F64> {
+                        let e = o + len;
+                        if r {
+                            cr[o..e].to_vec()
+                        } else if (o < ch_hi && e > ch_lo) || (o < y_hi && e > y_lo) {
+                            hit.set(true);
+                            vec![F64::ZERO; len]
+                        } else if e <= ch_lo {
+                            a[o..e].to_vec()
+                        } else {
+                            c[o - ch_hi..e - ch_hi].to_vec()
+                        }
+                    };
+                    let t = b(hd_b, &col);
+                    let t_b = t0w.elapsed().as_secs_f64();
+                    (!hit.get()).then_some((t, t_b))
+                })
+            });
+            let chain = walk.join().expect("the chain walk");
+            let t_w = t0w.elapsed().as_secs_f64();
+            let ch_w = crate::lv::keccak_gkr::Witness::generate(chain.shape, &chain.inputs, mid);
+            let t_g = t0w.elapsed().as_secs_f64();
+            let built = tabs.map(|t| t.join().expect("the recursion tables"));
+            if tl {
+                let t_b = built.as_ref().and_then(|b| b.as_ref().map(|x| x.1));
+                eprintln!("lvm: witness timeline n={n}: h at {t_h:.3} s, walk {t_w:.3} s, CH witness {t_g:.3} s, tables {t_b:?} s");
+            }
+            (chain, ch_w, built.map(|b| b.map(|x| x.0)))
+        });
+        tables::write_ch_y(&lay, &chain, &mut cmain);
+        (chain, ks, cmain, crec, ch_w, ks_w, built, h)
     });
     hd.h = chain.end(n);
+    assert_eq!(hd.h, h, "chainEnd s n");
     lap("chain+sponge", &mut stages);
-    // SAFETY: zeroed below by `vec!`; F64 is a plain word.
-    let mut cmain = vec![F64::ZERO; 1 << p.nu_main];
-    let mut crec = vec![F64::ZERO; 1 << p.nu_rec()];
-    let ch_w = tables::write_ch(&lay, &chain, &mut cmain);
-    let ks_w = tables::write_ks(&lay, &ks, &mut cmain, &mut crec);
-    for (i, &w) in rec.sigma.iter().enumerate() {
-        crec[lay.rec_col(REC_STREAM_COLS) + i] = F64(w);
-    }
     if let Some(b) = build {
-        rec.tables = b(&hd, &cmain, &crec);
+        rec.tables = match built.flatten() {
+            Some(t) => t,
+            None => b(&hd, &|r: bool, o: usize, len: usize| (if r { &crec } else { &cmain })[o..o + len].to_vec()),
+        };
         rec.tables.retain(crate::lvm::m3::active);
         let sh = crate::lvm::m3::shape(&rec.tables);
         assert_eq!(sh, (p.bus_depth, p.leafdec_reads, p.table_rounds, p.table_evals), "the tables' M3 numbers are the record's");
@@ -229,7 +291,11 @@ pub fn prove(p: &Params, mut hd: Header, mut rec: RecWitness, build: Option<&Bui
     // ---- CH: instance point, 25 lanes, the Keccak GKR, ring switch; fixed claims (Lean `chFixedClaims`)
     let ch_block = lay.ch_off..lay.ch_off + (1 << lay.ch_vars());
     let r = ps.sample_vec(p.log_n);
-    let out = OutputClaim::of_inputs(chain.shape, &chain.inputs, r.clone());
+    let out = if dense {
+        OutputClaim::of_inputs(chain.shape, &chain.inputs, r.clone())
+    } else {
+        OutputClaim::of_inputs_padded(chain.shape, &chain.inputs, r.clone())
+    };
     ps.add_scalars(&out.lanes);
     let openings = ch_w.prove(&mut ps, &cmain[ch_block.clone()], &out);
     drop(ch_w);
@@ -254,7 +320,7 @@ pub fn prove(p: &Params, mut hd: Header, mut rec: RecWitness, build: Option<&Bui
     lap("CH gkr", &mut stages);
 
     // ---- CH link
-    let link_claims = link::prove_ch(&mut ps, &lay, &chain, &cmain);
+    let link_claims = link::prove_ch_gated(&mut ps, &lay, &chain, &cmain, Some((n, !dense)));
     drop(chain);
     lap("CH link", &mut stages);
 

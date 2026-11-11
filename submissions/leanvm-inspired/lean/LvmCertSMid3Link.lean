@@ -121,9 +121,9 @@ theorem lk_ringCol {qm : Column 26} (ring : E × (List E → E))
   exact h.symm
 
 /-- **The `CH` link's claims.** -/
-theorem chLinkClaims_of (lo : Lvm.KG.ChLinkOut) (hρ : lo.shift.1.length = 20) {qm : Column 26}
-    {qr : Column 19} (h : ∀ e ∈ chLinkClaimsE lo, HoldsC qm qr e) :
-    Lvm.KG.ChLinkClaims 20 (colM qm) lo := by
+theorem chLinkClaims_of (n : ℕ) (lo : Lvm.KG.ChLinkOut) (hρ : lo.shift.1.length = 20)
+    {qm : Column 26} {qr : Column 19} (h : ∀ e ∈ chLinkClaimsE n lo, HoldsC qm qr e) :
+    Lvm.KG.ChLinkClaims 20 n (colM qm) lo := by
   refine ⟨lk_ringCol _ (h (.main, ⟨chBlk, lo.ringIn.2, lo.ringIn.1⟩) (List.mem_map.mpr
       ⟨_, List.mem_append_left _ (List.mem_cons_self ..), rfl⟩)),
     lk_ringCol _ (h (.main, ⟨chBlk, lo.ringY.2, lo.ringY.1⟩) (List.mem_map.mpr
@@ -131,7 +131,7 @@ theorem chLinkClaims_of (lo : Lvm.KG.ChLinkOut) (hρ : lo.shift.1.length = 20) {
   intro t ht8 ht25
   have hj : t - 8 < 17 := by omega
   have hc := h (.main, BClaim.point chBlk (lo.shift.1 ++ selE (8 + (t - 8)) slotLog)
-      (M3.kE (if 8 + (t - 8) = 16 then ⟨(0x80 : UInt64) <<< 56⟩ else 0)))
+      (M3.kE (if 8 + (t - 8) = 16 then ⟨(0x80 : UInt64) <<< 56⟩ else 0) * Lvm.KG.ltEvalE lo.shift.1 n))
     (List.mem_map.mpr ⟨_, List.mem_append_right _
       (List.mem_map.mpr ⟨t - 8, List.mem_range.mpr hj, rfl⟩), rfl⟩)
   have hc' := (holds_point (μ := 26) (v := 20 + 6) (off := 0) (dvd_zero _) (by norm_num) _
@@ -140,7 +140,7 @@ theorem chLinkClaims_of (lo : Lvm.KG.ChLinkOut) (hρ : lo.shift.1.length = 20) {
   simp only [zero_add] at hc'
   rw [lk_sum_sel hρ (by omega)] at hc'
   unfold LeanVM.Protocol.KeccakGkr.stepMle
-  refine hc'.trans ?_
+  refine hc'.trans (congrArg (· * Lvm.KG.ltEvalE lo.shift.1 n) ?_)
   unfold Lvm.KG.padConstLane
   split_ifs <;> rfl
 

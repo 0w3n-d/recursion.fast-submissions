@@ -112,7 +112,8 @@ pub fn lanes_digest(l: &[u64]) -> Digest {
     d
 }
 
-/// The chain table `CH`: `in_0 = Pad43(s)`, `in_{i+1} = Pad43(Y_i)`, continued to `2^log_n` rows (A9).
+/// The chain table `CH`: `in_0 = Pad43(s)`, `in_{i+1} = Pad43(Y_i)` for `i + 1 < n`; S1 (BLUEPRINT2 §2.1, A9 deleted):
+/// rows `≥ n` hold the zero input ([`Chain::run_gated`]). [`Chain::run`] is v1's walk to `2^log_n` rows, kept for tests.
 pub struct Chain {
     pub shape: Shape,
     pub inputs: Vec<[u64; LANES]>,
@@ -121,21 +122,62 @@ pub struct Chain {
 }
 
 impl Chain {
+    #[allow(dead_code)]
     pub fn run(log_n: usize, s: &Digest) -> Self {
+        Self::run_notify(log_n, s, 0, |_| {})
+    }
+    /// [`Chain::run`], calling `at_end(chainEnd s n_end)` as soon as row `n_end − 1` is done (`n_end = 0`: never).
+    pub fn run_notify(log_n: usize, s: &Digest, n_end: usize, mut at_end: impl FnMut(Digest)) -> Self {
         let n = 1usize << log_n;
         let mut inputs = Vec::with_capacity(n);
         let mut y = Vec::with_capacity(n);
+        let mut d = *s;
+        for i in 0..n {
+            let a = crate::keccak::chain_block(&d);
+            inputs.push(a);
+            let mut b = a;
+            // P-QUICK lever 2: the vendored single-state permutation (AVX-512 tier: 247 ns against 480 ns for
+            // `keccak.rs`'s scalar one; `kat keccak` checks that the two agree)
+            crate::lv::primitives::hash::keccak_f(&mut b);
+            let out = [b[0], b[1], b[2], b[3]];
+            y.push(out);
+            d = lanes_digest(&out);
+            if i + 1 == n_end {
+                at_end(d);
+            }
+        }
+        Self { shape: Shape::new(n, GKR_DEPTH), inputs, y }
+    }
+    /// S1 (BLUEPRINT2 §2.1; P-GATE): walk only the `n` live rows; rows `≥ n` hold the all-zero input and
+    /// `Y = Keccak-f(0)[0..4)`. `explicit` keeps the zero inputs as written rows (the dense reference prover,
+    /// whose proof must be byte-identical to the padded one); otherwise `inputs` has `n` rows and the GKR
+    /// witness pads the rest with leanVM's padding block.
+    pub fn run_gated(log_n: usize, s: &Digest, n: usize, explicit: bool) -> Self {
+        Self::run_gated_notify(log_n, s, n, explicit, |_| {})
+    }
+    /// [`Chain::run_gated`], calling `at_end(chainEnd s n)` as soon as row `n − 1` is done (P-QUICK lever 3).
+    pub fn run_gated_notify(log_n: usize, s: &Digest, n: usize, explicit: bool, mut at_end: impl FnMut(Digest)) -> Self {
+        let big = 1usize << log_n;
+        let mut inputs = Vec::with_capacity(if explicit { big } else { n });
+        let mut y = Vec::with_capacity(big);
         let mut d = *s;
         for _ in 0..n {
             let a = crate::keccak::chain_block(&d);
             inputs.push(a);
             let mut b = a;
-            crate::keccak::keccak_f(&mut b);
+            crate::lv::primitives::hash::keccak_f(&mut b);
             let out = [b[0], b[1], b[2], b[3]];
             y.push(out);
             d = lanes_digest(&out);
         }
-        Self { shape: Shape::new(n, GKR_DEPTH), inputs, y }
+        at_end(d);
+        let mut z = [0u64; LANES];
+        crate::lv::primitives::hash::keccak_f(&mut z);
+        y.resize(big, [z[0], z[1], z[2], z[3]]);
+        if explicit {
+            inputs.resize(big, [0u64; LANES]);
+        }
+        Self { shape: Shape::new(big, GKR_DEPTH), inputs, y }
     }
     /// `chainEnd s n` for `1 ≤ n ≤ 2^log_n`: lanes 0–3 of row `n − 1`.
     pub fn end(&self, n: usize) -> Digest {
@@ -181,7 +223,7 @@ impl Sponge {
             }
             inputs.push(a);
             let mut b = a;
-            crate::keccak::keccak_f(&mut b);
+            crate::lv::primitives::hash::keccak_f(&mut b);
             outputs.push(b);
         }
         Self { shape: Shape::new(n, GKR_DEPTH), inputs, outputs, cont, msg }
@@ -192,13 +234,18 @@ impl Sponge {
 pub fn write_ch(lay: &Layout, ch: &Chain, cmain: &mut [F64]) -> Witness {
     let n = 1usize << lay.log_n;
     let w = Witness::generate(ch.shape, &ch.inputs, &mut cmain[lay.ch_off..lay.ch_off + 50 * n]);
+    write_ch_y(lay, ch, cmain);
+    w
+}
+
+/// Write `CH`'s `Y` lanes 0–3 into `C_main`.
+pub fn write_ch_y(lay: &Layout, ch: &Chain, cmain: &mut [F64]) {
     for m in 0..4 {
         let o = lay.ch_y(m);
         for (i, y) in ch.y.iter().enumerate() {
             cmain[o + i] = F64(y[m]);
         }
     }
-    w
 }
 
 /// Write `KS` (its committed lanes, its 25 `Y` lanes and the `X` messages) into `C_main`, and the stream

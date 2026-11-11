@@ -167,6 +167,9 @@ impl oracle::Oracle for Shared {
     fn ask_many_here(&self, out: &mut [Digest], build: &oracle::Builder) {
         oracle::Oracle::ask_many_here(self.0, out, build)
     }
+    fn ask_rows_here(&self, out: &mut [Digest], rows: &[u8], row_bytes: usize, pad: usize) {
+        oracle::Oracle::ask_rows_here(self.0, out, rows, row_bytes, pad)
+    }
 }
 
 /// `sprove --params P8|P20 [--local] [--n N] [--seed S] [--b 0|1] [--out FILE] [--trace FILE] [--sign FILE]`: one
@@ -229,6 +232,35 @@ fn cmd_rqtest(args: &[String]) {
             }
             std::fs::write(tr, &v).expect("trace out");
         }
+    }
+}
+
+/// P-GATE: `pgbench commit NU REPS [--local]`: commit a pseudo-random `2^NU`-word vector at `C_main`'s level-0
+/// rate and cap (P20), on the service (`RF_ORACLE`) unless `--local`; prints the wall time per rep.
+fn cmd_pgbench(args: &[String]) {
+    let p = lvm::params::Params::by_name("P20").unwrap();
+    let nu: usize = args.get(3).map_or(26, |v| v.parse().expect("NU"));
+    let reps: usize = args.get(4).map_or(3, |v| v.parse().expect("REPS"));
+    if args.iter().any(|a| a == "--local") {
+        oracle::install(Box::new(oracle::Local::keyed(&[0x5A; 32])));
+    } else {
+        let path = std::env::var("RF_ORACLE").unwrap_or_else(|_| service::fatal("RF_ORACLE is not set (or use --local)"));
+        let s = service::Service::connect(&path).unwrap_or_else(|e| service::fatal(&e));
+        s.warm(lv::parallel::num_threads().min(service::MAX_CONNS));
+        let s: &'static service::Service = Box::leak(Box::new(s));
+        oracle::install(Box::new(Shared(s)));
+    }
+    lv::parallel::init();
+    let m0 = p.main_levels[0];
+    let msg: Vec<lv::primitives::field::F64> =
+        (0..1u64 << nu).map(|x| lv::primitives::field::F64(x.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (x << 29))).collect();
+    for r in 0..reps {
+        oracle::reset_stats();
+        let t = Instant::now();
+        let (c, d) = lv::pcs::whir::commit(&msg, nu, lv::pcs::whir::INITIAL_FOLDING_FACTOR, m0.rate, m0.cap);
+        let s = t.elapsed().as_secs_f64();
+        println!("pgbench commit nu={nu} rep={r} wall_s={s:.3} cap0={:02x}", c.cap[0][0]);
+        drop(d);
     }
 }
 
@@ -497,13 +529,15 @@ fn cmd_stream(mode: &str, dir: &str) {
     // pre-faulted to about the request's peak (`LVM_PREFAULT_MIB` overrides)
     let pf = std::env::var("LVM_PREFAULT_MIB").ok().and_then(|x| x.parse().ok()).unwrap_or(if p.log_n >= 20 { 6500 } else { 200 });
     proc::heap_setup(pf);
+    // P-QUICK lever 1: the node program (blob parse, compile, zero table build, Φ's columns) depends on no
+    // input, so it is built before `ready` (untimed) instead of after `go`
+    let ctx = lvm::stream::Ctx { p, svc, vk, log, q: None, phi0: lv::primitives::field::F192::ZERO }.with_loop();
     if log {
-        eprintln!("lvm: {mode} {} {} start-up {:.3} s", p.name, kat::info(), t_start.elapsed().as_secs_f64());
+        eprintln!("lvm: {mode} {} {} start-up {:.3} s", ctx.p.name, kat::info(), t_start.elapsed().as_secs_f64());
     }
     say("ready");
     wait_go();
     let t = Instant::now();
-    let ctx = lvm::stream::Ctx { p, svc, vk, log, q: None, phi0: lv::primitives::field::F192::ZERO }.with_loop();
     let file = lvm::stream::run(&ctx, mode, dir);
     proc::tsu_release();
     std::fs::write(format!("{dir}/proof.bin"), &file).unwrap_or_else(|e| service::fatal(&format!("proof.bin: {e}")));
@@ -532,6 +566,7 @@ fn run(args: Vec<String>) -> i32 {
         }
         Some("batch") => cmd_batch(&args),
         Some("sprove") => cmd_sprove(&args),
+        Some("pgbench") => cmd_pgbench(&args),
         Some("setup") => {
             let dir = args.get(2).cloned().or_else(|| std::env::var("RF_SETUP").ok()).unwrap_or_else(|| "/setup".into());
             return cmd_setup(&dir);

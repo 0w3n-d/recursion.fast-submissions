@@ -159,6 +159,10 @@ theorem callerClaims_ch (co : CallerOut) (hr : co.1.length = 20)
     simp only [zero_add] at H
     exact H
 
+/-- The header's chain length, read by `V_S` (`pubX`) and by the statement check (`hdrOf`). -/
+theorem pubX_n (x : List UInt8) : (pubX x).n = (hdrOf x).n :=
+  congrArg UInt64.toNat (laneAt_shift fun k _ ↦ sig_get x (by norm_num) k)
+
 /-- **`CH`'s boundary claims** give `BndS`. -/
 theorem bndS_of_chFixed (x : List UInt8) (r v : List E) {qm : Column 26}
     (hf : ∀ b ∈ chFixedClaimsE r v (pubX x), StackClaim.Holds 26 b.onStack qm) : BndS x qm := by

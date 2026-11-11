@@ -1,5 +1,6 @@
 -- New for lvm (HAR): phases 4–7 of `F` as `PhaseAt` facts from WP-16a's wiring (`phases47`), QA1's
--- `gkr_spec`/`chLink_sound`/`ksLink_sound`, and the reading lemmas of `LvmQAsmHar47`.
+-- `gkr_spec`/`chLink_sound`/`ksLink_sound`, and the reading lemmas of `LvmQAsmHar47`. lvm2 (S1-INT): the
+-- CH link is S1-Q's gated gadget (`chLinkGadgetG`, `chLinkG_sound0`), its threshold the header's `n`.
 import LvmQAsmHar47
 import LvmQAsmHarTop
 
@@ -18,7 +19,7 @@ theorem phases47_fst (C : QCfg) (ptr : Ptr) :
     let G := Lvm.Q1.gkrGadget (C.p.logN - 4) (aLane C.p 2) (fun i => (A ptr).1.cell 0 i)
       (fun l => (B p1).1.cell 0 l) (kc (pbB C))
     let p3 := p2.adv (G p2).2
-    let L := Lvm.Q1.chLinkGadget C.p.logN (clog2 C.p.logN) (aLane C.p 3) (kc (pbB C))
+    let L := Lvm.Q1.chLinkGadgetG C.p.logN (clog2 C.p.logN) (aLane C.p 3) ((sigIn C).bn + 2) (kc (pbB C))
     let p4 := p3.adv (L p3).2
     let Ak := loadEs (clog2 C.p.ksLog) (aLane C.p 4) 9
     let p5 := p4.adv (Ak p4).2
@@ -64,12 +65,13 @@ theorem p47_at (C : QCfg) {c : Ctx} {M : Mem} {ptr : Ptr} {sig : ByteArray} {T :
     (hTrk : aLane C.p 4 + 9 * C.p.ksLog + 2 < T) (hTvk : aLane C.p 5 + 3 * 25 + 2 < T)
     (hD : C.p.logN ≤ 2 ^ clog2 C.p.logN) (hDk : C.p.ksLog ≤ 2 ^ clog2 C.p.ksLog)
     (hTl : chQC C.p.logN (aLane C.p 3) + 3 * 64 + 3 ≤ T) (hTlk : ksQV C.p.ksLog (aLane C.p 7) + 3 * 4 + 3 ≤ T)
-    (hokA : SLok (chGlueA C.p.logN (aLane C.p 3)) = true)
-    (hokB : ∀ oA sh : LoopOut, SLok (chGlueB (chQB C.p.logN (aLane C.p 3)) (rhoC oA C.p.logN) (rho'C sh C.p.logN)
-      (eZC oA C.p.logN) (sh.cell 5 (C.p.logN - 1))) = true)
-    (hokC : ∀ oA sh sc2 oB : LoopOut, SLok (chGlueC (chQC C.p.logN (aLane C.p 3)) [sc2.cell 2 0, sc2.cell 2 1]
-      (eLC oA C.p.logN) (eZC oA C.p.logN) (rho'C sh C.p.logN) (oA.cell (2 * C.p.logN + 163) 0)
-      (oB.cell (8 * C.p.logN + 123) 0) (sc2.cell 5 1) (kc (pbB C))) = true)
+    (hokA : SLok (chGlueAG C.p.logN (aLane C.p 3) ((sigIn C).bn + 2)) = true)
+    (hokB : ∀ oA sh : LoopOut, SLok (chGlueBG (chQB C.p.logN (aLane C.p 3)) (rhoC oA C.p.logN)
+      (rho'C sh C.p.logN) (eZC oA C.p.logN) (mbC oA C.p.logN) (sh.cell 5 (C.p.logN - 1))) = true)
+    (hokC : ∀ oA sc2 oB : LoopOut, SLok (chGlueCG (chQC C.p.logN (aLane C.p 3)) [sc2.cell 2 0, sc2.cell 2 1]
+      (eLC oA C.p.logN) (eZC oA C.p.logN) (oB.cell (14 * C.p.logN + 126) 0) (sc2.cell 5 1) (kc (pbB C))) = true)
+    (hN1 : 1 ≤ pub.n) (hN2 : pub.n ≤ 2 ^ C.p.logN)
+    (hbits : ∀ i < C.p.logN, FE.ofK (M.k ((sigIn C).bn + 2 + i)) = bitQ pub.n i)
     (hB : 1 ≤ spongeBlocks C.p) (hB2 : spongeBlocks C.p ≤ 2 ^ C.p.ksLog) (hK : 2 ^ C.p.recRowsLog + 431 ≤ 2 ^ C.p.ksLog)
     (hokE : ∀ sh : LoopOut, SLok (ksGlueE C.p.ksLog (aLane C.p 7) (ksQV C.p.ksLog (aLane C.p 7)) (spongeBlocks C.p - 1)
       (2 ^ C.p.recRowsLog + 399 + 31) (2 ^ C.p.recRowsLog + 399) (rho'C sh C.p.ksLog) (sh.cell 2 C.p.recRowsLog)
@@ -123,8 +125,8 @@ theorem p47_at (C : QCfg) {c : Ctx} {M : Mem} {ptr : Ptr} {sig : ByteArray} {T :
   · intro s hs hok
     rw [chLinkPh_run C.p _ _ _ pub sig s (by omega), hs]
     exact ⟨rfl, hok, by simp only [pos, Nat.add_zero]; exact l6⟩
-  · exact chLink_sound C.p _ 52 (clog2 C.p.logN) _ _ pub (kc (pbB C)) (by omega) hD l5 hokA hokB hokC hS hTl hg
-      hhL haL
+  · exact chLinkG_sound0 C.p _ 52 (clog2 C.p.logN) _ _ pub (kc (pbB C)) (by omega) hD l5 hokA hokB hokC hS hTl
+      hg hN1 hN2 hbits hhL haL
   · intro s hs hok
     rw [ksPh_run C.p (by omega) sig s, hs]
     obtain ⟨f1, f2, f3, f4, f5⟩ := KK s.ok

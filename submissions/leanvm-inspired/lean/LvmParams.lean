@@ -204,17 +204,18 @@ def mkParams (name : String) (logN secBits recRowsLog nuMain : Nat)
 
 /-- **The production set** (BLUEPRINT §3.1; `params.py`, `P20`). The four LoopIR feedback values
 are WP-16a2's freeze of the node program's M3 sizes for `P20` (`bus_depth 22, leafdec_reads 1, table_rounds 17,
-table_evals 4199`). `PUB` is sumcheck table 127 (84 groups, then input array 43). -/
+table_evals 4199`; lvm2 S1-INT: `4253`). `PUB` is sumcheck table 131 (88 groups, then input array 43). -/
 def P20 : Params :=
   mkParams "P20" 20 129 14 26 [6, 4, 4, 4] [1, 2, 3, 4] [8, 7, 7, 7] [6] [2] [7] 15 13
-    22 1 17 4199 127
+    22 1 17 4253 131
 
 /-- **The test set** (`params.py`, `P8`): `CH` = 2^9 (leanVM's minimum Keccak batch), 20-bit
 query security, `C_rec` 32 × 2^12, caps 2^4. The feedback values are INT-2's freeze for `P8`
-(`21, 1, 16, 3879`, WP-16a2); `PUB` is sumcheck table 124 (81 groups, then input array 43). -/
+(`21, 1, 16, 3879`, WP-16a2; lvm2 S1-INT: `3951`); `PUB` is sumcheck table 128 (85 groups, then input array
+43). -/
 def P8 : Params :=
   mkParams "P8" 9 20 12 23 [6, 4, 4, 4] [1, 2, 3, 4] [4, 4, 4, 4] [6] [2] [4] 13 12
-    21 1 16 3879 124
+    21 1 16 3951 128
 
 /-! ## Checks against WP-0 (`ref/sizes.md`, Parameters table) -/
 
@@ -222,9 +223,9 @@ def P8 : Params :=
 theorem headerBytes_eq : headerBytes = 5624 := by decide
 
 /-- A23's accumulator: `D = 28`, `acc_in` at byte 4,928; `dk = 11` at `P20`, `12` at `P8`;
-`PUB` is sumcheck table 127 at `P20`, 124 at `P8` (after the groups). -/
+`PUB` is sumcheck table 131 at `P20`, 128 at `P8` (after the groups). -/
 theorem acc_P20_P8 : accVars = 28 ∧ offAcc = 4928 ∧ P20.accLog = 11 ∧ P8.accLog = 12 ∧
-    P20.pubTab = 127 ∧ P8.pubTab = 124 := by decide
+    P20.pubTab = 131 ∧ P8.pubTab = 128 := by decide
 
 /-- The query counts of `P20`: 311, 191, 156, 142 (`C_main`) and 191 (`C_rec`). -/
 theorem t_P20 : P20.mainLevels.map Level.t = [311, 191, 156, 142] ∧

@@ -98,7 +98,7 @@ theorem cg_callerProg (h : ℕ) : NoCG (Lvm.KG.callerProg h) := by
   exact NoCG.bind (cg_sampleChallenges _) fun _ ↦ NoCG.bind (cg_readScalars _) fun _ ↦
     NoCG.bind (cg_verifyKeccak _ _ _) fun _ ↦ NoCG.bind (cg_ringSwitch _ _) fun _ ↦ cg_ret _
 
-theorem cg_chLinkProg (h ys : ℕ) : NoCG (Lvm.KG.chLinkProg h ys) := by
+theorem cg_chLinkProg (h ys n : ℕ) : NoCG (Lvm.KG.chLinkProg h ys n) := by
   unfold Lvm.KG.chLinkProg
   exact NoCG.bind (cg_sampleChallenges _) fun _ ↦ NoCG.bind (cg_sumcheck _ _ _) fun _ ↦
     NoCG.bind (cg_readScalars _) fun _ ↦ NoCG.bind (cg_ringSwitch _ _) fun _ ↦
@@ -112,14 +112,14 @@ theorem cg_ksLinkProg (hk r : ℕ) (rows : List ℕ) : NoCG (Lvm.KG.ksLinkProg h
     NoCG.bind (cg_readScalars _) fun _ ↦ NoCG.bind (cg_require _) fun _ ↦ cg_ret _
 
 /-- **V_S phases 4–7 commit nothing and ask no proof of work.** -/
-theorem cg_kgProgS : NoCG Lvm.VEq.kgProgS :=
-  NoCG.bind (NoCG.bind (cg_callerProg _) fun _ ↦ NoCG.bind (cg_chLinkProg _ _) fun _ ↦ cg_ret _)
+theorem cg_kgProgS (n : ℕ) : NoCG (Lvm.VEq.kgProgS n) :=
+  NoCG.bind (NoCG.bind (cg_callerProg _) fun _ ↦ NoCG.bind (cg_chLinkProg _ _ _) fun _ ↦ cg_ret _)
     fun _ ↦ NoCG.bind (NoCG.bind (cg_callerProg _) fun _ ↦ NoCG.bind (cg_ksLinkProg _ _ _) fun _ ↦
       cg_ret _) fun _ ↦ cg_ret _
 
 /-- **The middle phases commit nothing and ask no proof of work.** -/
 theorem cg_midS (tabs : Lvm.Pub → List Lvm.M3.Tab) (x : List UInt8) : NoCG (Lvm.VEq.midS tabs x) :=
-  NoCG.bind (Lvm.Acc.noCG_lbusTableAccProg _ _ _ _) fun _ ↦ NoCG.bind cg_kgProgS fun _ ↦ cg_ret _
+  NoCG.bind (Lvm.Acc.noCG_lbusTableAccProg _ _ _ _) fun _ ↦ NoCG.bind (cg_kgProgS _) fun _ ↦ cg_ret _
 
 /-- **`MidShape (midS tabs)`** given the multiaffinity of the `C_rec` claims it returns. -/
 theorem midShape_midS (tabs : Lvm.Pub → List Lvm.M3.Tab)

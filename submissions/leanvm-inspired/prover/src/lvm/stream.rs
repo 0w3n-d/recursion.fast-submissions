@@ -224,10 +224,9 @@ impl Ctx {
 
     /// The builder `prove` calls (M3 section present): aliased columns from the commitments, public lanes from
     /// the header and its statement.
-    fn builder(&self) -> Option<impl Fn(&Header, &[F64], &[F64]) -> Vec<crate::lvm::m3::TableW> + '_> {
-        matches!(&self.q, Some((_, Some(_)))).then_some(move |hd: &Header, cm: &[F64], cr: &[F64]| {
-            let col = |r: bool, o: usize, n: usize| (if r { cr } else { cm })[o..o + n].to_vec();
-            self.build_tables(&col, &crate::lvm::m3::pub_lanes(&hd.bytes(), &stmt_of(hd)))
+    fn builder(&self) -> Option<impl Fn(&Header, &crate::lvm::prove::Col) -> Vec<crate::lvm::m3::TableW> + Sync + '_> {
+        matches!(&self.q, Some((_, Some(_)))).then_some(move |hd: &Header, col: &crate::lvm::prove::Col| {
+            self.build_tables(col, &crate::lvm::m3::pub_lanes(&hd.bytes(), &stmt_of(hd)))
         })
     }
 

@@ -1,23 +1,27 @@
 -- New for lvm (WP-8): the algebra of the CH link (BLUEPRINT §4.1): V_S's `M3.v0` link formulas over `E`,
 -- the zero-test tables and the identities the link's specification (`LvmChainTableLink`) needs.
+-- lvm2 S1-L: the link gated by the chain length `n` (BLUEPRINT2 §2.1; P-GATE's `prove_ch_gate_body`).
 import LvmChainTable
-import LvmShift
+import LvmMask
 import LvmKeccakCaller
 
 /-!
 # The `CH` link: formulas and identities
 
-The link `in_{x+1} = Pad43(Y_x)` (`x + 1 < 2^h`) is checked bitwise on lanes `0 … 7` by a zero test
-at `(ρ, λ, ζ) ∈ E^h × E^3 × E^6` and a shift sumcheck, and on lanes `8 … 24` (constants) by a zero
-test riding on the shift sumcheck's challenges. With `ω(l, p) = eq(λ, l)·eq(ζ, p)`:
+The gated link `in_{x+1} = Pad43(Y_x)` (`x + 1 < n`, i.e. `x < m = n − 1`) is checked bitwise on
+lanes `0 … 7` by a zero test at `(ρ, λ, ζ) ∈ E^h × E^3 × E^6` and a shift sumcheck with the gated
+kernels `S_n = gShiftK ρ m`, `E'_n = ltK ρ m` (`LvmMask`), and on lanes `8 … 24` (the constants on
+rows `< n`, zero above) by a zero test riding on the shift sumcheck's challenges. With
+`ω(l, p) = eq(λ, l)·eq(ζ, p)`:
 
 * `padWeightE`, `padConstE`, `chShiftTargetE`, `chSc2TargetE`, `wtE`: V_S's `padWeight`,
   `padConst`, `chShiftTarget0`, `chSc2Target0`, `wt` (`LvmDecideV0`) over `E`, with `eqAt` for the
-  verifier's `eq` tables;
+  verifier's `eq` tables; the gated target is `C·lt̃_m(ρ)` and the second claim uses `S̃_n(ρ, ρ')`;
 * **`padSum_eq`**: `Σ_{l<8, p<64} ω(l,p)·Pad43(y)[64l + p] = padConst + Σ_{m<4, q<64} W(m,q)·y[64m + q]`;
 * `linkDelta`, `constDelta`: the zero-test tables; **`linkBits_of_zero`**, **`const_of_zero`**: they
-  vanish exactly on the relation; **`linkZero_iff`**: at full length the link table's extension is
-  `target + F(0)`, the shift sumcheck's claim (`shiftSum`);
+  vanish exactly on the relation; **`linkDelta_eq`**: the link table's extension is the shift
+  sumcheck's claim plus `C·lt̃_m(ρ)` (no bound on `n` needed: an input row past the table reads
+  as zero);
 * the sumcheck families `Fsh` (shift, `h` rounds) and `G2` (the `Y` lane, 2 rounds) and their ends
   (`Fsh_end`, `G2_nil`, `G2_end`) in the slices at `(ρ', λ, 0, 0, 0)` and `(ρ', μ, sel(ys/4))`.
 -/
@@ -51,13 +55,13 @@ of lane 4. -/
 def padConstE (lam zeta : List E) : E :=
   (∑ p ∈ range 8, if (0x43 : ℕ).testBit p then omegaE lam zeta 0 p else 0) + omegaE lam zeta 4 8
 
-/-- The shift sumcheck's claim `C·(1 + eq(ρ, 1^h))` (V_S's `chShiftTarget0`). -/
-def chShiftTargetE (h : ℕ) (chal : List E) : E :=
-  padConstE (chLam h chal) (chZeta h chal) * (1 + prodE (chRho h chal))
+/-- The gated shift sumcheck's claim `C·lt̃_m(ρ)`, `m = n − 1` (v1: `C·(1 + eq(ρ, 1^h))`). -/
+def chShiftTargetE (h n : ℕ) (chal : List E) : E :=
+  padConstE (chLam h chal) (chZeta h chal) * ltEvalE (chRho h chal) (n - 1)
 
-/-- The two-round sumcheck's claim `f₁ + S(ρ, ρ')·Σ_p eq(ζ, p) inS_p` (V_S's `chSc2Target0`). -/
-def chSc2TargetE (h : ℕ) (chal : List E) (shift : List E × E) (inS : List E) : E :=
-  shift.2 + shiftEvalE (chRho h chal) shift.1 *
+/-- The two-round sumcheck's claim `f₁ + S̃_n(ρ, ρ')·Σ_p eq(ζ, p) inS_p` (v1: `S̃` ungated). -/
+def chSc2TargetE (h n : ℕ) (chal : List E) (shift : List E × E) (inS : List E) : E :=
+  shift.2 + gShiftEvalE (chRho h chal) shift.1 (n - 1) *
     ∑ p ∈ range 64, eqAt (chZeta h chal) p * inS.getD p 0
 
 /-- `W̃(μ, q) = Σ_m eq(μ, m)·W(m, q)` (V_S's `wt`). -/
@@ -126,21 +130,23 @@ theorem padSum_eq (lam zeta : List E) (y : ℕ → Bool) :
 
 /-! ## The zero-test tables -/
 
-variable (h ys : ℕ) (col : ℕ → K)
+variable (h ys : ℕ) (col : ℕ → K) (n : ℕ)
 
-/-- The link's mismatch at row `x`, lane `l < 8`, bit `p` (rows `x + 1 < 2^h`). -/
+/-- The gated link's mismatch at row `x`, lane `l < 8`, bit `p` (rows `x + 1 < n`). -/
 def linkD (x l p : ℕ) : E :=
-  if x + 1 < 2 ^ h then
-    bitE ((col (x + 1 + 2 ^ h * l)).toBitVec.getLsbD p) + bitE (pad43Bit (yBits h ys col x) (64 * l + p))
+  if x + 1 < n then
+    bitE (inBit h col (x + 1) l p) + bitE (pad43Bit (yBits h ys col x) (64 * l + p))
   else 0
 
 /-- The link's zero-test table on `h + 9` bits: row low, then lane (3 bits), then bit (6). -/
-def linkDelta (w : ℕ) : E := linkD h ys col (w % 2 ^ h) (w / 2 ^ h % 8) (w / 2 ^ h / 8)
+def linkDelta (w : ℕ) : E := linkD h ys col n (w % 2 ^ h) (w / 2 ^ h % 8) (w / 2 ^ h / 8)
 
-/-- The constant lanes' zero-test table on `h + 5` bits: row low, then lane. -/
+/-- The constant lanes' zero-test table on `h + 5` bits: row low, then lane; the constant on the
+rows `< n`, zero above. -/
 def constDelta (w : ℕ) : E :=
   if 8 ≤ w / 2 ^ h ∧ w / 2 ^ h < 25 then
-    ofK (col (w % 2 ^ h + 2 ^ h * (w / 2 ^ h))) + ofK (K.ofLane (padConstLane (w / 2 ^ h)))
+    ofK (col (w % 2 ^ h + 2 ^ h * (w / 2 ^ h))) +
+      (if w % 2 ^ h < n then ofK (K.ofLane (padConstLane (w / 2 ^ h))) else 0)
   else 0
 
 theorem idx_div {x t : ℕ} (hx : x < 2 ^ h) : (x + 2 ^ h * t) / 2 ^ h = t := by
@@ -149,53 +155,61 @@ theorem idx_div {x t : ℕ} (hx : x < 2 ^ h) : (x + 2 ^ h * t) / 2 ^ h = t := by
 theorem idx_mod {x t : ℕ} (hx : x < 2 ^ h) : (x + 2 ^ h * t) % 2 ^ h = x := by
   rw [Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt hx]
 
-/-- **A vanishing link table is the link** on lanes `0 … 7`. -/
-theorem linkBits_of_zero (hz : ZeroOn (linkDelta h ys col) [] (h + 9)) : LinkBits h ys col := by
+/-- **A vanishing link table is the gated link** on lanes `0 … 7`. -/
+theorem linkBits_of_zero (hz : ZeroOn (linkDelta h ys col n) [] (h + 9)) : LinkBits h ys col n := by
   rw [zeroOn_nil] at hz
-  intro x hx l hl p hp
+  intro x hxh hx l hl p hp
   have := hz (x + 2 ^ h * (l + 8 * p)) (by
     have : 2 ^ (h + 9) = 2 ^ h * 512 := by rw [pow_add]; rfl
     nlinarith)
-  simp only [linkDelta, idx_div h (show x < 2 ^ h by omega), idx_mod h (show x < 2 ^ h by omega),
-    show (l + 8 * p) % 8 = l by omega, show (l + 8 * p) / 8 = p by omega, linkD, if_pos hx] at this
+  simp only [linkDelta, idx_div h hxh, idx_mod h hxh, show (l + 8 * p) % 8 = l by omega,
+    show (l + 8 * p) / 8 = p by omega, linkD, if_pos hx] at this
   exact bitE_add_eq_zero this
 
 theorem ofK_injective' : Function.Injective (ofK : K → E) := (algebraMap K E).injective
 
-/-- **A vanishing constant table is the constant lanes.** -/
-theorem const_of_zero (hz : ZeroOn (constDelta h col) [] (h + 5)) : ConstLanes h col := by
+/-- **A vanishing constant table is the gated constant lanes.** -/
+theorem const_of_zero (hz : ZeroOn (constDelta h col n) [] (h + 5)) : ConstLanes h col n := by
   rw [zeroOn_nil] at hz
   intro x hx t h8 h25
   have := hz (x + 2 ^ h * t) (by
     have : 2 ^ (h + 5) = 2 ^ h * 32 := by rw [pow_add]; rfl
     nlinarith)
   simp only [constDelta, idx_div h hx, idx_mod h hx, h8, h25, and_self, if_true] at this
-  exact ofK_injective' (add_eq_zero_iff_E.1 this)
+  by_cases hxn : x < n
+  · rw [if_pos hxn] at this ⊢
+    exact ofK_injective' (add_eq_zero_iff_E.1 this)
+  · rw [if_neg hxn, add_zero] at this
+    rw [if_neg hxn]
+    exact ofK_injective' (this.trans (map_zero (algebraMap K E)).symm)
 
-/-- The constant lanes' claims at `ρ'`: `in_t(ρ') = c_t` for `t = 8 … 24` (V_S's 17 word claims). -/
+/-- The constant lanes' claims at `ρ'`: `in_t(ρ') = c_t·lt̃_n(ρ')` for `t = 8 … 24` (V_S's 17 word
+claims, gated). -/
 def ConstClaims (pt : List E) : Prop :=
-  ∀ t, 8 ≤ t → t < 25 → stepMle h pt (fun x ↦ col (x + 2 ^ h * t)) = ofK (K.ofLane (padConstLane t))
+  ∀ t, 8 ≤ t → t < 25 →
+    stepMle h pt (fun x ↦ col (x + 2 ^ h * t)) = ofK (K.ofLane (padConstLane t)) * ltEvalE pt n
 
 /-- The constant claims make the constant table's extension vanish at `ρ'`. -/
-theorem constZero_of_claims {pt : List E} (hpt : pt.length = h) (hc : ConstClaims h col pt) :
-    ZeroOn (constDelta h col) pt (h + 5) := by
+theorem constZero_of_claims {pt : List E} (hpt : pt.length = h) (hc : ConstClaims h col n pt) :
+    ZeroOn (constDelta h col n) pt (h + 5) := by
   intro t ht
   unfold foldT
   rw [hpt]
-  have e : ∀ x ∈ range (2 ^ h), constDelta h col (x + 2 ^ h * t) =
-      if 8 ≤ t ∧ t < 25 then ofK (col (x + 2 ^ h * t)) + ofK (K.ofLane (padConstLane t)) else 0 :=
-    fun x hx ↦ by simp only [constDelta, idx_div h (Finset.mem_range.1 hx),
-      idx_mod h (Finset.mem_range.1 hx)]
-  rw [Finset.sum_congr rfl fun x hx ↦ by rw [e x hx]]
-  split_ifs with ht'
-  · have h1 : ∑ x ∈ range (2 ^ h), eqAt pt x * ofK (col (x + 2 ^ h * t)) =
-        ofK (K.ofLane (padConstLane t)) := hc t ht'.1 ht'.2
-    have h2 : ∑ x ∈ range (2 ^ h), eqAt pt x * ofK (K.ofLane (padConstLane t)) =
-        ofK (K.ofLane (padConstLane t)) := by
-      rw [← Finset.sum_mul, ← hpt, sum_eqAt, one_mul]
-    rw [Finset.sum_congr rfl fun x _ ↦ mul_add _ _ _, Finset.sum_add_distrib, h1, h2]
+  by_cases ht' : 8 ≤ t ∧ t < 25
+  · have e : ∀ x ∈ range (2 ^ h), eqAt pt x * constDelta h col n (x + 2 ^ h * t) =
+        eqAt pt x * ofK (col (x + 2 ^ h * t)) +
+          eqAt pt x * (if x < n then ofK (K.ofLane (padConstLane t)) else 0) := fun x hx ↦ by
+      simp only [constDelta, idx_div h (Finset.mem_range.1 hx), idx_mod h (Finset.mem_range.1 hx),
+        if_pos ht', mul_add]
+    have h1 : ∑ x ∈ range (2 ^ h), eqAt pt x * ofK (col (x + 2 ^ h * t)) =
+        ofK (K.ofLane (padConstLane t)) * ltEvalE pt n := hc t ht'.1 ht'.2
+    have h2 := sum_eqAt_lt pt n (ofK (K.ofLane (padConstLane t)))
+    rw [hpt] at h2
+    rw [Finset.sum_congr rfl e, Finset.sum_add_distrib, h1, h2]
     exact CharTwo.add_self_eq_zero _
-  · simp
+  · refine Finset.sum_eq_zero fun x hx ↦ ?_
+    simp only [constDelta, idx_div h (Finset.mem_range.1 hx), idx_mod h (Finset.mem_range.1 hx),
+      if_neg ht', mul_zero]
 
 /-! ## The shift sumcheck -/
 
@@ -209,22 +223,24 @@ def linkA (k : ℕ) : E :=
 def linkB (k : ℕ) : E :=
   ∑ m ∈ range 4, ∑ q ∈ range 64, padWeightE lam zeta m q * bitE (yBits h ys col k (64 * m + q))
 
-/-- The shift sumcheck's family: `Σ_k S(ρ, k)·A(k) + Eq'(ρ, k)·B(k)` over the rows not bound. -/
+/-- The gated shift sumcheck's family: `Σ_k S_n(ρ, k)·A(k) + E'_n(ρ, k)·B(k)` over the rows not
+bound. -/
 noncomputable def Fsh (rho : List E) (acc : List E) : E :=
-  cubeSum (fun pt ↦ (∑ k ∈ range (2 ^ h), eqAt pt k * shiftK rho k) *
+  cubeSum (fun pt ↦ (∑ k ∈ range (2 ^ h), eqAt pt k * gShiftK rho (n - 1) k) *
       (∑ k ∈ range (2 ^ h), eqAt pt k * linkA h col lam zeta k) +
-    (∑ k ∈ range (2 ^ h), eqAt pt k * maskK rho k) *
+    (∑ k ∈ range (2 ^ h), eqAt pt k * ltK rho (n - 1) k) *
       (∑ k ∈ range (2 ^ h), eqAt pt k * linkB h ys col lam zeta k)) h acc
 
 theorem Fsh_plain {β : Type} (cq : β → ℕ → K) (rho : List E) :
-    PlainFamily (fun q acc ↦ Fsh h ys (cq q) lam zeta rho acc) 2 h :=
+    PlainFamily (fun q acc ↦ Fsh h ys (cq q) n lam zeta rho acc) 2 h :=
   cube_plainFamily _ h fun _ pre post ↦ PolyLE.add (polyLE_mle_mul _ _ _ _ pre post)
     (polyLE_mle_mul _ _ _ _ pre post)
 
 /-- The family before the rounds: the sum over the rows. -/
 theorem Fsh_nil (rho : List E) :
-    Fsh h ys col lam zeta rho [] = ∑ k ∈ range (2 ^ h),
-      (shiftK rho k * linkA h col lam zeta k + maskK rho k * linkB h ys col lam zeta k) := by
+    Fsh h ys col n lam zeta rho [] = ∑ k ∈ range (2 ^ h),
+      (gShiftK rho (n - 1) k * linkA h col lam zeta k +
+        ltK rho (n - 1) k * linkB h ys col lam zeta k) := by
   rw [Fsh, cubeSum_nil]
   refine Finset.sum_congr rfl fun u hu ↦ ?_
   have hu' := Finset.mem_range.1 hu
@@ -240,19 +256,19 @@ theorem sum_comm3 {a b c : ℕ} (g : ℕ → ℕ → ℕ → E) :
 /-- The link table's extension at `(ρ, λ, ζ)`, regrouped: row, then lane, then bit. -/
 theorem linkDelta_sum {rho : List E} (hr : rho.length = h) (hl : lam.length = 3)
     (hz : zeta.length = 6) :
-    ∑ w ∈ range (2 ^ (h + 9)), eqAt (rho ++ lam ++ zeta) w * linkDelta h ys col w =
+    ∑ w ∈ range (2 ^ (h + 9)), eqAt (rho ++ lam ++ zeta) w * linkDelta h ys col n w =
       ∑ x ∈ range (2 ^ h), eqAt rho x *
-        ∑ l ∈ range 8, ∑ p ∈ range 64, omegaE lam zeta l p * linkD h ys col x l p := by
-  have e1 : ∑ w ∈ range (2 ^ (h + 9)), eqAt (rho ++ lam ++ zeta) w * linkDelta h ys col w =
+        ∑ l ∈ range 8, ∑ p ∈ range 64, omegaE lam zeta l p * linkD h ys col n x l p := by
+  have e1 : ∑ w ∈ range (2 ^ (h + 9)), eqAt (rho ++ lam ++ zeta) w * linkDelta h ys col n w =
       ∑ o ∈ range (2 ^ (3 + zeta.length)), eqAt (lam ++ zeta) o *
-        ∑ x ∈ range (2 ^ h), eqAt rho x * linkD h ys col x (o % 8) (o / 8) := by
-    have := col_split (s := lam ++ zeta) hr (linkDelta h ys col)
+        ∑ x ∈ range (2 ^ h), eqAt rho x * linkD h ys col n x (o % 8) (o / 8) := by
+    have := col_split (s := lam ++ zeta) hr (linkDelta h ys col n)
     rw [show (lam ++ zeta).length = 9 by simp [hl, hz], ← List.append_assoc] at this
     rw [this, hz]
     refine Finset.sum_congr rfl fun o _ ↦ congrArg _ (Finset.sum_congr rfl fun x hx ↦ ?_)
     rw [linkDelta, idx_div h (Finset.mem_range.1 hx), idx_mod h (Finset.mem_range.1 hx)]
   have e2 := col_split (h := 3) (a := lam) (s := zeta) hl
-    (fun o ↦ ∑ x ∈ range (2 ^ h), eqAt rho x * linkD h ys col x (o % 8) (o / 8))
+    (fun o ↦ ∑ x ∈ range (2 ^ h), eqAt rho x * linkD h ys col n x (o % 8) (o / 8))
   rw [e1, e2, hz]
   simp only [Finset.mul_sum]
   rw [sum_comm3]
@@ -262,49 +278,63 @@ theorem linkDelta_sum {rho : List E} (hr : rho.length = h) (hl : lam.length = 3)
   rw [show (l + 2 ^ 3 * p) % 8 = l by omega, show (l + 2 ^ 3 * p) / 8 = p by omega, omegaE]
   ring
 
-/-- **The link table's extension is the shift sumcheck's claim plus its target.** -/
+/-- **The gated link table's extension is the shift sumcheck's claim plus its target**
+`C·lt̃_m(ρ)`. -/
 theorem linkDelta_eq {rho : List E} (hr : rho.length = h) (hl : lam.length = 3)
     (hz : zeta.length = 6) :
-    ∑ w ∈ range (2 ^ (h + 9)), eqAt (rho ++ lam ++ zeta) w * linkDelta h ys col w =
-      Fsh h ys col lam zeta rho [] + padConstE lam zeta * (1 + prodE rho) := by
-  rw [linkDelta_sum h ys col lam zeta hr hl hz, Fsh_nil, ← sum_maskK_one, hr]
+    ∑ w ∈ range (2 ^ (h + 9)), eqAt (rho ++ lam ++ zeta) w * linkDelta h ys col n w =
+      Fsh h ys col n lam zeta rho [] + padConstE lam zeta * ltEvalE rho (n - 1) := by
+  rw [linkDelta_sum h ys col n lam zeta hr hl hz, Fsh_nil, ← sum_ltK, hr]
+  -- the input row `x + 1` read through `inBit`: zero past the table
+  let A' : ℕ → E := fun k ↦ if k < 2 ^ h then linkA h col lam zeta k else 0
   have hrow : ∀ x ∈ range (2 ^ h), eqAt rho x *
-      ∑ l ∈ range 8, ∑ p ∈ range 64, omegaE lam zeta l p * linkD h ys col x l p =
-      maskK rho x * (linkA h col lam zeta (x + 1) + linkB h ys col lam zeta x +
-        padConstE lam zeta) := by
+      ∑ l ∈ range 8, ∑ p ∈ range 64, omegaE lam zeta l p * linkD h ys col n x l p =
+      ltK rho (n - 1) x * (A' (x + 1) + linkB h ys col lam zeta x + padConstE lam zeta) := by
     intro x _
-    unfold maskK
-    rw [hr]
-    split_ifs with hx
-    · simp only [linkD, if_pos hx, mul_add, Finset.sum_add_distrib]
-      rw [padSum_eq, linkA, linkB]
-      simp only [yBits]
+    unfold ltK
+    by_cases hx : x + 1 < n
+    · rw [if_pos (by omega)]
+      simp only [linkD, if_pos hx, mul_add, Finset.sum_add_distrib]
+      rw [padSum_eq, linkB]
+      have hA : ∑ l ∈ range 8, ∑ p ∈ range 64, omegaE lam zeta l p * bitE (inBit h col (x + 1) l p) =
+          A' (x + 1) := by
+        simp only [A', linkA, inBit]
+        by_cases hx' : x + 1 < 2 ^ h
+        · simp [hx']
+        · simp [hx', bitE]
+      rw [hA]
       ring
-    · simp [linkD, hx]
+    · rw [if_neg (by omega)]
+      simp [linkD, hx]
   rw [Finset.sum_congr rfl hrow, Finset.mul_sum, ← Finset.sum_add_distrib]
-  -- the shifted `A` terms: row `x + 1` under `maskK` is row `k` under `shiftK`
+  -- the shifted `A` terms: row `x + 1` under `E'_n` is row `k` under `S_n`
   have hp := Nat.two_pow_pos h
   obtain ⟨M, hM⟩ : ∃ M, 2 ^ h = M + 1 := ⟨2 ^ h - 1, by omega⟩
-  have hA : ∑ x ∈ range (2 ^ h), maskK rho x * linkA h col lam zeta (x + 1) =
-      ∑ k ∈ range (2 ^ h), shiftK rho k * linkA h col lam zeta k := by
+  have hA : ∑ x ∈ range (2 ^ h), ltK rho (n - 1) x * A' (x + 1) =
+      ∑ k ∈ range (2 ^ h), gShiftK rho (n - 1) k * linkA h col lam zeta k := by
     rw [hM, Finset.sum_range_succ, Finset.sum_range_succ']
-    simp only [maskK, hr, hM, show ¬ (M + 1 < M + 1) by omega, ite_false, zero_mul, add_zero,
-      shiftK, show ¬ (1 ≤ 0) by omega, Nat.le_add_left, ite_true, Nat.add_sub_cancel]
+    simp only [A', hM, show ¬ (M + 1 < M + 1) by omega, if_false, mul_zero, add_zero, gShiftK,
+      show ¬ (1 ≤ 0 ∧ 0 ≤ n - 1) by omega, zero_mul]
     refine Finset.sum_congr rfl fun x hx ↦ ?_
-    rw [if_pos (by have := Finset.mem_range.1 hx; omega)]
-  have : ∀ x ∈ range (2 ^ h), maskK rho x * (linkA h col lam zeta (x + 1) +
+    have hx' := Finset.mem_range.1 hx
+    rw [if_pos (by omega), Nat.add_sub_cancel, ltK]
+    by_cases hc : x < n - 1
+    · rw [if_pos hc, if_pos ⟨by omega, by omega⟩]
+    · rw [if_neg hc, if_neg (by omega)]
+  have : ∀ x ∈ range (2 ^ h), ltK rho (n - 1) x * (A' (x + 1) +
       linkB h ys col lam zeta x + padConstE lam zeta) =
-      maskK rho x * linkA h col lam zeta (x + 1) + (maskK rho x * linkB h ys col lam zeta x +
-        padConstE lam zeta * maskK rho x) := fun x _ ↦ by ring
+      ltK rho (n - 1) x * A' (x + 1) + (ltK rho (n - 1) x * linkB h ys col lam zeta x +
+        padConstE lam zeta * ltK rho (n - 1) x) := fun x _ ↦ by ring
   rw [Finset.sum_congr rfl this, Finset.sum_add_distrib, hA, Finset.sum_add_distrib,
     Finset.sum_add_distrib, Finset.sum_add_distrib]
   ring
 
-/-- **The shift sumcheck's claim at `(ρ, λ, ζ)` is the zero test**: if the claim holds, the link
-table's extension vanishes there. -/
+/-- **The shift sumcheck's claim at `(ρ, λ, ζ)` is the zero test**: if the claim holds, the gated
+link table's extension vanishes there. -/
 theorem zero_of_shiftClaim {chal : List E} (hc : chal.length = h + 9)
-    (H : chShiftTargetE h chal = Fsh h ys col (chLam h chal) (chZeta h chal) (chRho h chal) []) :
-    ZeroOn (linkDelta h ys col) chal (h + 9) := by
+    (H : chShiftTargetE h n chal =
+      Fsh h ys col n (chLam h chal) (chZeta h chal) (chRho h chal) []) :
+    ZeroOn (linkDelta h ys col n) chal (h + 9) := by
   have hsplit : chal = chRho h chal ++ chLam h chal ++ chZeta h chal := by
     simp only [chRho, chLam, chZeta, List.append_assoc, List.take_append_drop,
       ← List.drop_drop]
@@ -313,7 +343,7 @@ theorem zero_of_shiftClaim {chal : List E} (hc : chal.length = h + 9)
   have hz : (chZeta h chal).length = 6 := by simp [chZeta, hc]
   rw [zeroOn_full _ hc]
   conv_lhs => rw [hsplit]
-  rw [linkDelta_eq h ys col _ _ hr hl hz, ← H, chShiftTargetE]
+  rw [linkDelta_eq h ys col n _ _ hr hl hz, ← H, chShiftTargetE]
   exact CharTwo.add_self_eq_zero _
 
 /-! ## The ends of the two sumchecks -/
@@ -395,29 +425,31 @@ theorem linkA_mle {pt : List E} (hpt : pt.length = h) (hl : lam.length = 3) :
   refine Finset.sum_congr rfl fun p _ ↦ Finset.sum_congr rfl fun l _ ↦
     Finset.sum_congr rfl fun x _ ↦ by ring
 
-/-- **The shift sumcheck's end** at `ρ'`. -/
+/-- **The gated shift sumcheck's end** at `ρ'`: `S̃_n(ρ, ρ')·A(ρ') + Ẽ'_n(ρ, ρ')·B(ρ')`. -/
 theorem Fsh_end {rho pt : List E} (hr : rho.length = h) (hpt : pt.length = h)
     (hl : lam.length = 3) :
-    Fsh h ys col lam zeta rho pt =
-      shiftEvalE rho pt * ∑ p ∈ range 64, eqAt zeta p * sliceExt h col (pt ++ lam ++ [0, 0, 0]) p +
-        eqMaskedE rho pt *
+    Fsh h ys col n lam zeta rho pt =
+      gShiftEvalE rho pt (n - 1) *
+          ∑ p ∈ range 64, eqAt zeta p * sliceExt h col (pt ++ lam ++ [0, 0, 0]) p +
+        gMaskEvalE rho pt (n - 1) *
           ∑ m ∈ range 4, ∑ q ∈ range 64, padWeightE lam zeta m q * ysl h ys col pt m q := by
-  rw [Fsh, cubeSum_full _ hpt, ← hr, sum_shiftK rho pt (by rw [hr, hpt]),
-    sum_maskK rho pt (by rw [hr, hpt]), hr, linkA_mle h col lam zeta hpt hl, linkB_mle]
+  rw [Fsh, cubeSum_full _ hpt, ← hr, sum_gShiftK rho pt (by rw [hr, hpt]),
+    sum_ltK_eqAt rho pt (by rw [hr, hpt]), hr, linkA_mle h col lam zeta hpt hl, linkB_mle]
 
-/-- The `Y` lane sumcheck's family (2 rounds over the lane `m` of `Y`). -/
+/-- The `Y` lane sumcheck's family (2 rounds over the lane `m` of `Y`), with the gated factor
+`Ẽ'_n(ρ, ρ')`. -/
 noncomputable def G2 (rho pt : List E) (acc : List E) : E :=
-  cubeSum (fun mpt ↦ eqMaskedE rho pt * ∑ q ∈ range 64,
+  cubeSum (fun mpt ↦ gMaskEvalE rho pt (n - 1) * ∑ q ∈ range 64,
     (∑ m ∈ range 4, eqAt mpt m * padWeightE lam zeta m q) *
       (∑ m ∈ range 4, eqAt mpt m * ysl h ys col pt m q)) 2 acc
 
 theorem G2_plain {β : Type} (cq : β → ℕ → K) (rho pt : List E) :
-    PlainFamily (fun q acc ↦ G2 h ys (cq q) lam zeta rho pt acc) 2 2 :=
+    PlainFamily (fun q acc ↦ G2 h ys (cq q) n lam zeta rho pt acc) 2 2 :=
   cube_plainFamily _ 2 fun _ pre post ↦ PolyLE.const_mul (PolyLE.sum _ fun _ _ ↦
     polyLE_mle_mul _ _ _ _ pre post) _
 
 theorem G2_nil (rho pt : List E) :
-    G2 h ys col lam zeta rho pt [] = eqMaskedE rho pt *
+    G2 h ys col n lam zeta rho pt [] = gMaskEvalE rho pt (n - 1) *
       ∑ m ∈ range 4, ∑ q ∈ range 64, padWeightE lam zeta m q * ysl h ys col pt m q := by
   rw [G2, cubeSum_nil, ← Finset.mul_sum]
   refine congrArg _ ?_
@@ -430,7 +462,7 @@ theorem G2_nil (rho pt : List E) :
   rw [e1, e2]
 
 theorem G2_end (rho pt : List E) {mu : List E} (hmu : mu.length = 2) :
-    G2 h ys col lam zeta rho pt mu = eqMaskedE rho pt * ∑ q ∈ range 64,
+    G2 h ys col n lam zeta rho pt mu = gMaskEvalE rho pt (n - 1) * ∑ q ∈ range 64,
       wtE lam zeta mu q * ∑ m ∈ range 4, eqAt mu m * ysl h ys col pt m q := by
   rw [G2, cubeSum_full _ hmu]
   rfl

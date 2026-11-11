@@ -64,10 +64,10 @@ def dKec (h : Nat) : DM (List FE × List FE × KeccakOut × (FE × (List FE → 
 /-- The `CH` link (phase 5): its claims. -/
 def dChLink (p : Params) (m : M3) (r v : List FE) (pub : Pub) : DM (List (Com × BlockClaim)) := do
   let chal ← samples (p.logN + 3 + 6)
-  let shift ← sumcheck (m.chShiftTarget chal) 3 (List.replicate p.logN none)
+  let shift ← sumcheck (m.chShiftTarget pub chal) 3 (List.replicate p.logN none)
   let inS ← readEs kBits
   let ringIn ← ringRaw inS
-  let sc2 ← sumcheck (m.chSc2Target chal shift inS) 3 [none, none]
+  let sc2 ← sumcheck (m.chSc2Target pub chal shift inS) 3 [none, none]
   let yS ← readEs kBits
   let ringY ← ringRaw yS
   let constLanes ← samples laneBits

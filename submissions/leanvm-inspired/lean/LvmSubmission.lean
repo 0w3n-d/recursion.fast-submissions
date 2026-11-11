@@ -48,7 +48,7 @@ open RecursionFast
 open RecursionFast.WitnessSending (encode decode encodeF)
 open scoped NNReal
 
-/-- The `S` proof size at `P20` (`sizes_P20`: 1,180,192 bytes). -/
+/-- The `S` proof size at `P20` (`sizes_P20`: 1,181,488 bytes). -/
 def piSz : ℕ := Lvm.piSize Lvm.P20
 
 /-- **The submission** with SNARK branch `VS`, extractor specification `E` and program `ext`. -/

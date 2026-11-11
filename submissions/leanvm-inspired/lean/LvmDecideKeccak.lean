@@ -317,4 +317,46 @@ def ringSwitch (point s : List FE) : DM (FE × (List FE → FE)) := do
   let target := polyEval (s.map (phiMap · challenges)) gen
   pure (target, fun rPrime => ringWeight point rPrime coefficients)
 
+/-! ## The gated `CH` link's closed forms (lvm2 BLUEPRINT2 §2.1)
+
+With `m = n − 1` the gated link's kernels are `S_n(ρ, k) = eq(ρ, k − 1)·[1 ≤ k ≤ m]` and
+`E'_n(ρ, k) = eq(ρ, k)·[k < m]`, its target is `C·lt̃_m(ρ)` and its constant-lane claims are
+`c_l·lt̃_n(ρ')`, with `lt̃_t(x) = Σ_{k < t} eq(x, k)`. `V` evaluates the extensions in `O(|x|)`
+products by S1-L's automata over the bits of `k`, low bit first (`LvmMask`: `ltPair`, `gState`;
+P-GATE's `lt_mle`, `gated_kernel`). These are their `FE` twins, text for text
+(`LvmVEqLinkArith`: `toExt3_ltPairF`, `toExt3_gStateF`). -/
+
+/-- `(lt̃_t(x), lt̃_{t+1}(x))`, low bit first (`LvmMask.ltPair`). -/
+def ltPairF : List FE → Nat → FE × FE
+  | [], t => (if 0 < t then 1 else 0, 1)
+  | a :: xs, t =>
+    let p := ltPairF xs (t / 2)
+    if t % 2 = 0 then (p.1, (1 + a) * p.2 + a * p.1) else ((1 + a) * p.2 + a * p.1, p.2)
+
+/-- **`lt̃_t(x) = Σ_{k < t} eq(x, k)`** (`LvmMask.ltEvalE`). -/
+def ltEvalF (x : List FE) (t : Nat) : FE := (ltPairF x t).1
+
+/-- The gated kernels' 4-state automaton `(Q₀(t), Q₀(t + 1), Q₁(t), Q₁(t + 1))`,
+`Q_c(t) = Σ_{j < t, j + c < 2^|x|} eq(x, j)·eq(y, j + c)` (`LvmMask.gState`). -/
+def gStateF : List FE → List FE → Nat → FE × FE × FE × FE
+  | [], _, t => (if 0 < t then 1 else 0, 1, 0, 0)
+  | _ :: _, [], t => (if 0 < t then 1 else 0, 1, 0, 0)
+  | a :: xs, b :: ys, t =>
+    let s := gStateF xs ys (t / 2)
+    let e0 := (1 + a) * (1 + b)
+    let e1 := a * b
+    let c0 := (1 + a) * b
+    let c1 := a * (1 + b)
+    if t % 2 = 0 then
+      ((e0 + e1) * s.1, e0 * s.2.1 + e1 * s.1, c0 * s.1 + c1 * s.2.2.1, c0 * s.2.1 + c1 * s.2.2.1)
+    else
+      (e0 * s.2.1 + e1 * s.1, (e0 + e1) * s.2.1, c0 * s.2.1 + c1 * s.2.2.1,
+        c0 * s.2.1 + c1 * s.2.2.2)
+
+/-- **`Ẽ'_n(ρ, y) = Σ_{k < m} eq(ρ, k)·eq(y, k)`** (`LvmMask.gMaskEvalE`). -/
+def gMaskEvalF (rho y : List FE) (m : Nat) : FE := (gStateF rho y m).1
+
+/-- **`S̃_n(ρ, y) = Σ_{k < m} eq(ρ, k)·eq(y, k + 1)`** (`LvmMask.gShiftEvalE`). -/
+def gShiftEvalF (rho y : List FE) (m : Nat) : FE := (gStateF rho y m).2.2.1
+
 end Lvm

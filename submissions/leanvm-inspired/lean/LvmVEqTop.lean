@@ -79,9 +79,9 @@ theorem monoD_dMid (p : Params) (m : M3) (pub : Pub) : MonoD (dMid p m pub) :=
 /-! ## The claims -/
 
 /-- The native and the language's outputs of phases 4–7. -/
-def KgRel (kg : (KecN × List (Com × BlockClaim)) × (KecN × List (Com × BlockClaim))) (kg' : KgOut) :
-    Prop :=
-  (KecRel (16 + 4) kg.1.1 kg'.1.1 ∧ List.Forall₂ CRel kg.1.2 (chLinkClaimsE kg'.1.2)) ∧
+def KgRel (n : ℕ) (kg : (KecN × List (Com × BlockClaim)) × (KecN × List (Com × BlockClaim)))
+    (kg' : KgOut) : Prop :=
+  (KecRel (16 + 4) kg.1.1 kg'.1.1 ∧ List.Forall₂ CRel kg.1.2 (chLinkClaimsE n kg'.1.2)) ∧
     (KecRel (11 + 4) kg.2.1 kg'.2.1 ∧
       List.Forall₂ CRel kg.2.2 (ksLinkClaimsE kg'.2.2.1 kg'.2.2.2.1 kg'.2.2.2.2))
 
@@ -96,12 +96,12 @@ theorem dClaims_rel (tabs : Pub → List M3.Tab) (pub : Pub)
     (ht : List.Forall₂ CRel (M3.tableClaimsR (M3.sumcheckTabs (tabs pub)) bt.2)
       (tableClaimsE (M3.sumcheckTabs (tabs pub)) cl))
     (kg : (KecN × List (Com × BlockClaim)) × (KecN × List (Com × BlockClaim))) (kg' : KgOut)
-    (hk : KgRel kg kg') :
+    (hk : KgRel pub.n kg kg') :
     List.Forall₂ CRel (dClaims (M3.real P20 tabs) P20 pub bt.1.2 bt.2 kg.1.1 kg.2.1 kg.1.2 kg.2.2)
       (tableClaimsE (M3.sumcheckTabs (tabs pub)) cl ++
         ((keccakClaimsE chBlk kg'.1.1 ++ chFixedClaimsE kg'.1.1.1 kg'.1.1.2.1 pub) ++
           keccakClaimsE ksBlk kg'.2.1).map (.main, ·) ++
-        chLinkClaimsE kg'.1.2 ++ ksOutputClaimsE kg'.2.1.1 kg'.2.1.2.1 ++
+        chLinkClaimsE pub.n kg'.1.2 ++ ksOutputClaimsE kg'.2.1.1 kg'.2.1.2.1 ++
         ksLinkClaimsE kg'.2.2.1 kg'.2.2.2.1 kg'.2.2.2.2) := by
   obtain ⟨⟨hch, hlc⟩, ⟨hks, hklc⟩⟩ := hk
   have hc1 := hch.1
@@ -126,11 +126,11 @@ variable {sig : ByteArray}
 
 /-- **Phases 4–7 refine `kgProgS`.** -/
 theorem ref_dKg (tabs : Pub → List M3.Tab) (pub : Pub) :
-    Ref20 sig (dKg P20 (M3.real P20 tabs) pub) kgProgS KgRel := by
+    Ref20 sig (dKg P20 (M3.real P20 tabs) pub) (kgProgS pub.n) (KgRel pub.n) := by
   unfold dKg kgProgS
   refine RefAt.bind (fun _ ↦ ((monoD_dKec _).bind fun _ ↦ (monoD_dKsLink _ _ _ _).bind fun _ ↦
     MonoD.pure _).bind fun _ ↦ MonoD.pure _)
-    (R := fun chN ch ↦ KecRel (16 + 4) chN.1 ch.1 ∧ List.Forall₂ CRel chN.2 (chLinkClaimsE ch.2))
+    (R := fun chN ch ↦ KecRel (16 + 4) chN.1 ch.1 ∧ List.Forall₂ CRel chN.2 (chLinkClaimsE pub.n ch.2))
     ?_ ?_
   · refine RefAt.bind (fun _ ↦ (monoD_dChLink _ _ _ _ _).bind fun _ ↦ MonoD.pure _) (ref_dKec _) ?_
     intro ch co hco

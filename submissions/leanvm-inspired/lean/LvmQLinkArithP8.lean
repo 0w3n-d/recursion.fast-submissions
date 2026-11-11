@@ -13,7 +13,7 @@ namespace Lvm.Q1
 
 open Lvm Lvm.Loop Lvm.Loop.Build
 
-theorem spongeBlocks_P8 : spongeBlocks P8 = 3986 := by
+theorem spongeBlocks_P8 : spongeBlocks P8 = 3998 := by
   rw [spongeBlocks, sizes_P8.2.2.2.2.2.2.2.1]
 
 /-! ## The template check does not read addresses -/
@@ -196,7 +196,7 @@ theorem okC_P8 (Q : Nat) (gate : Cell) (oA sh sc2 oB : LoopOut) :
   decide +kernel
 
 theorem okE_P8 (Q : Nat) (gate : Cell) (sh : LoopOut) :
-    SLok (ksGlueE 13 Q (ksQV 13 Q) 3985 (2 ^ 12 + 399 + 31) (2 ^ 12 + 399) (rho'C sh 13) (sh.cell 2 12)
+    SLok (ksGlueE 13 Q (ksQV 13 Q) 3997 (2 ^ 12 + 399 + 31) (2 ^ 12 + 399) (rho'C sh 13) (sh.cell 2 12)
       (sh.cell 5 (13 - 1)) gate) = true := by
   rw [← SLok_shape]
   simp only [ksGlueE, List.map_append]
@@ -204,18 +204,6 @@ theorem okE_P8 (Q : Nat) (gate : Cell) (sh : LoopOut) :
     preRecIns_shape (n := 25 * 13 + 6), mulChainIns_shape]
   simp only [List.map_append, List.map_cons, List.map_nil, List.map_map, Function.comp_def, shape_cellSrc, shape_mulI, shape_linI, shape_addI, shape_loc, shape_shape, shape_getD_cellSrc, rhoC, rho'C, eZC, eLC, preP, List.length_map, List.length_range, shape_ins_mk, shape_getD_mapCellSrc, eMus_any]
   decide +kernel
-
-/-- **`P8`'s `CH` link circuit is sound.** -/
-theorem chLink_sound_P8 {bf : BusIn → BusOut} {tb : Pub → List TableSpec}
-    {tcl : Pub → List (List FE × List FE) → List (Com × BlockClaim)} {tfv : Pub → List FE → List FE}
-    {tfs : Pub → List (List FE × List FE) → List FE} {tpc : Pub → List (List FE × List FE) → Bool}
-    (blk : Placement) (ySlot : Nat) {c : Ctx} {M : Mem} {ptr : Ptr} {sig : ByteArray}
-    {T P Q : Nat} (r w : List FE) (pub : Pub) (gate : Cell) (hPQ : P + 40 = 8 * Q)
-    (hS : Streamed M sig T) (hT : chQC 9 Q + 3 * 64 + 3 ≤ T) (hg : gate.val M = 1)
-    (h : SegsHold c M ptr (chLinkGadget 9 4 Q gate ptr).2) (hA : SegsAssert M ptr (chLinkGadget 9 4 Q gate ptr).2) :
-    (chLink0 P8 blk ySlot (chLinkView P8 (M3.ofParts P8 bf tb tcl tfv tfs tpc) (feAt sig) P r w pub)).1 = true :=
-  chLink_sound P8 blk ySlot 4 r w pub gate (by decide) (by decide) hPQ (okA_P8 Q) (okB_P8 Q) (okC_P8 Q gate)
-    hS hT hg h hA
 
 /-- **`P8`'s `KS` link circuit is sound.** -/
 theorem ksLink_sound_P8 {bf : BusIn → BusOut} {tb : Pub → List TableSpec}

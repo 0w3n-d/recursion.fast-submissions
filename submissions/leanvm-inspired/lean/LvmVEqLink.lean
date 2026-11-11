@@ -7,12 +7,14 @@ import LvmVEqSum
 /-!
 # The `CH` and `KS` links: V_S refines the verifier language
 
-`ref_dChLink`: wherever V_S's phase 5 ends with its checks held, WP-8's `chLinkProg 20 52` read off
-the stream returns `lo` at the same cursor with V_S's link claims `CRel`-related to
-`chLinkClaimsE lo`; `ref_dKsLink` the same for phase 7, `ksLinkProg 15 14 (contRows P20)` and
-`ksLinkClaimsE`. Read for read: the samples and scalars by `ref_samples`/`ref_readEs`, the sumchecks
-by H1's `ref_sumcheck` (their claims transported by LvmVEqLinkArith), the caller-placed ring switches
-by `ref_ringRaw`, the final `require` by the transported check (`toExt3_chOk`, `toExt3_ksOk`).
+`ref_dChLink`: wherever V_S's phase 5 ends with its checks held, WP-8's `chLinkProg 20 52 n`
+(lvm2: gated by the header's chain length `n`, S1-L) read off the stream returns `lo` at the same
+cursor with V_S's link claims `CRel`-related to `chLinkClaimsE n lo`; `ref_dKsLink` the same for
+phase 7, `ksLinkProg 15 14 (contRows P20)` and `ksLinkClaimsE`. Read for read: the samples and
+scalars by `ref_samples`/`ref_readEs`, the sumchecks by H1's `ref_sumcheck` (their claims transported
+by LvmVEqLinkArith), the caller-placed ring switches by `ref_ringRaw`, the final `require` by the
+transported check (`toExt3_chOk`, `toExt3_ksOk`); the gated closed forms are `LvmMask`'s automata
+through `FE.toExt3` (`toExt3_ltEvalF`, `toExt3_gShiftEvalF`, `toExt3_gMaskEvalF`).
 `monoD_dChLink`, `monoD_dKsLink` hold for every `p`, `m`.
 -/
 
@@ -70,8 +72,8 @@ end Lk
 
 /-- **V_S's phase 5 (the `CH` link) refines WP-8's `chLinkProg`.** -/
 theorem ref_dChLink (tabs : Pub → List M3.Tab) (r v : List FE) (pub : Pub) :
-    Ref20 sig (dChLink P20 (M3.real P20 tabs) r v pub) (Lvm.KG.chLinkProg (16 + 4) 52)
-      (fun cl lo ↦ List.Forall₂ CRel cl (chLinkClaimsE lo)) := by
+    Ref20 sig (dChLink P20 (M3.real P20 tabs) r v pub) (Lvm.KG.chLinkProg (16 + 4) 52 pub.n)
+      (fun cl lo ↦ List.Forall₂ CRel cl (chLinkClaimsE pub.n lo)) := by
   unfold dChLink Lvm.KG.chLinkProg
   -- ρ, λ, ζ
   refine RefAt.bind (fun _ ↦ (monoD_sumcheck _ _ _).bind fun _ ↦ (monoD_readEs _).bind fun _ ↦
@@ -82,8 +84,8 @@ theorem ref_dChLink (tabs : Pub → List M3.Tab) (r v : List FE) (pub : Pub) :
   replace hc : chal.length = 29 := hc
   -- the shift sumcheck
   have h2 := ref_sumcheckL (cap := capS) (shp := shpS) (sig := sig) 3 (List.replicate 20 none)
-    (Lvm.chShiftTarget0 P20 chal)
-  simp only [toExt3_chShiftTarget0 chal hc, List.map_replicate, Option.map_none] at h2
+    (Lvm.chShiftTarget0 P20 pub chal)
+  simp only [toExt3_chShiftTarget0 pub chal hc, List.map_replicate, Option.map_none] at h2
   refine RefAt.bind (fun _ ↦ (monoD_readEs _).bind fun _ ↦
     (monoD_ringRaw _).bind fun _ ↦ (monoD_sumcheck _ _ _).bind fun _ ↦ (monoD_readEs _).bind fun _ ↦
       (monoD_ringRaw _).bind fun _ ↦ (monoD_samples _).bind fun _ ↦
@@ -102,8 +104,8 @@ theorem ref_dChLink (tabs : Pub → List M3.Tab) (r v : List FE) (pub : Pub) :
   rintro ⟨t1, cs1⟩ _ rfl
   -- the `Y`-lane sumcheck
   have h5 := ref_sumcheckL (cap := capS) (shp := shpS) (sig := sig) 3 [none, none]
-    (Lvm.chSc2Target0 P20 chal (rho', f1) inS)
-  simp only [toExt3_chSc2Target0 chal (rho', f1) inS hc hin, List.map_cons, List.map_nil,
+    (Lvm.chSc2Target0 P20 pub chal (rho', f1) inS)
+  simp only [toExt3_chSc2Target0 pub chal (rho', f1) inS hc hin, List.map_cons, List.map_nil,
     Option.map_none] at h5
   refine RefAt.bind (fun _ ↦ (monoD_readEs _).bind fun _ ↦ (monoD_ringRaw _).bind fun _ ↦
     (monoD_samples _).bind fun _ ↦ (MonoD.require _).bind fun _ ↦ MonoD.pure _) h5 ?_
@@ -126,14 +128,14 @@ theorem ref_dChLink (tabs : Pub → List M3.Tab) (r v : List FE) (pub : Pub) :
   · have h := congrArg FE.toExt3 (FE_eq_of_beq hok)
     dsimp only at h ⊢
     simp only [show P20.logN = 20 from rfl, Nat.reduceAdd] at h
-    rw [toExt3_chOk _ _ _ _ _ _ hl hz hmu] at h
+    rw [toExt3_chOk _ _ _ _ _ _ _ hl hz hmu] at h
     simpa only [KG.chRho, KG.chLam, KG.chZeta, ← List.map_take, ← List.map_drop, Nat.reduceAdd] using h
   · dsimp only
     simp only [M3.real, M3.ofParts, Lvm.chLink0, chSplit_P20, chLinkClaimsE]
     refine forall₂_map_both (forall₂_append (.cons ⟨rfl, rfl, rfl, fun xs ↦ ?_⟩
       (.cons ⟨rfl, rfl, rfl, fun xs ↦ ?_⟩ .nil)) (forall₂_map_map _ fun j _ ↦
         ⟨rfl, point_rel _ _ _ rfl (by simp only [List.map_append, map_selectorPoint])
-          (tE_ofK _).symm⟩)) <;> rw [toExt3_ringWeight] <;> congr 1
+          (by rw [tE_mul, tE_ofK, toExt3_ltEvalF])⟩)) <;> rw [toExt3_ringWeight] <;> congr 1
     · simp only [KG.chInPt, KG.chLam, List.map_append, ← List.map_take, ← List.map_drop, List.map_cons,
         List.map_nil, tE_zero]
     · simp only [KG.chYPt, List.map_append, map_selectorPoint]

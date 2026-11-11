@@ -122,12 +122,13 @@ def chFixedClaimsE (r v : List E) (pub : Pub) : List BClaim :=
   (pub.h.zipIdx.map fun (w, l) =>
     BClaim.point chBlk (selE (pub.n - 1) 20 ++ selE (52 + l) slotLog) (M3.kE w))
 
-/-- The `CH` link's claims (V_S's `chLink0` claims): the two ring switches, the 17 constant lanes. -/
-def chLinkClaimsE (lo : ChLinkOut) : List (Com × BClaim) :=
+/-- The `CH` link's claims (V_S's `chLink0` claims): the two ring switches, the 17 constant lanes
+(lvm2's gated link: `c_l·lt̃_n(ρ')`, `n` the chain length). -/
+def chLinkClaimsE (n : ℕ) (lo : ChLinkOut) : List (Com × BClaim) :=
   let rho' := lo.shift.1
   let consts := (List.range 17).map fun j =>
     BClaim.point chBlk (rho' ++ selE (8 + j) slotLog)
-      (M3.kE (if 8 + j = 16 then ⟨(0x80 : UInt64) <<< 56⟩ else 0))
+      (M3.kE (if 8 + j = 16 then ⟨(0x80 : UInt64) <<< 56⟩ else 0) * ltEvalE rho' n)
   ([(⟨chBlk, lo.ringIn.2, lo.ringIn.1⟩ : BClaim), ⟨chBlk, lo.ringY.2, lo.ringY.1⟩] ++ consts).map
     (.main, ·)
 
@@ -161,9 +162,10 @@ def ksLinkClaimsE (kchal : List E) (kshift : List E × E) (vals : List E) : List
 
 /-! ## The program -/
 
-/-- **V_S phases 4–7**: WP-8's `kgSpec` program at `P20` (`logN = 16 + 4`, `ksLog = 11 + 4`). -/
-def kgProgS :=
-  (callerProg (16 + 4) >>= fun co ↦ chLinkProg (16 + 4) 52 >>= fun lo ↦
+/-- **V_S phases 4–7**: WP-8's `kgSpec` program at `P20` (`logN = 16 + 4`, `ksLog = 11 + 4`), the
+`CH` link gated by the chain length `n` (lvm2). -/
+def kgProgS (n : ℕ) :=
+  (callerProg (16 + 4) >>= fun co ↦ chLinkProg (16 + 4) 52 n >>= fun lo ↦
       VerifierProgram.ret (co, lo)) >>= fun ch ↦
     (callerProg (11 + 4) >>= fun co ↦ ksLinkProg (11 + 4) 14 (contRows P20) >>= fun lo ↦
       VerifierProgram.ret (co, lo)) >>= fun kso ↦ VerifierProgram.ret (ch, kso)
@@ -183,7 +185,7 @@ def assembleS (T : List M3.Tab) (pub : Pub) (cl : List LeanVM.Protocol.Verifier.
     tableClaimsE T cl ++
       ((keccakClaimsE chBlk ch ++ chFixedClaimsE ch.1 ch.2.1 pub) ++ keccakClaimsE ksBlk ks).map
         (.main, ·) ++
-      chLinkClaimsE kg.1.2 ++ ksOutputClaimsE ks.1 ks.2.1 ++
+      chLinkClaimsE pub.n kg.1.2 ++ ksOutputClaimsE ks.1 ks.2.1 ++
       ksLinkClaimsE kg.2.2.1 kg.2.2.2.1 kg.2.2.2.2
   let on (com : Com) := (claims.filter (·.1 == com)).map (·.2.onStack)
   (on .crec, on .main)
@@ -204,6 +206,6 @@ def midS (tabs : Pub → List M3.Tab) (x : List UInt8) :
   let pub := pubX x
   let T := M3.sumcheckTabs (tabs pub)
   busTabAccProg tabs pub >>= fun cl ↦
-    kgProgS >>= fun kg ↦ VerifierProgram.ret (assembleS T pub cl kg)
+    kgProgS pub.n >>= fun kg ↦ VerifierProgram.ret (assembleS T pub cl kg)
 
 end Lvm.VEq

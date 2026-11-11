@@ -56,7 +56,7 @@ def phases47 (C : QCfg) : BM P47Out := do
   let r ← loadEs (clog2 p.logN) (aLane p 0) 9
   let v ← loadEs 5 (aLane p 1) 3
   let ko ← Lvm.Q1.gkrGadget (p.logN - 4) (aLane p 2) (fun i => r.cell 0 i) (fun l => v.cell 0 l) g
-  Lvm.Q1.chLinkGadget p.logN (clog2 p.logN) (aLane p 3) g
+  Lvm.Q1.chLinkGadgetG p.logN (clog2 p.logN) (aLane p 3) ((sigIn C).bn + 2) g
   let rk ← loadEs (clog2 p.ksLog) (aLane p 4) 9
   let vk ← loadEs 5 (aLane p 5) 3
   let kko ← Lvm.Q1.gkrGadget (p.ksLog - 4) (aLane p 6) (fun i => rk.cell 0 i) (fun l => vk.cell 0 l) g

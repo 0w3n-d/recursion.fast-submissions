@@ -178,10 +178,12 @@ structure M3 where
   fixSent : Pub → List (List FE × List FE) → List FE
   /-- The check of `PUB`'s value-column evaluation against the header lanes (`pubEval`). -/
   pubCheck : Pub → List (List FE × List FE) → Bool
-  /-- The shift sumcheck's claim from `ρ, λ, ζ`. -/
-  chShiftTarget : List FE → FE
-  /-- The two-round sumcheck's claim from `ρ, λ, ζ`, the shift sumcheck and the `in` slices. -/
-  chSc2Target : List FE → List FE × FE → List FE → FE
+  /-- The shift sumcheck's claim from the header (the chain length, lvm2's gated link) and
+  `ρ, λ, ζ`. -/
+  chShiftTarget : Pub → List FE → FE
+  /-- The two-round sumcheck's claim from the header, `ρ, λ, ζ`, the shift sumcheck and the `in`
+  slices. -/
+  chSc2Target : Pub → List FE → List FE × FE → List FE → FE
   /-- The `CH` link's final checks and claims. -/
   chLink : ChLinkIn → Bool × List (Com × BlockClaim)
   /-- The openings of `KS`'s 25 output lanes at the instance point. -/

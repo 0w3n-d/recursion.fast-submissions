@@ -40,3 +40,9 @@ copied from leanVM's `lib.rs`/`witness.rs`):
 | file | edit | why |
 |---|---|---|
 | `leanvm_core/constraints.rs` | `Air::sent`: only the first `sent` columns' evaluations are sent (leanVM: all) | an option for LoopIR fixed columns; **in use: all columns are sent** (`m3::SEND_FIXED = true`, which WP-9's `nativeTable`/`tableCheckR` expect); change only together with WP-9's V_S decision |
+
+lvm2 P-GATE / S1-P (FA-2 stage S1, shipped since S1-P):
+
+| file | edit | why |
+|---|---|---|
+| `keccak_gkr/mod.rs` | `OutputClaim::of_inputs_padded`: `of_inputs` with the padding rows' sum in closed form, `Keccak-f(0)·(1 − Σ_{i<len} eq(r, i))` | the same claim at work linear in the written rows; the default (`LVM_PGATE=dense` uses `of_inputs`) |

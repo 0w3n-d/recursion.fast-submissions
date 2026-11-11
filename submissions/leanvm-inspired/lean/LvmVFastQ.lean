@@ -211,7 +211,7 @@ def phases47F (C : QCfg) : BM Lvm.Har.P47Out := do
   let r ← Lvm.Har.loadEs (clog2 p.logN) (Lvm.Har.aLane p 0) 9
   let v ← Lvm.Har.loadEs 5 (Lvm.Har.aLane p 1) 3
   let ko ← gkrGadgetF (p.logN - 4) (Lvm.Har.aLane p 2) (fun i => r.cell 0 i) (fun l => v.cell 0 l) g
-  Lvm.Q1.chLinkGadget p.logN (clog2 p.logN) (Lvm.Har.aLane p 3) g
+  Lvm.Q1.chLinkGadgetG p.logN (clog2 p.logN) (Lvm.Har.aLane p 3) ((sigIn C).bn + 2) g
   let rk ← Lvm.Har.loadEs (clog2 p.ksLog) (Lvm.Har.aLane p 4) 9
   let vk ← Lvm.Har.loadEs 5 (Lvm.Har.aLane p 5) 3
   let kko ← gkrGadgetF (p.ksLog - 4) (Lvm.Har.aLane p 6) (fun i => rk.cell 0 i) (fun l => vk.cell 0 l) g

@@ -62,7 +62,7 @@ theorem seg_step (I : Array Word) {M₀ : Mem} {R : ℕ} (hA : ∀ x, regs ≤ (
 /-- π's packed words on the tape. -/
 theorem tape_pw (c : Digest) (π : Proof) (L : Log) (hs : π.size = piSize pX) {j : ℕ}
     (hj : j < 136514) : (extractorInput c π L).toArray.getD (5 + j) 0 = pw π j := by
-  have hp : π.size = 1180192 := hs.trans piSize_eq
+  have hp : π.size = 1181488 := hs.trans piSize_eq
   rw [getD_toArray, tape_getD_proof c π L (by rw [hp]; omega), pw, List.getD_eq_getElem]
 
 theorem wsAt_tape (c : Digest) (π : Proof) (L : Log) (hs : π.size = piSize pX) {a n : ℕ}
@@ -140,7 +140,7 @@ theorem outIR_sem (c : Digest) (π : Proof) (L : Log) (hs : π.size = piSize pX)
   rw [semXIR_seq]
   generalize semXIR I (segIR apC 0 trSegL) s7 = s8 at k1 k2 k3
   -- the source is the stream below `T`
-  have hT : streamLanes pX = 250044 := sizes_P20.2.2.2.2.2.2.1
+  have hT : streamLanes pX = 250206 := sizes_P20.2.2.2.2.2.2.1
   have hsrc : ∀ v < streamLanes pX, src s5.M apC sgB v = laneOf w v := fun v hv => by
     rw [src_apC _ (by simp only [sgB]; omega), hlane v (by simp only [nCp]; omega)]
   have eP : segOut (src s5.M apC sgB) false 0 pSegL = pWords (laneOf w) := by

@@ -16,12 +16,15 @@ in `M3.v0`) the output lanes `Y_x[0..3]`.
   `d` (bit `64 m + q` = bit `q` of lane `m`): `0x43` in bits `0 … 7`, `d` in bits `8 … 263`, the
   padding `0x01` at bit `264` (byte 33) and `0x80` at bit `1087` (byte 135). It is V_S's `pad43`.
 * **`chainStep_pad43`**: `chainStep d = stDigest (keccakF (pad43St (digestBits d)))` (one block).
-* `ChainRel`: what the table's constraints give (the Keccak GKR: `Y = keccakF(in)` on lanes 0–3 of
-  every row; the link: `in_{x+1} = Pad43(Y_x)` for every `x + 1 < 2^h`, A9; the boundaries
-  `in_0 = Pad43(s)` and `Y_{n−1} = hd`, A1).
-* **`chain_of_CH`**: `1 ≤ n ≤ 2^h → ChainRel … → chainEnd s n = hd`, by induction on the rows.
-* `LinkBits`, `ConstLanes`: the link as the shift sumcheck states it (lanes `0 … 7` bitwise, lanes
-  `8 … 24` constant words); **`link_of_bits`**: together they are `ChainRel.link`.
+* `ChainRel`: what the table's constraints give on the live rows `x < n` (lvm2 S1, BLUEPRINT2 §2.1:
+  the Keccak GKR `Y = keccakF(in)` on lanes 0–3; the gated link `in_{x+1} = Pad43(Y_x)` for
+  `x + 1 < n`, i.e. rows `x + 1 ≤ m`, A9 deleted; the boundaries `in_0 = Pad43(s)` and
+  `Y_{n−1} = hd`, A1). Rows `≥ n` carry no statement.
+* **`chain_of_CH`**: `1 ≤ n → ChainRel … → chainEnd s n = hd`, by induction on the live rows.
+* `LinkBits`, `ConstLanes`: the gated link as the shift sumcheck states it (lanes `0 … 7` bitwise
+  on the rows `x + 1 < n`, an input row past the table reading as zero; lanes `8 … 24` the constant
+  words on the rows `< n` and zero on the rows `≥ n`); **`link_of_bits`**: with `n ≤ 2^h` they are
+  `ChainRel.link`.
 -/
 
 set_option autoImplicit false
@@ -122,13 +125,14 @@ variable (h ys : ℕ) (col : ℕ → K)
 /-- The 256 bits of row `x`'s output lanes `Y_x[0..3]` (slots `ys … ys + 3`). -/
 def yBits (x j : ℕ) : Bool := (col (x + 2 ^ h * (ys + j / 64))).toBitVec.getLsbD (j % 64)
 
-/-- **What `CH`'s constraints give** for a chain from `s` of `n` steps ending in `hd`. -/
+/-- **What `CH`'s constraints give** for a chain from `s` of `n` steps ending in `hd` (live rows only). -/
 structure ChainRel (s : RecursionFast.Digest) (n : ℕ) (hd : RecursionFast.Digest) : Prop where
-  /-- The Keccak GKR (with the caller's lanes 0–3 tied to `Y`): `Y_x = keccakF(in_x)`, lanes 0–3. -/
-  out : ∀ x < 2 ^ h, ∀ m < 4,
+  /-- The Keccak GKR (with the caller's lanes 0–3 tied to `Y`): `Y_x = keccakF(in_x)`, lanes 0–3,
+  on the live rows `x < n`. -/
+  out : ∀ x < n, ∀ m < 4,
     col (x + 2 ^ h * (ys + m)) = laneWord (keccakF1600 (inState h col 0 x)) m
-  /-- The link (every row but the last, A9): `in_{x+1} = Pad43(Y_x)`. -/
-  link : ∀ x, x + 1 < 2 ^ h → inState h col 0 (x + 1) = pad43St (yBits h ys col x)
+  /-- The gated link (rows `x + 1 ≤ m = n − 1`): `in_{x+1} = Pad43(Y_x)`. -/
+  link : ∀ x, x + 1 < n → inState h col 0 (x + 1) = pad43St (yBits h ys col x)
   /-- The start (25 word claims at row 0): `in_0 = Pad43(s)`. -/
   first : inState h col 0 0 = pad43St (digestBits s)
   /-- The end (4 word claims at row `n − 1`): `Y_{n−1} = hd`. -/
@@ -161,8 +165,8 @@ theorem yBits_eq {x : ℕ}
     K.ofLane, lane_eq _ (by omega)]
   rfl
 
-/-- **`chain_of_CH`**: a table satisfying `ChainRel` proves the chain. -/
-theorem chain_of_CH {s hd : RecursionFast.Digest} {n : ℕ} (hn : 1 ≤ n) (hN : n ≤ 2 ^ h)
+/-- **`chain_of_CH`**: a table satisfying `ChainRel` on its live rows proves the chain. -/
+theorem chain_of_CH {s hd : RecursionFast.Digest} {n : ℕ} (hn : 1 ≤ n)
     (H : ChainRel h ys col s n hd) : RecursionFast.chainEnd s n = hd := by
   let Yd : ℕ → RecursionFast.Digest :=
     fun x ↦ stDigest (RecursionFast.Keccak.keccakF (inState h col 0 x))
@@ -199,25 +203,32 @@ theorem chain_of_CH {s hd : RecursionFast.Digest} {n : ℕ} (hn : 1 ≤ n) (hN :
 
 /-! ## The link as the shift sumcheck states it -/
 
-/-- The link on lanes `0 … 7`, bit by bit (rows `x + 1 < 2^h`). -/
-def LinkBits : Prop :=
-  ∀ x, x + 1 < 2 ^ h → ∀ l < 8, ∀ p < 64,
-    (col (x + 1 + 2 ^ h * l)).toBitVec.getLsbD p = pad43Bit (yBits h ys col x) (64 * l + p)
+/-- Bit `p` of lane `l` of row `k`'s input; `false` for a row past the table (`k = 2^h`). -/
+def inBit (k l p : ℕ) : Bool := decide (k < 2 ^ h) && (col (k + 2 ^ h * l)).toBitVec.getLsbD p
 
-/-- The constant lanes `8 … 24` of `Pad43` on every row. -/
-def ConstLanes : Prop :=
-  ∀ x < 2 ^ h, ∀ l, 8 ≤ l → l < 25 → col (x + 2 ^ h * l) = K.ofLane (padConstLane l)
+/-- The gated link on lanes `0 … 7`, bit by bit (rows `x + 1 < n`). -/
+def LinkBits (n : ℕ) : Prop :=
+  ∀ x < 2 ^ h, x + 1 < n → ∀ l < 8, ∀ p < 64,
+    inBit h col (x + 1) l p = pad43Bit (yBits h ys col x) (64 * l + p)
 
-/-- **The link from its two parts**: lanes `0 … 7` bitwise and lanes `8 … 24` constant. -/
-theorem link_of_bits (hb : LinkBits h ys col) (hc : ConstLanes h col) :
-    ∀ x, x + 1 < 2 ^ h → inState h col 0 (x + 1) = pad43St (yBits h ys col x) := by
+/-- The constant lanes `8 … 24` of `Pad43` on the live rows `< n`; zero on the rows `≥ n`. -/
+def ConstLanes (n : ℕ) : Prop :=
+  ∀ x < 2 ^ h, ∀ l, 8 ≤ l → l < 25 →
+    col (x + 2 ^ h * l) = if x < n then K.ofLane (padConstLane l) else 0
+
+/-- **The gated link from its two parts** (`n ≤ 2^h`): lanes `0 … 7` bitwise and lanes `8 … 24`
+constant, on the rows `x + 1 < n`. -/
+theorem link_of_bits {n : ℕ} (hN : n ≤ 2 ^ h) (hb : LinkBits h ys col n) (hc : ConstLanes h col n) :
+    ∀ x, x + 1 < n → inState h col 0 (x + 1) = pad43St (yBits h ys col x) := by
   intro x hx
+  have hx' : x + 1 < 2 ^ h := by omega
   refine state_ext fun k hk ↦ ?_
   rw [stBit_inState h col _ hk, pad43St, stBit_ofBits _ hk]
   by_cases hl : k / 64 < 8
-  · have := hb x hx (k / 64) hl (k % 64) (Nat.mod_lt _ (by decide))
-    rwa [show 64 * (k / 64) + k % 64 = k from Nat.div_add_mod k 64] at this
-  · rw [hc (x + 1) hx (k / 64) (by omega) (by omega)]
+  · have := hb x (by omega) hx (k / 64) hl (k % 64) (Nat.mod_lt _ (by decide))
+    rw [show 64 * (k / 64) + k % 64 = k from Nat.div_add_mod k 64] at this
+    simpa [inBit, hx'] using this
+  · rw [hc (x + 1) hx' (k / 64) (by omega) (by omega), if_pos hx]
     have hp : pad43Bit (yBits h ys col x) k = decide (k = 1087) := by
       unfold pad43Bit
       rw [ite_eq_right (show ¬ k < 8 by omega), ite_eq_right (show ¬ k < 264 by omega)]

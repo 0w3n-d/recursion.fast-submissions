@@ -1,24 +1,29 @@
 -- New for lvm (WP-8): the CH link as a doom specification (BLUEPRINT §4.1, §7.2 `linkSpec`). The
 -- sumcheck with a riding zero test (`sumcheckZSpec`) is leanVM's `sumcheckSpec` (`LvmKeccakRounds`)
 -- with the zero test of `zeroOn_escape` carried along the rounds.
+-- lvm2 S1-L: the link gated by the chain length `n` (BLUEPRINT2 §2.1, P-GATE's `prove_ch_gate_body`).
 import LvmChainTableLinkMath
 
 /-!
 # The `CH` link
 
-`chLinkProg` is V_S's phase 5 (`LvmDecide`, with `M3.v0`'s `chShiftTarget0`, `chSc2Target0`,
-`chLink0`) on leanVM's DSL, read for read and sample for sample:
+`chLinkProg h ys n` is V_S's phase 5 (`LvmDecide`, with `M3.v0`'s `chShiftTarget0`, `chSc2Target0`,
+`chLink0`) on leanVM's DSL, read for read and sample for sample, gated by the chain length `n`
+(`m = n − 1`; lvm2 S1, BLUEPRINT2 §2.1; the transcript's shape is v1's):
 
 ```
-chal ← h + 9 challenges (ρ, λ, ζ);  shift ← h plain rounds of degree 2 on chShiftTarget;
+chal ← h + 9 challenges (ρ, λ, ζ);  shift ← h plain rounds of degree 2 on C·lt̃_m(ρ);
 inS ← 64 scalars;  ringIn ← ringSwitch (ρ', λ, 0, 0, 0) inS;
-sc2 ← 2 plain rounds on chSc2Target;  yS ← 64 scalars;  ringY ← ringSwitch (ρ', μ, sel(ys/4)) yS;
-5 challenges (unused);  require sc2.2 = Eq'(ρ, ρ')·Σ_q W̃(μ, q)·yS_q
+sc2 ← 2 plain rounds on f₁ + S̃_n(ρ, ρ')·Σ_p eq(ζ, p) inS_p;  yS ← 64 scalars;
+ringY ← ringSwitch (ρ', μ, sel(ys/4)) yS;
+5 challenges (unused);  require sc2.2 = Ẽ'_n(ρ, ρ')·Σ_q W̃(μ, q)·yS_q
 ```
 
-**`chLinkSpec`**: from doom of `LinkBits ∧ ConstLanes ∧ R` (the link `in_{x+1} = Pad43(Y_x)` on every
-row but the last, A9) to doom of the two ring claims (`RingColTrue`), the 17 constant-lane claims
-at `ρ'` (`ConstClaims`) and `R`. Groups: `ρλζ`, `(h + 9)·L₀/|E|` (lead); each shift round
+**`chLinkSpec`**: from doom of `LinkBits ∧ ConstLanes ∧ R` (the gated link `in_{x+1} = Pad43(Y_x)`
+on the rows `x + 1 < n`, the constant lanes on the rows `< n` and zero above) to doom of the two
+ring claims (`RingColTrue`), the 17 constant-lane claims `c_l·lt̃_n(ρ')` at `ρ'` (`ConstClaims`)
+and `R`. No bound on `n` is assumed; `n ≥ 1` is the caller's (header, A1): at `n = 0` the
+kernels are `n = 1`'s (ℕ subtraction) and the constant claims are `0`. Groups: `ρλζ`, `(h + 9)·L₀/|E|` (lead); each shift round
 `L₀·2/|E|`, the constant lanes' zero test riding on the same challenges; each ring switch
 `6·L₀/|E|`; each `Y`-lane round `L₀·2/|E|`.
 -/
@@ -50,17 +55,17 @@ structure ChLinkOut where
   /-- Their ring switch. -/
   ringY : E × (List E → E)
 
-/-- **The `CH` link** (V_S phase 5, `M3.v0`). -/
-def chLinkProg (h ys : ℕ) : VerifierProgram ChLinkOut :=
+/-- **The gated `CH` link** (V_S phase 5, `M3.v0`; chain length `n`). -/
+def chLinkProg (h ys n : ℕ) : VerifierProgram ChLinkOut :=
   VerifierProgram.sampleChallenges (h + 9) >>= fun chal ↦
-  sumcheck (chShiftTargetE h chal) 3 (List.replicate h none) >>= fun shift ↦
+  sumcheck (chShiftTargetE h n chal) 3 (List.replicate h none) >>= fun shift ↦
   VerifierProgram.readScalars 64 >>= fun inS ↦
   ringSwitch (chInPt h chal shift) inS >>= fun ringIn ↦
-  sumcheck (chSc2TargetE h chal shift inS) 3 (List.replicate 2 none) >>= fun sc2 ↦
+  sumcheck (chSc2TargetE h n chal shift inS) 3 (List.replicate 2 none) >>= fun sc2 ↦
   VerifierProgram.readScalars 64 >>= fun yS ↦
   ringSwitch (chYPt ys shift sc2) yS >>= fun ringY ↦
   VerifierProgram.sampleChallenges 5 >>= fun _ ↦
-  VerifierProgram.require (sc2.2 = eqMaskedE (chRho h chal) shift.1 *
+  VerifierProgram.require (sc2.2 = gMaskEvalE (chRho h chal) shift.1 (n - 1) *
     ∑ q ∈ range 64, wtE (chLam h chal) (chZeta h chal) sc2.1 q * yS.getD q 0) >>= fun _ ↦
   VerifierProgram.ret ⟨chal, shift, inS, ringIn, sc2, yS, ringY⟩
 
@@ -144,53 +149,54 @@ noncomputable def samplesKeep (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L
 
 /-! ## The specification -/
 
-/-- The postcondition of the `CH` link. -/
-def ChLinkPost (h : ℕ) (col : β → ℕ → K) (R : β → Prop) (out : ChLinkOut) (hist : List Ev) :
+/-- The postcondition of the gated `CH` link. -/
+def ChLinkPost (h : ℕ) (col : β → ℕ → K) (n : ℕ) (R : β → Prop) (out : ChLinkOut) (hist : List Ev) :
     Prop :=
   out.shift.1.length = h ∧ Doomed C (fun q ↦ RingColTrue h (col q) out.ringIn ∧
-    RingColTrue h (col q) out.ringY ∧ ConstClaims h (col q) out.shift.1 ∧ R q) hist
+    RingColTrue h (col q) out.ringY ∧ ConstClaims h (col q) n out.shift.1 ∧ R q) hist
 
-/-- **The `CH` link**, round by round: from doom of the link (`LinkBits`, `ConstLanes`) and `R` to
-doom of the two ring-switched slice claims, the 17 constant-lane claims at `ρ'`, and `R`. -/
-noncomputable def chLinkSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) (h ys : ℕ)
+/-- **The gated `CH` link**, round by round: from doom of the gated link (`LinkBits`, `ConstLanes`)
+and `R` to doom of the two ring-switched slice claims, the 17 constant-lane claims
+`c_l·lt̃_n(ρ')` at `ρ'`, and `R`. -/
+noncomputable def chLinkSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) (h ys n : ℕ)
     (hys : ys % 4 = 0) (hys' : ys / 4 < 16) (col : β → ℕ → K) (R : β → Prop)
     (h2 : (L₀ : ℝ≥0∞) * errE 2 + 0 ≤ εmax)
     (hr0 : (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) + 0 ≤ εmax)
     (hrT : (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) + T ≤ εmax) :
-    Spec (chLinkProg h ys)
-      (Doomed C (fun q ↦ LinkBits h ys (col q) ∧ ConstLanes h (col q) ∧ R q))
-      (ChLinkPost (C := C) h col R) εmax (((h + 9 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) T :=
-  ((zeroSpec (T := 0) hst hcard (fun q ↦ linkDelta h ys (col q))
-      (fun q ↦ ZeroOn (constDelta h (col q)) [] (h + 5) ∧ R q) (n := h + 9) (m := h + 9)
+    Spec (chLinkProg h ys n)
+      (Doomed C (fun q ↦ LinkBits h ys (col q) n ∧ ConstLanes h (col q) n ∧ R q))
+      (ChLinkPost (C := C) h col n R) εmax (((h + 9 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) T :=
+  ((zeroSpec (T := 0) hst hcard (fun q ↦ linkDelta h ys (col q) n)
+      (fun q ↦ ZeroOn (constDelta h (col q) n) [] (h + 5) ∧ R q) (n := h + 9) (m := h + 9)
       le_rfl).mono
-    (fun hist (hd : Doomed C (fun q ↦ LinkBits h ys (col q) ∧ ConstLanes h (col q) ∧ R q) hist) ↦
+    (fun hist (hd : Doomed C (fun q ↦ LinkBits h ys (col q) n ∧ ConstLanes h (col q) n ∧ R q) hist) ↦
       Doomed.mono hd fun q ⟨hz, hk, hR⟩ ↦
-        ⟨linkBits_of_zero h ys (col q) hz, const_of_zero h (col q) hk, hR⟩)
+        ⟨linkBits_of_zero h ys (col q) n hz, const_of_zero h (col q) n hk, hR⟩)
     (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun chal ↦
   if hc : chal.length = h + 9 then
-    ((sumcheckZSpec (T := 0) hst hcard R (fun q ↦ constDelta h (col q)) (h + 5)
-        (Fsh_plain h ys (chLam h chal) (chZeta h chal) col (chRho h chal)) (by norm_num)
-        (count := 3) (by norm_num) (by norm_num) zero_le h2 h [] (chShiftTargetE h chal)
+    ((sumcheckZSpec (T := 0) hst hcard R (fun q ↦ constDelta h (col q) n) (h + 5)
+        (Fsh_plain h ys n (chLam h chal) (chZeta h chal) col (chRho h chal)) (by norm_num)
+        (count := 3) (by norm_num) (by norm_num) zero_le h2 h [] (chShiftTargetE h n chal)
         (by simp) (by simp)).mono
-      (fun _ (hd : chal.length = h + 9 ∧ Doomed C (fun q ↦ ZeroOn (linkDelta h ys (col q)) chal
-          (h + 9) ∧ (ZeroOn (constDelta h (col q)) [] (h + 5) ∧ R q)) _) ↦
-        Doomed.mono hd.2 fun q ⟨hcl, hk, hR⟩ ↦ ⟨zero_of_shiftClaim h ys (col q) hc hcl, hk, hR⟩)
+      (fun _ (hd : chal.length = h + 9 ∧ Doomed C (fun q ↦ ZeroOn (linkDelta h ys (col q) n) chal
+          (h + 9) ∧ (ZeroOn (constDelta h (col q) n) [] (h + 5) ∧ R q)) _) ↦
+        Doomed.mono hd.2 fun q ⟨hcl, hk, hR⟩ ↦ ⟨zero_of_shiftClaim h ys (col q) n hc hcl, hk, hR⟩)
       (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun shift ↦
     if hs : shift.1.length = h then
       ((doomReadN (T := (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) + 0) hst
-          (fun q ↦ shift.2 = Fsh h ys (col q) (chLam h chal) (chZeta h chal) (chRho h chal)
-            ([] ++ shift.1) ∧ ZeroOn (constDelta h (col q)) ([] ++ shift.1) (h + 5) ∧ R q)
+          (fun q ↦ shift.2 = Fsh h ys (col q) n (chLam h chal) (chZeta h chal) (chRho h chal)
+            ([] ++ shift.1) ∧ ZeroOn (constDelta h (col q) n) ([] ++ shift.1) (h + 5) ∧ R q)
           hr0 63).mono (fun _ hd ↦ hd.2) (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun inS ↦
       if hi : inS.length = 64 then
         ((ringColSpec (T := 0) hst hcard h col
-            (fun q ↦ chSc2TargetE h chal shift inS =
-                G2 h ys (col q) (chLam h chal) (chZeta h chal) (chRho h chal) shift.1 [] ∧
-              ZeroOn (constDelta h (col q)) shift.1 (h + 5) ∧ R q)
+            (fun q ↦ chSc2TargetE h n chal shift inS =
+                G2 h ys (col q) n (chLam h chal) (chZeta h chal) (chRho h chal) shift.1 [] ∧
+              ZeroOn (constDelta h (col q) n) shift.1 (h + 5) ∧ R q)
             (chInPt h chal shift) inS ⟨by simp [chInPt, chLam, hs, hc], hi⟩).mono
           (fun _ hd ↦ Doomed.mono hd.2 fun q ⟨hsl, h2c, hk, hR⟩ ↦ ⟨by
               have hr : (chRho h chal).length = h := by simp [chRho, hc]
               have hl : (chLam h chal).length = 3 := by simp [chLam, hc]
-              rw [List.nil_append, Fsh_end h ys (col q) _ _ hr hs hl]
+              rw [List.nil_append, Fsh_end h ys (col q) n _ _ hr hs hl]
               rw [chSc2TargetE, G2_nil] at h2c
               have hin : ∑ p ∈ range 64, eqAt (chZeta h chal) p * inS.getD p 0 =
                   ∑ p ∈ range 64, eqAt (chZeta h chal) p *
@@ -200,47 +206,47 @@ noncomputable def chLinkSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L�
               exact char2_move h2c, by simpa using hk, hR⟩)
           (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun ringIn ↦
         ((sumcheckSpec (T := 0) hst hcard
-            (fun q ↦ RingColTrue h (col q) ringIn ∧ ZeroOn (constDelta h (col q)) shift.1 (h + 5) ∧
+            (fun q ↦ RingColTrue h (col q) ringIn ∧ ZeroOn (constDelta h (col q) n) shift.1 (h + 5) ∧
               R q)
-            (G2_plain h ys (chLam h chal) (chZeta h chal) col (chRho h chal) shift.1)
-            (count := 3) (by norm_num) (by norm_num) zero_le h2 2 [] (chSc2TargetE h chal shift inS)
+            (G2_plain h ys n (chLam h chal) (chZeta h chal) col (chRho h chal) shift.1)
+            (count := 3) (by norm_num) (by norm_num) zero_le h2 2 [] (chSc2TargetE h n chal shift inS)
             (by simp)).mono
           (fun _ hd ↦ Doomed.mono hd fun q ⟨hc2, hRc, hk, hR⟩ ↦ ⟨hRc, hc2, hk, hR⟩)
           (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun sc2 ↦
         if hm : sc2.1.length = 2 then
           ((doomReadN (T := (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) + T) hst
-              (fun q ↦ sc2.2 = G2 h ys (col q) (chLam h chal) (chZeta h chal) (chRho h chal)
+              (fun q ↦ sc2.2 = G2 h ys (col q) n (chLam h chal) (chZeta h chal) (chRho h chal)
                 shift.1 ([] ++ sc2.1) ∧ (RingColTrue h (col q) ringIn ∧
-                  ZeroOn (constDelta h (col q)) shift.1 (h + 5) ∧ R q)) hrT 63).mono
+                  ZeroOn (constDelta h (col q) n) shift.1 (h + 5) ∧ R q)) hrT 63).mono
             (fun _ hd ↦ hd.2) (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun yS ↦
           if hy : yS.length = 64 then
             ((ringColSpec (T := T) hst hcard h col
-                (fun q ↦ (sc2.2 = eqMaskedE (chRho h chal) shift.1 *
+                (fun q ↦ (sc2.2 = gMaskEvalE (chRho h chal) shift.1 (n - 1) *
                     ∑ q ∈ range 64, wtE (chLam h chal) (chZeta h chal) sc2.1 q * yS.getD q 0) ∧
                   (RingColTrue h (col q) ringIn ∧
-                    ZeroOn (constDelta h (col q)) shift.1 (h + 5) ∧ R q))
+                    ZeroOn (constDelta h (col q) n) shift.1 (h + 5) ∧ R q))
                 (chYPt ys shift sc2) yS
                 ⟨by simp [chYPt, hs, hm, selectorPoint], hy⟩).mono
               (fun _ hd ↦ Doomed.mono hd.2 fun q ⟨hsl, hcheck, hrest⟩ ↦ ⟨by
-                  rw [List.nil_append, G2_end h ys (col q) _ _ _ _ hm, hcheck]
+                  rw [List.nil_append, G2_end h ys (col q) n _ _ _ _ hm, hcheck]
                   refine congrArg _ (Finset.sum_congr rfl fun qq hqq ↦ ?_)
                   rw [hsl.2.2 qq (Finset.mem_range.1 hqq)]
                   exact congrArg _ (sliceExt_y h ys (col q) hs hm hys hys' qq), hrest⟩)
               (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun ringY ↦
             (samplesKeep (T := T) hst hcard
               (fun q ↦ RingColTrue h (col q) ringY ∧
-                ((sc2.2 = eqMaskedE (chRho h chal) shift.1 *
+                ((sc2.2 = gMaskEvalE (chRho h chal) shift.1 (n - 1) *
                     ∑ q ∈ range 64, wtE (chLam h chal) (chZeta h chal) sc2.1 q * yS.getD q 0) ∧
                   (RingColTrue h (col q) ringIn ∧
-                    ZeroOn (constDelta h (col q)) shift.1 (h + 5) ∧ R q))) 5).bind' fun _ ↦
+                    ZeroOn (constDelta h (col q) n) shift.1 (h + 5) ∧ R q))) 5).bind' fun _ ↦
             (Spec.require (Post := fun _ hist ↦ Doomed C (fun q ↦ RingColTrue h (col q) ringY ∧
-                RingColTrue h (col q) ringIn ∧ ZeroOn (constDelta h (col q)) shift.1 (h + 5) ∧
+                RingColTrue h (col q) ringIn ∧ ZeroOn (constDelta h (col q) n) shift.1 (h + 5) ∧
                   R q) hist)
               (fun _ hd hcond ↦ Doomed.mono hd fun q ⟨hy', hin, hk, hR⟩ ↦
                 ⟨hy', hcond, hin, hk, hR⟩)).bind' fun _ ↦
             (Spec.ret (⟨chal, shift, inS, ringIn, sc2, yS, ringY⟩ : ChLinkOut)).mono
               (fun _ hd ↦ ⟨hs, Doomed.mono hd fun q ⟨hin, hy', hcc, hR⟩ ↦
-                ⟨hy', hin, constZero_of_claims h (col q) hs hcc, hR⟩⟩)
+                ⟨hy', hin, constZero_of_claims h (col q) n hs hcc, hR⟩⟩)
               (fun _ _ h ↦ h) le_rfl le_rfl le_rfl
           else Spec.dead.mono (fun _ hd ↦ hy hd.1) (fun _ _ h ↦ h) le_rfl le_rfl le_rfl
         else Spec.dead.mono (fun _ hd ↦ hm hd.1) (fun _ _ h ↦ h) le_rfl le_rfl le_rfl

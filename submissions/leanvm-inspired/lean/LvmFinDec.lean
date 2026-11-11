@@ -13,7 +13,7 @@ import LvmNodeSoundTr
 # The decided static facts at `P20`
 
 * **`okE_P20`**: `SLok` of `KS`'s glue block E at `ksLog = 15`, `recRowsLog = 14`,
-  `spongeBlocks P20 - 1 = 14708` (as `okE_P8`: the check reads only the template's shape), decided
+  `spongeBlocks P20 - 1 = 14718` (as `okE_P8`: the check reads only the template's shape), decided
   through the one-pass check `SLokF` (`SLok_of_F`).
 * **`HarNum C T P4 … P8`**: the fields of `HarStatic` that are numbers of `C.p` (positions of
   phases 4–7, lane bounds, sizes); **`harStatic_of`** builds `HarStatic` from it, the layer checks,
@@ -37,14 +37,14 @@ set_option autoImplicit false
 namespace Lvm.Fin
 
 open Lvm Lvm.Loop Lvm.Loop.Build Lvm.Q1 Lvm.Har Lvm.Replay Lvm.QLink
-open Lvm.QAsm (QCfg QData cfg20 data20 nK bsB clog2 nAns pbB)
+open Lvm.QAsm (QCfg QData cfg20 data20 nK bsB clog2 nAns pbB sigIn)
 open Lvm.X (Blk blocks lensB lanesOf lanes_eq lensB_opn)
 
 /-! ## `KS`'s glue block at `P20` (`SLokF`, `SLok_of_F`: `LvmQAsmHarLink20`) -/
 
-/-- **`SLok` of `KS`'s block E at `P20`** (`ksLog = 15`, `recRowsLog = 14`, `14709` sponge blocks). -/
+/-- **`SLok` of `KS`'s block E at `P20`** (`ksLog = 15`, `recRowsLog = 14`, `14719` sponge blocks). -/
 theorem okE_P20 (Q : ℕ) (gate : Cell) (sh : LoopOut) :
-    SLok (ksGlueE 15 Q (ksQV 15 Q) 14708 (2 ^ 14 + 399 + 31) (2 ^ 14 + 399) (rho'C sh 15) (sh.cell 2 14)
+    SLok (ksGlueE 15 Q (ksQV 15 Q) 14718 (2 ^ 14 + 399 + 31) (2 ^ 14 + 399) (rho'C sh 15) (sh.cell 2 14)
       (sh.cell 5 (15 - 1)) gate) = true := by
   rw [← SLok_shape]
   simp only [ksGlueE, List.map_append]
@@ -83,12 +83,12 @@ def HarNum (C : QCfg) (T P4 P5 P6 P7 P8 : ℕ) : Prop :=
 WHIR layouts (any configuration, record, stream lanes and positions; phase 3b's `accZ0` written out). -/
 theorem harStatic_of {C : QCfg} {D : QData} {T P4 P5 P6 P7 P8 : ℕ} (hN : HarNum C T P4 P5 P6 P7 P8)
     (hlay : layOk (C.p.logN - 4) = true) (hlayk : layOk (C.p.ksLog - 4) = true)
-    (okA : SLok (chGlueA C.p.logN (aLane C.p 3)) = true)
-    (okB : ∀ oA sh : LoopOut, SLok (chGlueB (chQB C.p.logN (aLane C.p 3)) (rhoC oA C.p.logN)
-      (rho'C sh C.p.logN) (eZC oA C.p.logN) (sh.cell 5 (C.p.logN - 1))) = true)
-    (okC : ∀ oA sh sc2 oB : LoopOut, SLok (chGlueC (chQC C.p.logN (aLane C.p 3)) [sc2.cell 2 0, sc2.cell 2 1]
-      (eLC oA C.p.logN) (eZC oA C.p.logN) (rho'C sh C.p.logN) (oA.cell (2 * C.p.logN + 163) 0)
-      (oB.cell (8 * C.p.logN + 123) 0) (sc2.cell 5 1) (kc (pbB C))) = true)
+    (okA : SLok (chGlueAG C.p.logN (aLane C.p 3) ((sigIn C).bn + 2)) = true)
+    (okB : ∀ oA sh : LoopOut, SLok (chGlueBG (chQB C.p.logN (aLane C.p 3)) (rhoC oA C.p.logN)
+      (rho'C sh C.p.logN) (eZC oA C.p.logN) (mbC oA C.p.logN) (sh.cell 5 (C.p.logN - 1))) = true)
+    (okC : ∀ oA sc2 oB : LoopOut, SLok (chGlueCG (chQC C.p.logN (aLane C.p 3)) [sc2.cell 2 0, sc2.cell 2 1]
+      (eLC oA C.p.logN) (eZC oA C.p.logN) (oB.cell (14 * C.p.logN + 126) 0) (sc2.cell 5 1) (kc (pbB C))) = true)
+    (okN : ∀ l : List Cell, l.length = C.p.logN → SLok (ltNIns ((sigIn C).bn + 2) l) = true)
     (okE : ∀ sh : LoopOut, SLok (ksGlueE C.p.ksLog (aLane C.p 7) (ksQV C.p.ksLog (aLane C.p 7))
       (spongeBlocks C.p - 1) (2 ^ C.p.recRowsLog + 399 + 31) (2 ^ C.p.recRowsLog + 399) (rho'C sh C.p.ksLog)
       (sh.cell 2 C.p.recRowsLog) (sh.cell 5 (C.p.ksLog - 1)) (kc (pbB C))) = true)
@@ -107,7 +107,7 @@ theorem harStatic_of {C : QCfg} {D : QData} {T P4 P5 P6 P7 P8 : ℕ} (hN : HarNu
     hTrk, hTvk, hD, hDk, hTl, hTlk, hTlk', hB, hB2, hK, hld, hbP, hbT, htP, h10, hRacc, hdk1, hH, hT29, hlog,
     hP8⟩ := hN
   exact ⟨⟨ch0, ch1, ch2, ch5, l5, l6, ks0, ks1, ks2, ks7, l7, l8⟩, hn, hk, hr, hlay, hlayk, hq, hqk, hTg, hTgk,
-    hTr, hTv, hTrk, hTvk, hD, hDk, hTl, hTlk, hTlk', okA, okB, okC, hB, hB2, hK, okE, hld, hbP, hbT, htP, htT,
+    hTr, hTv, hTrk, hTvk, hD, hDk, hTl, hTlk, hTlk', okA, okB, okC, okN, hB, hB2, hK, okE, hld, hbP, hbT, htP, htT,
     hpubT, hpubτ, h10, hRmax, hRacc, hdk1, hnf, hzL, hH, hP4, hT29, hlog, hlr, hlm, hP8⟩
 
 set_option maxRecDepth 200000 in

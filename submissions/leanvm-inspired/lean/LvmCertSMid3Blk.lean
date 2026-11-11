@@ -200,7 +200,7 @@ def claimsS (T : List Lvm.M3.Tab) (pub : Lvm.Pub) (cl : List ColumnClaim) (kg : 
   tableClaimsE T cl ++
     ((keccakClaimsE chBlk kg.1.1 ++ chFixedClaimsE kg.1.1.1 kg.1.1.2.1 pub) ++
       keccakClaimsE ksBlk kg.2.1).map (.main, ·) ++
-    chLinkClaimsE kg.1.2 ++ ksOutputClaimsE kg.2.1.1 kg.2.1.2.1 ++
+    chLinkClaimsE pub.n kg.1.2 ++ ksOutputClaimsE kg.2.1.1 kg.2.1.2.1 ++
     ksLinkClaimsE kg.2.2.1 kg.2.2.2.1 kg.2.2.2.2
 
 theorem assembleS_eq (T : List Lvm.M3.Tab) (pub : Lvm.Pub) (cl : List ColumnClaim) (kg : KgOut) :
@@ -261,9 +261,9 @@ def KgRet (k : KgOut) : Prop :=
 open Lvm.KG in
 open Lvm.NS (colM ksCol ksY2 msgM msgX) in
 /-- **The claims V_S phases 4–7 leave** (`kgSpec`'s post at P20, `P = 16`, `Pk = 11`, `r = 14`) on a
-pair, with WP-14c's accessors (`GoodK`'s). -/
-def KcS (k : KgOut) (p : Column 26 × Column 19) : Prop :=
-  (CallerClaims 20 4 (colM p.1) (chY 20 52 (colM p.1)) k.1.1 ∧ ChLinkClaims 20 (colM p.1) k.1.2) ∧
+pair, with WP-14c's accessors (`GoodK`'s); `n` the chain length (lvm2's gated link). -/
+def KcS (n : ℕ) (k : KgOut) (p : Column 26 × Column 19) : Prop :=
+  (CallerClaims 20 4 (colM p.1) (chY 20 52 (colM p.1)) k.1.1 ∧ ChLinkClaims 20 n (colM p.1) k.1.2) ∧
   (CallerClaims 15 25 (ksCol p.1) (ksY 15 ksY2 (colM p.1) (ksCol p.1)) k.2.1 ∧
     KsLinkClaims 15 14 (ksCol p.1) (ksYRow 15 ksY2 (colM p.1) (ksCol p.1)) (msgM p.2) (msgX p.1)
       k.2.2)

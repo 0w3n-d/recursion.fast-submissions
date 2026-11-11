@@ -296,6 +296,60 @@ impl Service {
         }
     }
 
+    /// `batches_on` for the queries `0^pad ‖ row_i` (one length each), the body written by `writev` straight
+    /// from `rows`: per item the shared `len ‖ 0^pad` prefix and the row. The same bytes on the socket as
+    /// `batches_on` would write, in batches of the same size rule (at most `IOV_ITEMS` items).
+    fn row_batches_on(&self, conn: &mut UnixStream, out: &mut [Digest], rows: &[u8], row_bytes: usize, pad: usize) {
+        use std::io::IoSlice;
+        /// 2 iovecs per item and the header stay within `IOV_MAX` = 1024.
+        const IOV_ITEMS: usize = 511;
+        let len = pad + row_bytes;
+        if len > QUERY_CAP {
+            fatal(&format!("a query of {len} bytes is above the cap of {QUERY_CAP}"));
+        }
+        let mut prefix = vec![0u8; 4 + pad];
+        prefix[..4].copy_from_slice(&(len as u32).to_le_bytes());
+        // `batches_on` adds items while the request (16 + items) is below `batch_bytes()`
+        let per = ((batch_bytes().saturating_sub(17)) / (4 + len) + 1).min(BATCH_ITEMS).min(IOV_ITEMS);
+        let mut i = 0;
+        while i < out.len() {
+            let mut hdr = [0u8; 16];
+            let count = per.min(out.len() - i);
+            let body_len = count * (4 + len);
+            if body_len > BODY_CAP {
+                fatal(&format!("a QUERY body of {body_len} bytes is above the cap of {BODY_CAP}"));
+            }
+            hdr[0] = OP_QUERY;
+            hdr[4..8].copy_from_slice(&(count as u32).to_le_bytes());
+            hdr[8..16].copy_from_slice(&(body_len as u64).to_le_bytes());
+            let mut iov: Vec<IoSlice> = Vec::with_capacity(2 * count + 1);
+            iov.push(IoSlice::new(&hdr));
+            for k in i..i + count {
+                iov.push(IoSlice::new(&prefix));
+                iov.push(IoSlice::new(&rows[k * row_bytes..][..row_bytes]));
+            }
+            let mut bufs = &mut iov[..];
+            while !bufs.is_empty() {
+                match conn.write_vectored(bufs) {
+                    Ok(0) => fatal(&format!("QUERY ({count} items, {body_len} bytes): write: zero bytes written")),
+                    Ok(n) => IoSlice::advance_slices(&mut bufs, n),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => fatal(&format!("QUERY ({count} items, {body_len} bytes): write: {e}")),
+                }
+            }
+            let body = self.recv(conn, OP_QUERY, count, body_len);
+            if body.len() != 32 * count {
+                fatal(&format!("QUERY: {} answer bytes for {count} queries", body.len()));
+            }
+            for (k, o) in out[i..i + count].iter_mut().enumerate() {
+                *o = body[32 * k..32 * k + 32].try_into().unwrap();
+            }
+            self.queries.fetch_add(count as u64, Ordering::Relaxed);
+            self.query_bytes.fetch_add((count * len) as u64, Ordering::Relaxed);
+            i += count;
+        }
+    }
+
     pub fn report(&self) -> String {
         let g = |x: &AtomicU64| x.load(Ordering::Relaxed);
         format!(
@@ -394,6 +448,12 @@ impl Oracle for Service {
     fn ask_many_here(&self, out: &mut [Digest], build: &Builder) {
         let mut conn = self.take();
         self.batches_on(&mut conn, 0, out, build);
+        self.put(conn);
+    }
+
+    fn ask_rows_here(&self, out: &mut [Digest], rows: &[u8], row_bytes: usize, pad: usize) {
+        let mut conn = self.take();
+        self.row_batches_on(&mut conn, out, rows, row_bytes, pad);
         self.put(conn);
     }
 }

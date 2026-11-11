@@ -193,8 +193,8 @@ theorem folP_callerProg (h : ℕ) :
     (folP_verifyKeccak p h r v hr).bind fun _ _ ↦ (folP_ringSwitch _ _).bind_ret fun _ _ ↦ trivial
 
 /-- **The `CH` link** against its items. -/
-theorem folP_chLinkProg (h ys : ℕ) :
-    FolP cap shp idx (KG.chLinkProg h ys) (atomsOf p (List.flatten [smp (h + 3 + 6), sumcheckI h 2, rd kBits,
+theorem folP_chLinkProg (h ys n : ℕ) :
+    FolP cap shp idx (KG.chLinkProg h ys n) (atomsOf p (List.flatten [smp (h + 3 + 6), sumcheckI h 2, rd kBits,
       smp ringStages, sumcheckI 2 2, rd kBits, smp ringStages, smp laneBits])) fun _ ↦ True := by
   simp only [List.flatten_cons, List.flatten_nil, List.append_nil, atomsOf_append, atomsOf_smp, atomsOf_rd]
   rw [show h + 3 + 6 = h + 9 by omega]
@@ -217,8 +217,8 @@ theorem folP_ksLinkProg (hk r : ℕ) (rows : List ℕ) :
     (folP_readScalars 4).bind_nil fun _ _ ↦ (folP_require _).bind_nil fun _ _ ↦ FolP.ret trivial
 
 /-- **V_S phases 4–7** (`kgProgS`) against `CH`, the `CH` link, `KS`, the `KS` link at `P20`. -/
-theorem folP_kgProgS :
-    FolP cap shp idx kgProgS (atomsOf P20 (chI P20 ++ (chLinkI P20 ++ (ksI P20 ++ ksLinkI P20))))
+theorem folP_kgProgS (n : ℕ) :
+    FolP cap shp idx (kgProgS n) (atomsOf P20 (chI P20 ++ (chLinkI P20 ++ (ksI P20 ++ ksLinkI P20))))
       fun _ ↦ True := by
   have e : atomsOf P20 (chI P20 ++ (chLinkI P20 ++ (ksI P20 ++ ksLinkI P20))) =
       (atomsOf P20 (chI P20) ++ atomsOf P20 (chLinkI P20)) ++
@@ -227,7 +227,7 @@ theorem folP_kgProgS :
   rw [e]
   unfold kgProgS
   exact (FolP.bind (S := fun _ ↦ True) (folP_callerProg P20 (16 + 4)) fun _ _ ↦
-    (folP_chLinkProg P20 (16 + 4) 52).bind_ret fun _ _ ↦ trivial).bind fun _ _ ↦
+    (folP_chLinkProg P20 (16 + 4) 52 n).bind_ret fun _ _ ↦ trivial).bind fun _ _ ↦
     (FolP.bind (S := fun _ ↦ True) (folP_callerProg P20 (11 + 4)) fun _ _ ↦
       (folP_ksLinkProg P20 (11 + 4) 14 _).bind_ret fun _ _ ↦ trivial).bind_ret fun _ _ ↦ trivial
 
@@ -249,7 +249,7 @@ theorem folP_midS (tabs : Pub → List M3.Tab) (hfit : ∀ pub, M3.fitsR P20 (ta
   rw [e]
   unfold midS
   exact (folP_busTabAccProg tabs (pubX x) F.leafdec F.rounds F.evals).bind fun _ _ ↦
-    folP_kgProgS.bind_ret fun _ _ ↦ trivial
+    (folP_kgProgS _).bind_ret fun _ _ ↦ trivial
 
 /-- `midS` at P20's commitment table, from any pending positions (stated with `@`: elaborating a
 `Fol` at concrete atoms by the default application elaborator unfolds it). -/

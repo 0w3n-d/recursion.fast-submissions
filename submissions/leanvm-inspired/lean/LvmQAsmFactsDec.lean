@@ -11,7 +11,7 @@ cache `M3.G20` only inside fixed columns' closures, which no check forces).
 
 * `chkFit_P20`: one evaluation of the tables `T = M3.tabsP20 default` for three checks:
   `chkB lay26 T` (**`chkB_P20`**), the record's fit `fitsR P20 T` (**`fitsR_P20`**, WP-16a2's
-  re-frozen record `(22, 1, 17, 4199)`), and HAR's table phase facts on the sumcheck tables' shapes
+  re-frozen record `(22, 1, 17, 4253)` (lvm2 S1-INT; WP-16a2: `4199`)), and HAR's table phase facts on the sumcheck tables' shapes
   (**`shpOk_P20`**, `ShpOk`; HAR's `shapesOf cfg20 data20` by `shapesOf_eq`). The aux tables'
   committed columns are checked on the placement lists `data20.bpl` (`auxOffB`, one pass per class:
   `layOkB_aux`, `colsFitB_aux`), not column by column through `bplOf`'s `getD`s (WP-16b: 24.1 s →

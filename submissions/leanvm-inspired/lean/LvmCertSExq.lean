@@ -231,7 +231,7 @@ the residual starts at `f1Off`; the middle phases draw `1032` samples. -/
 theorem sched_P20 : RSItems (midItems ++ recHead) = true ∧
     Lvm.X.fsPre P20 (midItems ++ recHead) 17912 5624 = ((Lvm.X.fsMsgs P20).drop 1).take 1039 ∧
     offI (midItems ++ recHead) 17912 = Lvm.X.f1Off P20 ∧
-    (itemKinds midItems).count .sample = 1032 ∧ Lvm.X.f1Off P20 = 210128 ∧
+    (itemKinds midItems).count .sample = 1032 ∧ Lvm.X.f1Off P20 = 211424 ∧
     (Lvm.X.fsMsgs P20).getD 0 (0, 0) = (8, 5616) := by
   decide +kernel
 
@@ -372,7 +372,7 @@ theorem ext_eq_S {mid : List UInt8 → VerifierProgram OpenClaims} {Good : GoodR
   obtain ⟨body, e₀, e₁, hhdr, h0, h1, htr⟩ := Ex_inv _ hEx
   obtain ⟨hsz, hpre8, rfl, rfl⟩ := hdrS_inv hhdr
   have hsize : π.size = Lvm.piSize Lvm.X.pX := hsz
-  have hpi : π.size = 1180192 := by rw [hsize]; exact Lvm.X.piSize_eq
+  have hpi : π.size = 1181488 := by rw [hsize]; exact Lvm.X.piSize_eq
   have hBlen : π.data.toList.length = π.size := Array.length_toList
   have hb0 : π.data[0]? = some 0x53 := byte0_of_prefix hpre8
   have hhd : hdrOf ((π.data.toList.drop 8).take hdrLen) = Header.ofProof π :=
@@ -444,7 +444,7 @@ theorem ext_eq_S {mid : List UInt8 → VerifierProgram OpenClaims} {Good : GoodR
   obtain ⟨st₁, p₁, caps₁, hsim1, hle1, htr1⟩ := trun_simK _ L π.data.toList _ k 17912 5624 e₁.2 caps _
     (lm ++ ([Ev.sample ρ] ++ (lq ++ lf))) (lres ++ rest) true (other_not_mem _ hRS) (by norm_num) hk1
     (by rw [htrk, hsplit]; simp only [List.append_assoc, List.cons_append, List.nil_append])
-  have hoff1 : offK (itemKinds (midItems ++ recHead)) 17912 = 210128 := by
+  have hoff1 : offK (itemKinds (midItems ++ recHead)) 17912 = 211424 := by
     rw [offK_eq_offI _ _ hRS, sched_P20.2.2.1, sched_P20.2.2.2.2.1]
   have hk2 : lres.map kindOf = List.replicate (2 ^ 13) .read := by
     rw [hres, List.map_map, ← hreslen]
@@ -453,7 +453,7 @@ theorem ext_eq_S {mid : List UInt8 → VerifierProgram OpenClaims} {Good : GoodR
   obtain ⟨st₂, -, -, hsim2, -, -⟩ := trun_simK _ L π.data.toList _ p₁ _ _ st₁ caps₁ _ lres rest true
     (fun hm => by cases (List.mem_replicate.1 hm).2) hle1 hk2 (by rw [htr1]; simp only [List.append_assoc])
   rw [simK_reads, hoff1] at hsim2
-  have hresv : res = (List.range (2 ^ 13)).map fun i => eOfBytes (sl π.data.toList (210128 + 24 * i) 24) := by
+  have hresv : res = (List.range (2 ^ 13)).map fun i => eOfBytes (sl π.data.toList (211424 + 24 * i) 24) := by
     have e := (Prod.mk.inj (Option.some.inj hsim2)).1
     rw [hres] at e
     apply List.map_injective_iff.2 (fun a b hab => Ev.read.inj hab)
@@ -538,7 +538,7 @@ theorem ext_eq_S {mid : List UInt8 → VerifierProgram OpenClaims} {Good : GoodR
     rw [ew, ea, decodeRec_congr_f _ _ (f' := Lvm.X.fNr (resMsg res)) ?_]
     · exact hdec
     · intro v hv
-      have hf1 : Lvm.X.f1Off Lvm.X.pX = 210128 := sched_P20.2.2.2.2.1
+      have hf1 : Lvm.X.f1Off Lvm.X.pX = 211424 := sched_P20.2.2.2.2.1
       rw [f1E_eq π v (by rw [hf1, hpi]; omega), hf1]
       unfold Lvm.X.fNr
       rw [dif_pos hv]

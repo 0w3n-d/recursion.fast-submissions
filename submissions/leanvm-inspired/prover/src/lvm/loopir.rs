@@ -701,34 +701,53 @@ impl Compiled {
             let com = p.shape.committed();
             let mut c = vec![vec![F64::ZERO; h]; com.len()];
             let at = |v: Var| com.iter().position(|&u| u == v).unwrap();
+            // P-QUICK lever 5b: the column of every variable once per piece (`at`, not per cell; usize::MAX
+            // where `at` would fail, so that a use still panics), and each row's instance (`pinst`: `jf`, `t`,
+            // `j`, `clock`) into one buffer instead of a fresh `Inst` per row
+            let pos = |v: Var| com.iter().position(|&u| u == v).unwrap_or(usize::MAX);
+            let n_args = p.shape.args.len().max(self.q.blocks[p.blk].tpl.iter().map(|r| r.args.len()).max().unwrap_or(0));
+            let res_pos: [usize; 3] = std::array::from_fn(|l| pos(Var::Res(l)));
+            let arg_pos: Vec<[usize; 3]> = (0..n_args).map(|o| std::array::from_fn(|l| pos(Var::Arg(o, l)))).collect();
+            let cnt_pos: Vec<usize> = (0..n_args).map(|o| pos(Var::Cnt(o))).collect();
+            let dcnt_pos = pos(Var::Dcnt);
+            let lay = &self.lay[p.blk];
+            let blk = &self.q.blocks[p.blk];
+            let mut j = vec![0usize; blk.dims.len()];
             let mut fin_cells = Vec::new();
             for x in 0..h {
-                let i = self.pinst(p, x);
-                let r = self.row(&i);
+                let jf = x % lay.size;
+                let t = p.ts[x / lay.size];
+                let mut rest = jf;
+                for (jk, &d) in j.iter_mut().zip(&blk.dims) {
+                    *jk = rest % (1 << d);
+                    rest >>= d;
+                }
+                let clock: [usize; 2] = [0, 1].map(|k| lay.start[k] + lay.tw[k] * jf + lay.rank[t][k]);
+                let r = &blk.tpl[t];
                 if let Some(t) = r.writes() {
-                    let cell = i.clock[t.ix()];
+                    let cell = clock[t.ix()];
                     let v = limbs(t, run.rd(t, cell));
                     for l in 0..t.limbs() {
-                        c[at(Var::Res(l))][x] = F64(v[l]);
+                        c[res_pos[l]][x] = F64(v[l]);
                     }
                     fin_cells.push(cell);
                 }
                 for (o, a) in r.args.iter().enumerate() {
-                    let e = a.at(&i.j);
+                    let e = a.at(&j);
                     let v = limbs(a.ty, run.rd(a.ty, e));
                     for l in 0..a.ty.limbs() {
-                        c[at(Var::Arg(o, l))][x] = F64(v[l]);
+                        c[arg_pos[o][l]][x] = F64(v[l]);
                     }
                     let k = &mut reads[a.ty.ix()][e];
-                    c[at(Var::Cnt(o))][x] = self.g(*k as usize);
+                    c[cnt_pos[o]][x] = self.g(*k as usize);
                     *k += 1;
                 }
                 if let Op::Readd(lo, m) = r.op {
-                    let alpha = run.rd(Ty::K, r.args[0].at(&i.j)).c0;
+                    let alpha = run.rd(Ty::K, r.args[0].at(&j)).c0;
                     let tab = dlog.entry((lo, m)).or_insert_with(|| (0..1usize << m).map(|i| (self.g(lo + i).0, lo + i)).collect());
                     let e = *tab.get(&alpha).expect("readd: the cell (interp.inb)");
                     let k = &mut reads[r.ty.ix()][e];
-                    c[at(Var::Dcnt)][x] = self.g(*k as usize);
+                    c[dcnt_pos][x] = self.g(*k as usize);
                     *k += 1;
                 }
             }

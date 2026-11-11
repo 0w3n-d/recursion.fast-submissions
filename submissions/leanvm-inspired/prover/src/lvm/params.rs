@@ -201,12 +201,12 @@ fn mk(
 /// `P20` (BLUEPRINT §3.1); the M3 numbers `(busDepth, leafdecReads, tableRounds, tableEvals)` are INT-2's
 /// freeze (`LvmParams.P20`, A21).
 pub fn p20() -> Params {
-    mk("P20", 20, 129, 14, 26, [(6, 1, 8), (4, 2, 7), (4, 3, 7), (4, 4, 7)], (6, 2, 7), 15, 13, (22, 1, 17, 4199), 127)
+    mk("P20", 20, 129, 14, 26, [(6, 1, 8), (4, 2, 7), (4, 3, 7), (4, 4, 7)], (6, 2, 7), 15, 13, (22, 1, 17, 4253), 131)
 }
 
 /// `P8` (WP-0's test set).
 pub fn p8() -> Params {
-    mk("P8", 9, 20, 12, 23, [(6, 1, 4), (4, 2, 4), (4, 3, 4), (4, 4, 4)], (6, 2, 4), 13, 12, (21, 1, 16, 3879), 124)
+    mk("P8", 9, 20, 12, 23, [(6, 1, 4), (4, 2, 4), (4, 3, 4), (4, 4, 4)], (6, 2, 4), 13, 12, (21, 1, 16, 3951), 128)
 }
 
 // ------------------------------------------------------------------------------------------- the schedule
@@ -404,10 +404,10 @@ mod tests {
         assert_eq!(p.rec_levels[0].t, 191);
         // A21's record + A23 (D = 28: header + 696 B, phase 3b 12 queries and 30 scalars)
         assert_eq!(query_list(&p).len(), 11832);
-        assert_eq!(pi_size(&p), 1180192);
+        assert_eq!(pi_size(&p), 1181488);
         let q = p8();
         assert_eq!(q.main_levels.iter().map(|l| l.t).collect::<Vec<_>>(), vec![49, 30, 25, 22]);
         assert_eq!(query_list(&q).len(), 2649);
-        assert_eq!(pi_size(&q), 356264);
+        assert_eq!(pi_size(&q), 357992);
     }
 }

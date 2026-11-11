@@ -34,8 +34,8 @@ abbrev Yq (qm : Column 26) : ℕ → ℕ → K := ksYRow 15 ksY2 (colM qm) (ksCo
 abbrev Mq (qm : Column 26) (qr : Column 19) : ℕ → ℕ → K := ksMsg 14 (msgM qr) (msgX qm)
 
 /-- The `cont` rows at `P20`: the trace rows `1 … B − 1` and the key leaf's rows `1 … 31`. -/
-theorem mem_contRows {i : ℕ} : i ∈ contRows P20 ↔ (1 ≤ i ∧ i < 14709) ∨ (16784 ≤ i ∧ i < 16815) := by
-  have hB : spongeBlocks P20 = 14709 := sizes_P20.2.2.2.2.2.2.2.2
+theorem mem_contRows {i : ℕ} : i ∈ contRows P20 ↔ (1 ≤ i ∧ i < 14719) ∨ (16784 ≤ i ∧ i < 16815) := by
+  have hB : spongeBlocks P20 = 14719 := sizes_P20.2.2.2.2.2.2.2.2
   have hr : P20.recRowsLog = 14 := rfl
   simp only [contRows, List.mem_append, List.mem_map, List.mem_range, hB, hr, Nat.reducePow]
   constructor
@@ -84,16 +84,16 @@ theorem traceDigest_of_goodK {x : List UInt8} {qm : Column 26} {qr : Column 19}
   have hS := stream_of_laneLink streamOk_P20 hL
   have hsz : hashedLen P20 ≤ (wordsBytes (wsOf (Lvm.X.laneOf (wOfCol qr)))).length := by
     rw [wordsBytes_length]; exact hL.size
-  have hhl : hashedLen P20 = 2000352 := sizes_P20.2.2.2.2.2.1
+  have hhl : hashedLen P20 = 2001648 := sizes_P20.2.2.2.2.2.1
   rw [sizes_P20.2.2.2.2.2.2.2.2]
   generalize hashedLen P20 = L at hS hsz hpad hhl
-  have hnb : Lvm.KSponge.nBlk L = 14709 := by rw [hhl]; rfl
+  have hnb : Lvm.KSponge.nBlk L = 14719 := by rw [hhl]; rfl
   rw [← hnb]
   refine traceDigest_of_KS 15 (ksCol qm) (Yq qm) (Mq qm qr) _ H L (by rw [hnb]; norm_num)
     (fun i h1 h2 => by rw [hnb] at h2; simp only [decide_eq_true_eq, mem_contRows]; omega) ?_ _ ?_
   · intro p h1 h2
     rw [hnb] at h2
-    have h2' : p < 136 * 14709 := h2
+    have h2' : p < 136 * 14719 := h2
     have := msgBytes_eq_stream qm qr (p := p) (by omega)
     rw [show p / RecursionFast.Keccak.rate = p / 136 from rfl,
       show p % RecursionFast.Keccak.rate = p % 136 from rfl, this, ← padAt_eq]

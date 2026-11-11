@@ -167,6 +167,44 @@ impl OutputClaim {
     }
 }
 
+impl OutputClaim {
+    /// P-GATE: [`OutputClaim::of_inputs`] with the padding rows in closed form, `Keccak-f(0)·Σ_{i ≥ len} eq(i)`;
+    /// the same claim (field arithmetic is exact), at work linear in the written rows.
+    pub fn of_inputs_padded(shape: Shape, inputs: &[[u64; keccak::LANES]], instance: Vec<F192>) -> Self {
+        let permute = |mut state: [u64; keccak::LANES]| {
+            crate::lv::primitives::hash::keccak_f(&mut state);
+            state
+        };
+        let padding = permute([0; keccak::LANES]);
+        let len = inputs.len();
+        let eq = crate::lvm::link::eq_prefix(&instance, len);
+        let mut lanes = crate::lv::parallel::fold_reduce(
+            len,
+            || [F192Unreduced::ZERO; keccak::LANES],
+            |acc, i| {
+                let output = permute(inputs[i]);
+                for (acc, word) in acc.iter_mut().zip(output) {
+                    *acc ^= eq[i].mul_base_unreduced(F64(word));
+                }
+            },
+            |mut a, b| {
+                for (a, b) in a.iter_mut().zip(b) {
+                    *a ^= b;
+                }
+                a
+            },
+        )
+        .map(F192Unreduced::reduce);
+        if len < shape.n() {
+            let rest: F192 = F192::ONE + eq.iter().copied().sum::<F192>();
+            for (l, w) in lanes.iter_mut().zip(padding) {
+                *l += rest.mul_base(F64(w));
+            }
+        }
+        Self { instance, lanes }
+    }
+}
+
 /// The first claim, valued at the last segment's part only: the caller's lanes, at the claim's
 /// segment and lane weights.
 fn first(shape: Shape, output: &OutputClaim, segment: Vec<F192>, r_lane: &[F192]) -> Claim {

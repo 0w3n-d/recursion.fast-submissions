@@ -40,12 +40,13 @@ theorem harStatic20 : Har.HarStatic cfg20 data20 (streamLanes P20) (Har.phaseByt
   have hS : ShpOk cfg20.p (Har.shapesOf cfg20 data20) (streamLanes P20) (Har.phaseByte P20 .ch + 24) := by
     rw [cfg20_p, shapes20]; exact shpOk_P20
   obtain ⟨htT, hpubT, hpubτ, hRmax, hnf, hzL, hP4⟩ := hS
-  refine harStatic_of harNum20 ?_ ?_ ?_ ?_ ?_ ?_ htT hpubT hpubτ hRmax hnf hzL hP4 ?_ ?_
+  refine harStatic_of harNum20 ?_ ?_ ?_ ?_ ?_ ?_ ?_ htT hpubT hpubτ hRmax hnf hzL hP4 ?_ ?_
   · rw [cfg20_p]; exact Q1.layOk_16
   · rw [cfg20_p]; exact Q1.layOk_11
-  · rw [cfg20_p]; exact Q1.okA_P20 _
-  · rw [cfg20_p]; exact Q1.okB_P20 _
-  · rw [cfg20_p]; exact Q1.okC_P20 _ _
+  · rw [cfg20_p]; exact Q1.okAG_P20 _ _
+  · rw [cfg20_p]; exact Q1.okBG_P20 _
+  · rw [cfg20_p]; exact Q1.okCG_P20 _ _
+  · rw [cfg20_p]; exact Q1.okN_P20 _
   · rw [cfg20_p, sizes_P20.2.2.2.2.2.2.2.2]; exact okE_P20 _ _
   · rw [cfg20_p]; exact (Har.lay20 (Har.posBase cfg20)).1
   · rw [cfg20_p]; exact (Har.lay20 (Har.posBase cfg20)).2.1
@@ -76,6 +77,8 @@ theorem bv20 (S : StaticFacts) : BVFacts hτL20 hτT20 where
   nb vk c x qm qr P := nBits20 hT20 (hst20 S) (hinbL20 S) haux20 hR20 hP20 vk c x qm qr P.ok P.b1 P.good
   n1 vk c x qm qr P :=
     n1_20 hT20 (hst20 S) (hinbL20 S) hS20 haux20 hR20 hP20 vk c x qm qr P.ok P.b1 P.good P.inm P.ll
+  n2 vk c x qm qr P :=
+    n2_20 hT20 (hst20 S) (hinbL20 S) hS20 haux20 hR20 hP20 vk c x qm qr P.ok P.b1 P.good P.inm P.ll
   posr vk c x qm qr P := posOkR20 hT20 (hst20 S) (hinbL20 S) hS20 hQ20 posCellsLt20 posLanesR20 vk c x qm qr
     P.ok P.b1 P.good P.inm P.ll
   posm vk c x qm qr P := posOkM20 hT20 (hst20 S) (hinbL20 S) hS20 hQ20 posCellsLt20 posLanesM20 vk c x qm qr

@@ -28,26 +28,26 @@ open scoped ENNReal
 /-! ## The relations -/
 
 /-- **`CH`'s constraints** on its 64-slot block (`Y` lanes at slots `ys … ys + 3`). -/
-structure CHRel (h ys : ℕ) (col : ℕ → K) : Prop where
+structure CHRel (h ys : ℕ) (col : ℕ → K) (n : ℕ) : Prop where
   /-- The middle state is twelve rounds of the input on every row. -/
   region : RegionValid h col
   /-- The output lanes `0 … 3` are the permutation's on every row. -/
   out : OutRel h 4 col (chY h ys col)
   /-- The link on lanes `0 … 7`, bitwise. -/
-  bits : LinkBits h ys col
+  bits : LinkBits h ys col n
   /-- The constant lanes `8 … 24`. -/
-  consts : ConstLanes h col
+  consts : ConstLanes h col n
 
 /-- **`CH` proves the chain**: its constraints and the two boundary claims (`in_0 = Pad43(s)`,
 `Y_{n−1} = hd`). -/
 theorem chain_of_CHRel {h ys : ℕ} {col : ℕ → K} {s hd : RecursionFast.Digest} {n : ℕ}
-    (hn : 1 ≤ n) (hN : n ≤ 2 ^ h) (H : CHRel h ys col)
+    (hn : 1 ≤ n) (hN : n ≤ 2 ^ h) (H : CHRel h ys col n)
     (hfirst : inState h col 0 0 = pad43St (digestBits s))
     (hlast : ∀ m < 4, col (n - 1 + 2 ^ h * (ys + m)) =
       K.ofLane (RecursionFast.Keccak.blockLane hd.toArray m)) :
     RecursionFast.chainEnd s n = hd :=
-  chain_of_CH h ys col hn hN
-    ⟨fun x hx m hm ↦ H.out m hm x hx, link_of_bits h ys col H.bits H.consts, hfirst, hlast⟩
+  chain_of_CH h ys col hn
+    ⟨fun x hx m hm ↦ H.out m hm x (by omega), link_of_bits h ys col hN H.bits H.consts, hfirst, hlast⟩
 
 /-- `KS`'s output lanes as a row-by-lane table. -/
 def ksYRow (hk y2 : ℕ) (main ks : ℕ → K) (i l : ℕ) : K := ksY hk y2 main ks l i
@@ -80,31 +80,31 @@ def CallerClaims (h nt : ℕ) (qk : ℕ → K) (Y : ℕ → ℕ → K)
   RingColTrue h qk co.2.2.2 ∧ (∀ c ∈ co.2.2.1.1, colTrue h qk c) ∧ TiedTrue h nt Y co.1 co.2.1
 
 /-- The claims the `CH` link leaves. -/
-def ChLinkClaims (h : ℕ) (col : ℕ → K) (lo : ChLinkOut) : Prop :=
-  RingColTrue h col lo.ringIn ∧ RingColTrue h col lo.ringY ∧ ConstClaims h col lo.shift.1
+def ChLinkClaims (h n : ℕ) (col : ℕ → K) (lo : ChLinkOut) : Prop :=
+  RingColTrue h col lo.ringIn ∧ RingColTrue h col lo.ringY ∧ ConstClaims h col n lo.shift.1
 
 /-- **V_S phases 4–5**: the `CH` Keccak phase with caller claims, then the `CH` link. -/
-noncomputable def chPhaseSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) (P ys : ℕ)
+noncomputable def chPhaseSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) (P ys n : ℕ)
     (hys : ys % 4 = 0) (hys' : ys / 4 < 16) (col : β → ℕ → K) (R : β → Prop)
     (h46 : (L₀ : ℝ≥0∞) * errE 46 ≤ εmax) (h2 : (L₀ : ℝ≥0∞) * errE 2 + 0 ≤ εmax)
     (hr0 : (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) + 0 ≤ εmax)
     (hrT : (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) + T ≤ εmax)
     (hrL : (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) +
       (((P + 4 + 9 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) ≤ εmax) :
-    Spec (callerProg (P + 4) >>= fun co ↦ chLinkProg (P + 4) ys >>= fun lo ↦
+    Spec (callerProg (P + 4) >>= fun co ↦ chLinkProg (P + 4) ys n >>= fun lo ↦
         VerifierProgram.ret (co, lo))
-      (Doomed C (fun q ↦ CHRel (P + 4) ys (col q) ∧ R q))
+      (Doomed C (fun q ↦ CHRel (P + 4) ys (col q) n ∧ R q))
       (fun out hist ↦ (out.1.1.length = P + 4 ∧ out.1.2.1.length = 25 ∧
         out.2.shift.1.length = P + 4) ∧
         Doomed C (fun q ↦ CallerClaims (P + 4) 4 (col q) (chY (P + 4) ys (col q))
-          out.1 ∧ ChLinkClaims (P + 4) (col q) out.2 ∧ R q) hist)
+          out.1 ∧ ChLinkClaims (P + 4) n (col q) out.2 ∧ R q) hist)
       εmax (((P + 4 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) T :=
   ((callerSpec hst hcard P 4 (by norm_num) col (fun q ↦ chY (P + 4) ys (col q))
-      (fun q ↦ LinkBits (P + 4) ys (col q) ∧ ConstLanes (P + 4) (col q) ∧ R q) h46 hrL).mono
+      (fun q ↦ LinkBits (P + 4) ys (col q) n ∧ ConstLanes (P + 4) (col q) n ∧ R q) h46 hrL).mono
     (fun _ hd ↦ Doomed.mono hd fun q ⟨hv, ho, hb, hc, hR⟩ ↦ ⟨⟨hv, ho, hb, hc⟩, hR⟩)
     (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun co ↦
   if hco : co.1.length = P + 4 ∧ co.2.1.length = 25 then
-    ((chLinkSpec hst hcard (P + 4) ys hys hys' col
+    ((chLinkSpec hst hcard (P + 4) ys n hys hys' col
         (fun q ↦ CallerClaims (P + 4) 4 (col q) (chY (P + 4) ys (col q)) co ∧ R q) h2 hr0 hrT).mono
       (fun _ hd ↦ Doomed.mono hd.2.2 fun q ⟨hb, hc, ⟨hring, hcol, htied⟩, hR⟩ ↦
         ⟨hring, hcol, htied, hb, hc, hR⟩)
@@ -158,7 +158,7 @@ noncomputable def ksPhaseSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L
 /-- **V_S phases 4–7**: `CH` (Keccak with caller claims, link), then `KS` (Keccak with all lanes
 tied, sponge link), from doom of both tables' relations and `R` to doom of every claim they leave
 and `R`. -/
-noncomputable def kgSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) (P ys Pk r y2 : ℕ)
+noncomputable def kgSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) (P ys Pk r y2 n : ℕ)
     (hys : ys % 4 = 0) (hys' : ys / 4 < 16) (hkr : Pk + 4 = r + 1) (rows : List ℕ)
     (hnd : rows.Nodup) (hrows : ∀ i ∈ rows, 1 ≤ i ∧ i < 2 ^ (Pk + 4))
     (col main ks : β → ℕ → K) (M X : β → ℕ → ℕ → K) (R : β → Prop)
@@ -170,28 +170,28 @@ noncomputable def kgSpec (hst : Stable C) (hcard : ∀ h, (C h).ncard ≤ L₀) 
       (((P + 4 + 9 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) ≤ εmax)
     (hrKL : (∑ _i ∈ range 6, (L₀ : ℝ≥0∞) * errE 1) +
       (((Pk + 4 + 5 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) ≤ εmax) (hT : T ≤ εmax) :
-    Spec ((callerProg (P + 4) >>= fun co ↦ chLinkProg (P + 4) ys >>= fun lo ↦
+    Spec ((callerProg (P + 4) >>= fun co ↦ chLinkProg (P + 4) ys n >>= fun lo ↦
           VerifierProgram.ret (co, lo)) >>= fun ch ↦
         (callerProg (Pk + 4) >>= fun co ↦ ksLinkProg (Pk + 4) r rows >>= fun lo ↦
           VerifierProgram.ret (co, lo)) >>= fun kso ↦ VerifierProgram.ret (ch, kso))
-      (Doomed C (fun q ↦ CHRel (P + 4) ys (col q) ∧
+      (Doomed C (fun q ↦ CHRel (P + 4) ys (col q) n ∧
         KSRel (Pk + 4) r y2 rows (main q) (ks q) (M q) (X q) ∧ R q))
       (fun out hist ↦ ((out.1.1.1.length = P + 4 ∧ out.1.1.2.1.length = 25 ∧
           out.1.2.shift.1.length = P + 4) ∧ (out.2.1.1.length = Pk + 4 ∧
           out.2.1.2.1.length = 25 ∧ out.2.2.2.1.1.length = Pk + 4)) ∧ Doomed C (fun q ↦
         (CallerClaims (P + 4) 4 (col q) (chY (P + 4) ys (col q)) out.1.1 ∧
-          ChLinkClaims (P + 4) (col q) out.1.2) ∧
+          ChLinkClaims (P + 4) n (col q) out.1.2) ∧
         (CallerClaims (Pk + 4) 25 (ks q) (ksY (Pk + 4) y2 (main q) (ks q)) out.2.1 ∧
           KsLinkClaims (Pk + 4) r (ks q) (ksYRow (Pk + 4) y2 (main q) (ks q)) (M q) (X q)
             out.2.2) ∧ R q) hist)
       εmax (((P + 4 : ℕ) : ℝ≥0∞) * (L₀ * errE 1) + 0) T :=
-  (chPhaseSpec hst hcard P ys hys hys' col
+  (chPhaseSpec hst hcard P ys n hys hys' col
       (fun q ↦ KSRel (Pk + 4) r y2 rows (main q) (ks q) (M q) (X q) ∧ R q) h46 h2 hr0 hrK
       hrL).bind' fun ch ↦
   if hch : ch.1.1.length = P + 4 ∧ ch.1.2.1.length = 25 ∧ ch.2.shift.1.length = P + 4 then
     ((ksPhaseSpec hst hcard Pk r y2 hkr rows hnd hrows main ks M X
         (fun q ↦ (CallerClaims (P + 4) 4 (col q) (chY (P + 4) ys (col q)) ch.1 ∧
-          ChLinkClaims (P + 4) (col q) ch.2) ∧ R q) h46 h2 hT hrKL).mono
+          ChLinkClaims (P + 4) n (col q) ch.2) ∧ R q) h46 h2 hT hrKL).mono
       (fun _ hd ↦ Doomed.mono hd.2 fun _ ⟨hk, hc, hR⟩ ↦ ⟨hc.1, hc.2, hk, hR⟩)
       (fun _ _ h ↦ h) le_rfl le_rfl le_rfl).bind' fun kso ↦
     (Spec.ret (ch, kso)).mono
